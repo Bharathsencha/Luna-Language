@@ -1,0 +1,28 @@
+print("Running Math Tests...")
+
+# --- Integer Math ---
+assert(1 + 1 == 2)
+assert(10 - 2 == 8)
+assert(5 * 5 == 25)
+assert(20 / 4 == 5)
+assert(10 % 3 == 1)  # Modulo check
+
+# --- Floating Point Math ---
+assert(1.5 + 1.5 == 3.0)
+assert(5.0 / 2.0 == 2.5)
+assert(10.5 - 0.5 == 10.0)
+
+# --- Order of Operations (Precedence) ---
+# Multiplication (*) has higher precedence than Addition (+)
+assert(2 + 3 * 4 == 14)    # If broken, this would be 20
+assert((2 + 3) * 4 == 20)  # Parentheses override precedence
+
+# --- Comparisons ---
+assert(10 > 5)
+assert(5 < 10)
+assert(5 >= 5)
+assert(5 <= 5)
+assert(10 != 5)
+assert(10 == 10)
+
+print("Math tests passed!")

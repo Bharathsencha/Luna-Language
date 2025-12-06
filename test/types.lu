@@ -1,0 +1,34 @@
+print("--- Basic Types ---")
+print("10 is:", type(10))
+print("1.5 is:", type(1.5))
+print("true is:", type(true))
+print("null is:", type(null))
+
+print("\n--- New Features ---")
+# 1. Long Integer (bigger than 32-bit int 2147483647)
+let big = 9999999999
+print(big, "is:", type(big)) 
+
+# 2. Characters
+let c = 'A'
+print(c, "is:", type(c))
+
+# 3. String vs Char
+let s = "A"
+print(s, "is:", type(s))
+
+print("\n--- Logic Tests ---")
+# Char comparison
+assert('A' == 'A')
+assert('A' != 'B')
+
+# Int conversion (char to ASCII)
+let ascii = int('A')
+print("ASCII of A is:", ascii)
+assert(ascii == 65)
+
+# Float conversion
+let f = float(100)
+print("100 to float is:", f)
+
+print("\nAll type tests passed!")

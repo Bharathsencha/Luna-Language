@@ -1,0 +1,6 @@
+//print(" This fucntion is about to fail")
+
+# This math is wrong, so assert will crash the program
+//assert(1 + 1 == 5)
+
+//print("You should never see this print because the program crashed.")

@@ -1,0 +1,34 @@
+print("Running Array Mutation Tests...")
+
+# 1. Basic Mutation
+let arr = [10, 20, 30]
+assert(arr[1] == 20)
+arr[1] = 500
+assert(arr[1] == 500)
+
+# 2. Type Switching (Dynamic Typing)
+# We change an integer slot to a string
+arr[2] = "hello"
+assert(arr[2] == "hello")
+
+# 3. Mutation inside a loop
+let list = [1, 1, 1]
+let i = 0
+while (i < 3) {
+    list[i] = i
+    i = i + 1
+}
+# list should be [0, 1, 2]
+assert(list[0] == 0)
+assert(list[2] == 2)
+
+# 4. Nested Lists (Matrices)
+let grid = [[0, 0], [0, 0]]
+grid[0][0] = 1
+grid[1][1] = 1
+# Should be Identity Matrix [[1,0],[0,1]]
+assert(grid[0][0] == 1)
+assert(grid[0][1] == 0)
+assert(grid[1][1] == 1)
+
+print("Array Mutation tests passed!")

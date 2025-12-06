@@ -1,0 +1,47 @@
+print("--- Starting String Library Tests ---")
+
+let s = "  Hello World  "
+
+print("Testing inspection...")
+assert(len(s) == 15) 
+assert(is_empty(s) == false)
+
+print("Testing trimming...")
+assert(trim(s) == "Hello World")
+assert(trim_left("  a") == "a")
+
+print("Testing slicing...")
+assert(char_at("ABC", 1) == "B")
+assert(substring("Hello", 0, 2) == "He")
+# Fix: slice("Hello", -3, -1) selects indices 2 and 3 ('l', 'l') -> "ll"
+assert(slice("Hello", -3, -1) == "ll") 
+
+print("Testing transformations...")
+assert(to_upper("abc") == "ABC")
+assert(reverse("Luna") == "anuL")
+assert(repeat("Na", 4) == "NaNaNaNa")
+
+print("Testing padding...")
+assert(pad_left("7", 3, "0") == "007")
+assert(pad_right("Ok", 5, ".") == "Ok...")
+
+print("Testing searching...")
+assert(contains("Team", "ea") == true)
+assert(index_of("banana", "nan") == 2)
+assert(starts_with("file.txt", "file") == true)
+
+print("Testing split/join...")
+let data = "apple,banana,cherry"
+let list = split(data, ",")
+assert(len(list) == 3)
+assert(list[0] == "apple")
+
+let joined = join(list, " | ")
+assert(joined == "apple | banana | cherry")
+
+print("Testing conversions...")
+assert(to_int("123") == 123)
+assert(is_digit("123") == true)
+assert(is_alpha("abc") == true)
+
+print("String Tests Passed!")

@@ -1,0 +1,23 @@
+func get_user_items() {
+    print("How many items do you want to add?")
+    
+    let count = int(input("Enter count: "))
+     
+    let list = []
+    
+    print("Okay, please enter", count, "items below:")
+
+  
+    for (let i = 0; i < count; i++) {
+        let e = input("> ")
+
+        append(list, e)
+    }
+    
+    return list
+}
+
+let my_items = get_user_items()
+
+print("You collected:", my_items)
+print("Total items:", len(my_items")
