@@ -1,32 +1,11 @@
-print("1. Fahrenheit to Celsius")
-print("2. Celsius to Fahrenheit")
+let start = clock()
 
-let choice = input("Select mode (1 or 2): ")
-let mode = int(choice)
-
-if (mode == 1) {
-    # F to C
-    let f_str = input("Enter Temperature (F): ")
-    let f = float(f_str)
-    
-    # Formula: (F - 32) * 5 / 9
-    let c = (f - 32.0) * 5.0 / 9.0
-    
-    print("---------------------------------")
-    print(f, "F is equal to", c, "C")
-    
-} else {
-    if (mode == 2) {
-        # C to F
-        let c_str = input("Enter Temperature (C): ")
-        let c = float(c_str)
-        
-        # Formula: (C * 9 / 5) + 32
-        let f = (c * 9.0 / 5.0) + 32.0
-        
-        print("---------------------------------")
-        print(c, "C is equal to", f, "F")
-    } else {
-        print("Invalid selection. Please run again.")
-    }
+let sum = 0
+for (let i = 0; i < 100000; i++) {
+    sum = sum + i
 }
+
+let end = clock()
+
+print("Sum:", sum)
+print("Time taken (seconds):", end - start)

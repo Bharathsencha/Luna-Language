@@ -12,6 +12,7 @@
 #include "mystr.h"
 #include "math_lib.h"
 #include "string_lib.h"
+#include "time_lib.h" 
 #include "luna_error.h"
 
 #define MAX_VARS 256
@@ -978,4 +979,7 @@ void env_register_stdlib(Env *env) {
     
     env_def(env, "to_int", value_native(lib_str_to_int));
     env_def(env, "to_float", value_native(lib_str_to_float));
+
+    // Time Library  
+    env_def(env, "clock", value_native(lib_time_clock));
 }

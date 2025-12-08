@@ -1,14 +1,16 @@
 CC = gcc
 CFLAGS = -std=c11 -O2 -Iinclude
+ASM = nasm
+ASMFLAGS = -f elf64
 TARGET = luna
 OBJDIR = obj
 BINDIR = bin
 
 # Source files
-SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c src/interpreter.c src/value.c src/main.c src/math_lib.c src/string_lib.c src/error.c
+SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c src/interpreter.c src/value.c src/main.c src/math_lib.c src/string_lib.c src/error.c src/time_lib.c
 
 # Object files
-OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o $(OBJDIR)/ast.o $(OBJDIR)/parser.o $(OBJDIR)/interpreter.o $(OBJDIR)/value.o $(OBJDIR)/main.o $(OBJDIR)/math_lib.o $(OBJDIR)/string_lib.o $(OBJDIR)/error.o
+OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o $(OBJDIR)/ast.o $(OBJDIR)/parser.o $(OBJDIR)/interpreter.o $(OBJDIR)/value.o $(OBJDIR)/main.o $(OBJDIR)/math_lib.o $(OBJDIR)/string_lib.o $(OBJDIR)/error.o $(OBJDIR)/time_lib.o $(OBJDIR)/time.o
 
 all: $(BINDIR)/$(TARGET)
 
@@ -26,6 +28,10 @@ $(BINDIR)/$(TARGET): $(OBJS) | $(BINDIR)
 # Compile source files
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compile assembly files
+$(OBJDIR)/%.o: asm/%.asm | $(OBJDIR)
+	$(ASM) $(ASMFLAGS) $< -o $@
 
 
 test: $(BINDIR)/$(TARGET)
