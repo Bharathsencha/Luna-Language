@@ -1,44 +1,105 @@
-func create_matrix(rows, cols, val) {
-    let m = []
-    for (let r = 0; r < rows; r++) {
-        let row = []
-        for (let c = 0; c < cols; c++) {
-            append(row, val)
-        }
-        append(m, row)
-    }
-    return m
-}
+print("=== Luna Operator Overloading Benchmark ===")
+print("Generating 50,000 items...")
 
-print("Simulating 50x50 Matrix Multiplication...")
-let start = clock()
+# 1. Setup Data
+let size = 50000
+let A = []
+let B = []
 
-let size = 50
-let A = create_matrix(size, size, 2)
-let B = create_matrix(size, size, 3)
-let C = create_matrix(size, size, 0)
-
+# Generate data (ensure B has no zeros for division)
 for (let i = 0; i < size; i++) {
-    for (let j = 0; j < size; j++) {
-        let sum = 0
-        for (let k = 0; k < size; k++) {
-            # Direct access is fine for reading
-            let a_val = A[i][k]
-            let b_val = B[k][j]
-            sum = sum + (a_val * b_val)
-        }
-        
-        # FIX: Assign directly to C[i][j]
-        # This tells the interpreter to find the memory address of the 
-        # item inside C, rather than making a copy variable.
-        C[i][j] = sum
-    }
+    append(A, i + 1)        # 1, 2, 3...
+    append(B, (i % 10) + 1) # 1..10 (safe for division)
 }
+
+print("Data ready. Starting tests...\n")
+
+# --- TEST 1: ADDITION (+) ---
+print("1. Testing Addition (A + B)")
+let start = clock()
+let C_loop = []
+for (let i = 0; i < size; i++) {
+    append(C_loop, A[i] + B[i])
+}
+let mid = clock()
+
+# THE MAGIC: Using '+' triggers ASM automatically
+let C_asm = A + B
+
 let end = clock()
 
-# Verify one value (should be size * 2 * 3 = 50 * 6 = 300)
-let r0 = C[0]
-print("Value at [0][0] (should be 300):", r0[0])
-print("Time taken:", end - start)
+let t_loop = mid - start
+let t_asm = end - mid
+print("   Loop:", t_loop, "s")
+print("   Op +:", t_asm, "s")
+print("   Speedup:", t_loop / t_asm, "x")
+assert(C_asm[0] == C_loop[0]) 
+assert(C_asm[size-1] == C_loop[size-1])
 
- 
+
+# --- TEST 2: SUBTRACTION (-) ---
+print("\n2. Testing Subtraction (A - B)")
+start = clock()
+C_loop = []
+for (let i = 0; i < size; i++) {# bench_operators.lu
+    append(C_loop, A[i] - B[i])
+}
+mid = clock()
+
+# Magic: A - B
+C_asm = A - B
+
+end = clock()
+
+t_loop = mid - start
+t_asm = end - mid
+print("   Loop:", t_loop, "s")
+print("   Op -:", t_asm, "s")
+print("   Speedup:", t_loop / t_asm, "x")
+assert(C_asm[0] == C_loop[0])
+
+
+# --- TEST 3: MULTIPLICATION (*) ---
+print("\n3. Testing Multiplication (A * B)")
+start = clock()
+C_loop = []
+for (let i = 0; i < size; i++) {
+    append(C_loop, A[i] * B[i])
+}
+mid = clock()# bench_operators.lu
+
+# Magic: A * B
+C_asm = A * B
+
+end = clock()
+
+t_loop = mid - start
+t_asm = end - mid
+print("   Loop:", t_loop, "s")
+print("   Op *:", t_asm, "s")
+print("   Speedup:", t_loop / t_asm, "x")
+assert(C_asm[0] == C_loop[0])
+
+
+# --- TEST 4: DIVISION (/) ---
+print("\n4. Testing Division (A / B)")
+start = clock()
+C_loop = []
+for (let i = 0; i < size; i++) {
+    append(C_loop, A[i] / B[i])
+}
+mid = clock()
+
+# Magic: A / B
+C_asm = A / B
+
+end = clock()
+
+t_loop = mid - start
+t_asm = end - mid
+print("   Loop:", t_loop, "s")
+print("   Op /:", t_asm, "s")
+print("   Speedup:", t_loop / t_asm, "x")
+assert(C_asm[0] == C_loop[0])
+
+print("\n=== ALL OPERATOR TESTS PASSED ===")

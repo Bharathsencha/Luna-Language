@@ -14,11 +14,8 @@
 #include "string_lib.h"
 #include "time_lib.h" 
 #include "luna_error.h"
+#include "vec_lib.h"
 
-Value lib_vec_add(int argc, Value *argv);
-Value lib_vec_sub(int argc, Value *argv);
-Value lib_vec_mul(int argc, Value *argv);
-Value lib_vec_div(int argc, Value *argv);
 
 #define MAX_VARS 256
 #define MAX_FUNCS 64
@@ -300,6 +297,15 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
         Value v = value_string(comb);
         free(comb);
         return v;
+    }
+    if (l.type == VAL_LIST && r.type == VAL_LIST) {
+        switch (op) {
+            case OP_ADD: return vec_add_values(l, r);
+            case OP_SUB: return vec_sub_values(l, r);
+            case OP_MUL: return vec_mul_values(l, r);
+            case OP_DIV: return vec_div_values(l, r);
+            default: break; // Fall through for other ops (like ==)
+        }
     }
     return value_null();
 }

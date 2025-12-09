@@ -1,0 +1,42 @@
+print("=== Operator Overloading Test ===")
+
+let size = 50000
+let A = []
+let B = []
+
+print("Generating 50,000 items...")
+# Generate Data
+for (let i = 0; i < size; i++) {
+    append(A, i + 1)
+    append(B, 2)
+}
+
+print("Running benchmarks...")
+let start = clock()
+
+# --- THE MAGIC HAPPENS HERE ---
+# Instead of vec_add(A, B), we just use '+'
+let Sum = A + B
+let Sub = A - B
+let Mul = A * B
+let Div = A / B
+# ------------------------------
+
+let end = clock()
+
+print("Time for all 4 operations:", end - start)
+
+# Verification
+print("\nVerification:")
+print("Add [0]:", Sum[0])      # 1 + 2 = 3
+print("Sub [0]:", Sub[0])      # 1 - 2 = -1
+print("Mul [size-1]:", Mul[size-1])  # 50000 * 2 = 100000
+print("Div [0]:", Div[0])      # 1 / 2 = 0.5
+
+# Sanity Assertions
+assert(Sum[0] == 3)
+assert(Sub[0] == -1)
+assert(Mul[size-1] == 100000)
+assert(Div[0] == 0.5)
+
+print("\n[SUCCESS] Operators are now vector-aware!")

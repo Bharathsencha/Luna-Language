@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "value.h"
+#include "vec_lib.h" 
 
 // Define the ASM function pointer type
 typedef void (*VecOp)(long long count, double *a, double *b, double *out);
@@ -21,18 +22,12 @@ static double get_val(Value v) {
     return 0.0;
 }
 
-// Generic handler for all vector operations
-static Value vec_generic(int argc, Value *argv, VecOp op, const char *name) {
-    if (argc != 2) {
-        printf("Error: %s expects 2 lists\n", name);
-        return value_null();
-    }
-    
-    Value list_a = argv[0];
-    Value list_b = argv[1];
+// CORE LOGIC
 
+// Generic handler that takes Values directly
+static Value vec_op_direct(Value list_a, Value list_b, VecOp op) {
+    // Safety check: both must be lists
     if (list_a.type != VAL_LIST || list_b.type != VAL_LIST) {
-        printf("Error: %s arguments must be lists\n", name);
         return value_null();
     }
 
@@ -65,8 +60,23 @@ static Value vec_generic(int argc, Value *argv, VecOp op, const char *name) {
     return res_list;
 }
 
-// Exposed Functions
-Value lib_vec_add(int argc, Value *argv) { return vec_generic(argc, argv, vec_add_asm, "vec_add"); }
-Value lib_vec_sub(int argc, Value *argv) { return vec_generic(argc, argv, vec_sub_asm, "vec_sub"); }
-Value lib_vec_mul(int argc, Value *argv) { return vec_generic(argc, argv, vec_mul_asm, "vec_mul"); }
-Value lib_vec_div(int argc, Value *argv) { return vec_generic(argc, argv, vec_div_asm, "vec_div"); }
+// Exposed Direct Functions for Interpreter
+Value vec_add_values(Value a, Value b) { return vec_op_direct(a, b, vec_add_asm); }
+Value vec_sub_values(Value a, Value b) { return vec_op_direct(a, b, vec_sub_asm); }
+Value vec_mul_values(Value a, Value b) { return vec_op_direct(a, b, vec_mul_asm); }
+Value vec_div_values(Value a, Value b) { return vec_op_direct(a, b, vec_div_asm); }
+
+// NATIVE WRAPPERS (Callable from Luna Scripts)\
+
+static Value vec_generic_wrapper(int argc, Value *argv, Value (*func)(Value, Value), const char *name) {
+    if (argc != 2) {
+        printf("Error: %s expects 2 lists\n", name);
+        return value_null();
+    }
+    return func(argv[0], argv[1]);
+}
+
+Value lib_vec_add(int argc, Value *argv) { return vec_generic_wrapper(argc, argv, vec_add_values, "vec_add"); }
+Value lib_vec_sub(int argc, Value *argv) { return vec_generic_wrapper(argc, argv, vec_sub_values, "vec_sub"); }
+Value lib_vec_mul(int argc, Value *argv) { return vec_generic_wrapper(argc, argv, vec_mul_values, "vec_mul"); }
+Value lib_vec_div(int argc, Value *argv) { return vec_generic_wrapper(argc, argv, vec_div_values, "vec_div"); }
