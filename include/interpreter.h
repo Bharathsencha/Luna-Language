@@ -6,17 +6,10 @@
 
 #include "ast.h"
 #include "value.h"
-
-typedef struct Env Env;
-
-//Helper functions to manage the global scope externally
-Env *env_create_global(void);
-void env_free_global(Env *env);
-
-// Registers standard library functions (Math/String) into the environment
-void env_register_stdlib(Env *env);
+#include "env.h" // We need the definition of Env
 
 // Entry point for the interpreter
+// Note: env_create and env_register_stdlib are now in env.h and library.h
 Value interpret(AstNode *program, Env *env); 
 
 #endif

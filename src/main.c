@@ -10,6 +10,8 @@
 #include "interpreter.h"
 #include "ast.h"
 #include "luna_error.h"
+#include "env.h"
+#include "library.h"
 
 #define MAX_INPUT 1024
 

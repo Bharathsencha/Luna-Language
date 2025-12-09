@@ -10,37 +10,13 @@
 #include "ast.h"
 #include "value.h"
 #include "mystr.h"
-#include "math_lib.h"
-#include "string_lib.h"
-#include "time_lib.h" 
+#include "env.h"     // Added
+#include "library.h" // Added
 #include "luna_error.h"
 #include "vec_lib.h"
 
 
-#define MAX_VARS 256
-#define MAX_FUNCS 64
 #define EPSILON 0.000001 // Tolerance for float comparison
-
-// Structure to hold a variable name and its current value
-typedef struct {
-    char *name;
-    Value val;
-} VarEntry;
-
-// Structure to hold a function name and its AST definition
-typedef struct {
-    char *name;
-    AstNode *funcdef;
-} FuncEntry;
-
-// The Environment structure, representing a scope (e.g., global, function, block)
-typedef struct Env {
-    VarEntry vars[MAX_VARS];
-    int var_count;
-    FuncEntry funcs[MAX_FUNCS];
-    int func_count;
-    struct Env *parent; // Pointer to the enclosing scope
-} Env;
 
 // Flags to handle 'return' statements across recursive calls
 typedef struct {
@@ -70,100 +46,6 @@ static int is_truthy(Value v) {
         case VAL_CHAR: return v.c != 0;
         default: return 0;
     }
-}
-
-// Creates a new environment scope, linking it to a parent scope
-static Env *env_create(Env *parent) {
-    Env *e = malloc(sizeof(Env));
-    e->var_count = 0;
-    e->func_count = 0;
-    e->parent = parent;
-    for (int i = 0; i < MAX_VARS; i++) {
-        e->vars[i].name = NULL;
-    }
-    for (int i = 0; i < MAX_FUNCS; i++) {
-        e->funcs[i].name = NULL;
-    }
-    return e;
-}
-
-// Frees the environment and the memory used by its variables
-static void env_free(Env *e) {
-    if (!e) {
-        return;
-    }
-    for (int i = 0; i < e->var_count; i++) {
-        free(e->vars[i].name);
-        value_free(e->vars[i].val);
-    }
-    for (int i = 0; i < e->func_count; i++) {
-        free(e->funcs[i].name);
-    }
-    free(e);
-}
-
-// Looks up a variable by name, traversing up the scope chain if necessary
-static Value *env_get(Env *e, const char *name) {
-    while (e) {
-        // Search backwards to find the most recently declared variable (shadowing)
-        for (int i = e->var_count - 1; i >= 0; i--) {
-            if (!strcmp(e->vars[i].name, name)) {
-                return &e->vars[i].val;
-            }
-        }
-        e = e->parent;
-    }
-    return NULL;
-}
-
-// Defines a new variable in the current scope
-static void env_def(Env *e, const char *name, Value val) {
-    if (e->var_count < MAX_VARS) {
-        e->vars[e->var_count].name = my_strdup(name);
-        e->vars[e->var_count].val = value_copy(val);
-        e->var_count++;
-    }
-}
-
-// Updates an existing variable, traversing up the scope chain
-static void env_assign(Env *e, const char *name, Value val) {
-    Env *cur = e;
-    while (cur) {
-        for (int i = cur->var_count - 1; i >= 0; i--) {
-            if (!strcmp(cur->vars[i].name, name)) {
-                value_free(cur->vars[i].val);
-                cur->vars[i].val = value_copy(val);
-                return;
-            }
-        }
-        cur = cur->parent;
-    }
-    const char *suggestion = suggest_for_undefined_var(name);
-    error_report(ERR_NAME, 0, 0, 
-        suggestion ? suggestion : "Variable is not defined", 
-        "Declare variables with 'let' before assigning to them");
-}
-
-// Defines a function in the current scope
-static void env_def_func(Env *e, const char *name, AstNode *def) {
-    if (e->func_count < MAX_FUNCS) {
-        e->funcs[e->func_count].name = my_strdup(name);
-        e->funcs[e->func_count].funcdef = def;
-        e->func_count++;
-    }
-}
-
-// Looks up a function definition
-static AstNode *env_get_func(Env *e, const char *name) {
-    while (e) {
-        for (int i = 0; i < e->func_count; i++) {
-            if (!strcmp(e->funcs[i].name, name)) {
-                return e->funcs[i].funcdef;
-            }
-        }
-        e = e->parent;
-    }
-    return NULL;
 }
 
 static Value eval_expr(Env *e, AstNode *n);
@@ -513,29 +395,6 @@ static Value eval_expr(Env *e, AstNode *n) {
                     value_free(v);
                     return value_float(res);
                 }
-            }
-
-            // Built-in: assert()
-            if (!strcmp(n->call.name, "assert")) {
-                if (n->call.args.count != 1) {
-                    error_report(ERR_ARGUMENT, 0, 0,
-                        "assert() takes exactly 1 argument",
-                        "Use assert(condition) to verify an expression is true");
-                    exit(1);
-                }
-                Value v = eval_expr(e, n->call.args.items[0]);
-                
-                int truthy = is_truthy(v);                
-                if (!truthy) {
-                    error_report(ERR_ASSERTION, 0, 0,
-                        "Assertion failed - condition evaluated to false",
-                        "Check that your assertion condition is correct");
-                    value_free(v);
-                    exit(1); // Non-zero exit code tells the test runner it FAILED
-                }
-                
-                value_free(v);
-                return value_bool(1);
             }
 
             // 1. Check for User defined function
@@ -901,102 +760,4 @@ Value interpret(AstNode *prog, Env *env) {
         exec_stmt(env, prog);
     }
     return value_null();
-}
-
-Env *env_create_global(void) {
-    return env_create(NULL);
-}
-
-void env_free_global(Env *env) {
-    env_free(env);
-}
-
-// Registers standard library functions
-void env_register_stdlib(Env *env) {
-    // Math
-    env_def(env, "abs", value_native(lib_math_abs));
-    env_def(env, "min", value_native(lib_math_min));
-    env_def(env, "max", value_native(lib_math_max));
-    env_def(env, "clamp", value_native(lib_math_clamp)); //Is this even useful??
-    env_def(env, "sign", value_native(lib_math_sign));
-    
-    env_def(env, "pow", value_native(lib_math_pow));
-    env_def(env, "sqrt", value_native(lib_math_sqrt));
-    env_def(env, "cbrt", value_native(lib_math_cbrt));
-    env_def(env, "exp", value_native(lib_math_exp));
-    env_def(env, "ln", value_native(lib_math_ln));
-    env_def(env, "log10", value_native(lib_math_log10));
-    
-    env_def(env, "sin", value_native(lib_math_sin));
-    env_def(env, "cos", value_native(lib_math_cos));
-    env_def(env, "tan", value_native(lib_math_tan));
-    env_def(env, "asin", value_native(lib_math_asin));
-    env_def(env, "acos", value_native(lib_math_acos));
-    env_def(env, "atan", value_native(lib_math_atan));
-    env_def(env, "atan2", value_native(lib_math_atan2));
-    
-    env_def(env, "sinh", value_native(lib_math_sinh));
-    env_def(env, "cosh", value_native(lib_math_cosh));
-    env_def(env, "tanh", value_native(lib_math_tanh));
-    
-    env_def(env, "floor", value_native(lib_math_floor));
-    env_def(env, "ceil", value_native(lib_math_ceil));
-    env_def(env, "round", value_native(lib_math_round));
-    env_def(env, "trunc", value_native(lib_math_trunc));
-    env_def(env, "fract", value_native(lib_math_fract));
-    env_def(env, "mod", value_native(lib_math_mod));
-    
-    env_def(env, "rand", value_native(lib_math_rand));
-    env_def(env, "randint", value_native(lib_math_randint));
-    env_def(env, "srand", value_native(lib_math_srand));
-    
-    env_def(env, "deg_to_rad", value_native(lib_math_deg_to_rad));
-    env_def(env, "rad_to_deg", value_native(lib_math_rad_to_deg));
-    env_def(env, "lerp", value_native(lib_math_lerp));
-    
-    // String 
-    env_def(env, "str_len", value_native(lib_str_len)); // aliased to avoid collision with hardcoded 'len'
-    env_def(env, "is_empty", value_native(lib_str_is_empty));
-    env_def(env, "concat", value_native(lib_str_concat));
-    
-    env_def(env, "substring", value_native(lib_str_substring));
-    env_def(env, "slice", value_native(lib_str_slice));
-    env_def(env, "char_at", value_native(lib_str_char_at));
-    
-    env_def(env, "index_of", value_native(lib_str_index_of));
-    env_def(env, "last_index_of", value_native(lib_str_last_index_of));
-    env_def(env, "contains", value_native(lib_str_contains));
-    env_def(env, "starts_with", value_native(lib_str_starts_with));
-    env_def(env, "ends_with", value_native(lib_str_ends_with));
-    
-    env_def(env, "to_upper", value_native(lib_str_to_upper));
-    env_def(env, "to_lower", value_native(lib_str_to_lower));
-    env_def(env, "trim", value_native(lib_str_trim));
-    env_def(env, "trim_left", value_native(lib_str_trim_left));
-    env_def(env, "trim_right", value_native(lib_str_trim_right));
-    env_def(env, "replace", value_native(lib_str_replace));
-    env_def(env, "reverse", value_native(lib_str_reverse));
-    env_def(env, "repeat", value_native(lib_str_repeat));
-    env_def(env, "pad_left", value_native(lib_str_pad_left));
-    env_def(env, "pad_right", value_native(lib_str_pad_right));
-    
-    env_def(env, "split", value_native(lib_str_split));
-    env_def(env, "join", value_native(lib_str_join));
-    
-    env_def(env, "is_digit", value_native(lib_str_is_digit));
-    env_def(env, "is_alpha", value_native(lib_str_is_alpha));
-    env_def(env, "is_alnum", value_native(lib_str_is_alnum));
-    env_def(env, "is_space", value_native(lib_str_is_space));
-    
-    env_def(env, "to_int", value_native(lib_str_to_int));
-    env_def(env, "to_float", value_native(lib_str_to_float));
-
-    // Time Library  
-    env_def(env, "clock", value_native(lib_time_clock));
-   
-    // Vector Math
-    env_def(env, "vec_add", value_native(lib_vec_add));
-    env_def(env, "vec_sub", value_native(lib_vec_sub));
-    env_def(env, "vec_mul", value_native(lib_vec_mul));
-    env_def(env, "vec_div", value_native(lib_vec_div));
 }
