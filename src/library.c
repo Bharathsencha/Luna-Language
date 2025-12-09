@@ -53,10 +53,10 @@ static Value lib_assert(int argc, Value *argv) {
 }
 
 void env_register_stdlib(Env *env) {
-    // --- Core Utilities ---
+    // Core Utilities 
     env_def(env, "assert", value_native(lib_assert));
 
-    // --- Math Library ---
+    // Math Library
     env_def(env, "abs", value_native(lib_math_abs));
     env_def(env, "min", value_native(lib_math_min));
     env_def(env, "max", value_native(lib_math_max));
@@ -97,7 +97,7 @@ void env_register_stdlib(Env *env) {
     env_def(env, "rad_to_deg", value_native(lib_math_rad_to_deg));
     env_def(env, "lerp", value_native(lib_math_lerp));
     
-    // --- String Library ---
+    // String Library 
     // Note: 'str_len' is aliased to avoid collision if we add a 'len' keyword later
     env_def(env, "str_len", value_native(lib_str_len)); 
     env_def(env, "is_empty", value_native(lib_str_is_empty));
@@ -135,10 +135,10 @@ void env_register_stdlib(Env *env) {
     env_def(env, "to_int", value_native(lib_str_to_int));
     env_def(env, "to_float", value_native(lib_str_to_float));
 
-    // --- Time Library ---
+    // Time Library
     env_def(env, "clock", value_native(lib_time_clock));
    
-    // --- Vector Math Library ---
+    // Vector Math Library 
     env_def(env, "vec_add", value_native(lib_vec_add));
     env_def(env, "vec_sub", value_native(lib_vec_sub));
     env_def(env, "vec_mul", value_native(lib_vec_mul));
