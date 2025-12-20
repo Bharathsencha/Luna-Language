@@ -1,105 +1,40 @@
-print("=== Luna Operator Overloading Benchmark ===")
-print("Generating 50,000 items...")
+let filename = "test.txt"
 
-# 1. Setup Data
-let size = 50000
-let A = []
-let B = []
-
-# Generate data (ensure B has no zeros for division)
-for (let i = 0; i < size; i++) {
-    append(A, i + 1)        # 1, 2, 3...
-    append(B, (i % 10) + 1) # 1..10 (safe for division)
+# 1. Writing with our new newline support
+print("Writing to file...")
+let f_out = open(filename, "w")
+if (f_out) {
+    write(f_out, "First Line\n")
+    write(f_out, "Second Line with \t tabs\n")
+    write(f_out, "Third Line: \"Quotes inside!\"")
+    close(f_out)
+    print("Done writing.")
 }
 
-print("Data ready. Starting tests...\n")
-
-# --- TEST 1: ADDITION (+) ---
-print("1. Testing Addition (A + B)")
-let start = clock()
-let C_loop = []
-for (let i = 0; i < size; i++) {
-    append(C_loop, A[i] + B[i])
+# 2. Checking if it exists
+if (file_exists(filename)) {
+    print("Verification: File exists on disk.")
 }
-let mid = clock()
 
-# THE MAGIC: Using '+' triggers ASM automatically
-let C_asm = A + B
-
-let end = clock()
-
-let t_loop = mid - start
-let t_asm = end - mid
-print("   Loop:", t_loop, "s")
-print("   Op +:", t_asm, "s")
-print("   Speedup:", t_loop / t_asm, "x")
-assert(C_asm[0] == C_loop[0]) 
-assert(C_asm[size-1] == C_loop[size-1])
-
-
-# --- TEST 2: SUBTRACTION (-) ---
-print("\n2. Testing Subtraction (A - B)")
-start = clock()
-C_loop = []
-for (let i = 0; i < size; i++) {# bench_operators.lu
-    append(C_loop, A[i] - B[i])
+# 3. Reading line by line (Testing the \n fix)
+print("\nReading line by line:")
+let f_in = open(filename, "r")
+if (f_in) {
+    let l1 = read_line(f_in)
+    let l2 = read_line(f_in)
+    let l3 = read_line(f_in)
+    
+    print("L1: " + l1)
+    print("L2: " + l2)
+    print("L3: " + l3)
+    
+    # Testing our new polymorphic len()
+    print("Length of L1 is: " + len(l1))
+    
+    close(f_in)
 }
-mid = clock()
 
-# Magic: A - B
-C_asm = A - B
-
-end = clock()
-
-t_loop = mid - start
-t_asm = end - mid
-print("   Loop:", t_loop, "s")
-print("   Op -:", t_asm, "s")
-print("   Speedup:", t_loop / t_asm, "x")
-assert(C_asm[0] == C_loop[0])
-
-
-# --- TEST 3: MULTIPLICATION (*) ---
-print("\n3. Testing Multiplication (A * B)")
-start = clock()
-C_loop = []
-for (let i = 0; i < size; i++) {
-    append(C_loop, A[i] * B[i])
-}
-mid = clock()# bench_operators.lu
-
-# Magic: A * B
-C_asm = A * B
-
-end = clock()
-
-t_loop = mid - start
-t_asm = end - mid
-print("   Loop:", t_loop, "s")
-print("   Op *:", t_asm, "s")
-print("   Speedup:", t_loop / t_asm, "x")
-assert(C_asm[0] == C_loop[0])
-
-
-# --- TEST 4: DIVISION (/) ---
-print("\n4. Testing Division (A / B)")
-start = clock()
-C_loop = []
-for (let i = 0; i < size; i++) {
-    append(C_loop, A[i] / B[i])
-}
-mid = clock()
-
-# Magic: A / B
-C_asm = A / B
-
-end = clock()
-
-t_loop = mid - start
-t_asm = end - mid
-print("   Loop:", t_loop, "s")
-print("   Op /:", t_asm, "s")
-print("   Speedup:", t_loop / t_asm, "x")
-assert(C_asm[0] == C_loop[0])
-
-print("\n=== ALL OPERATOR TESTS PASSED ===")
+# 4. Cleanup
+print("\nCleaning up...")
+remove_file(filename)
+print("File removed. Test Complete.")

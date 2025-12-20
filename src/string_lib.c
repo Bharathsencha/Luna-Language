@@ -7,9 +7,9 @@
 #include <ctype.h>
 #include "string_lib.h"
 #include "mystr.h" // For my_strdup
+#include "luna_error.h"
 
 // Helpers
-
 static int check_args(int argc, int expected, const char *name) {
     if (argc != expected) {
         fprintf(stderr, "Runtime Error: %s() takes %d arguments.\n", name, expected);
@@ -25,11 +25,45 @@ static const char *get_str_arg(Value *argv, int index) {
 }
 
 // Basic Operations
+// consolidated len() implementation in string_lib.c or a general lib file
+Value lib_len(int argc, Value *argv) {
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "len() expects exactly 1 argument", "Usage: len(variable)");
+        return value_null();
+    }
+
+    Value v = argv[0];
+    if (v.type == VAL_STRING) {
+        return value_int((long long)strlen(v.s));
+    } 
+    else if (v.type == VAL_LIST) {
+        return value_int((long long)v.list.count);
+    } 
+    else {
+        error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
+                     "len() works on strings and lists.");
+        return value_null();
+    }
+}
+
 Value lib_str_len(int argc, Value *argv) {
-    if (!check_args(argc, 1, "len")) return value_null();
-    const char *s = get_str_arg(argv, 0);
-    if (!s) return value_int(0); // Or error
-    return value_int((long long)strlen(s));
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "len() expects exactly 1 argument", "Usage: len(variable)");
+        return value_null();
+    }
+
+    Value v = argv[0];
+    if (v.type == VAL_STRING) {
+        return value_int((long long)strlen(v.s));
+    } 
+    else if (v.type == VAL_LIST) {
+        return value_int((long long)v.list.count);
+    } 
+    else {
+        error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
+                     "len() works on strings and lists.");
+        return value_null();
+    }
 }
 
 Value lib_str_is_empty(int argc, Value *argv) {

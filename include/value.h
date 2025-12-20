@@ -3,6 +3,7 @@
 
 #ifndef VALUE_H
 #define VALUE_H
+#include <stdio.h> 
 
 typedef struct Value Value; // Forward decl
 
@@ -13,10 +14,11 @@ typedef enum {
     VAL_INT,
     VAL_FLOAT,   
     VAL_STRING,
-    VAL_CHAR,   // Character type
+    VAL_CHAR,   
     VAL_BOOL,
     VAL_LIST,
-    VAL_NATIVE, // New type for Native C Functions
+    VAL_NATIVE, 
+    VAL_FILE,   // File Handle Type
     VAL_NULL
 } ValueType;
 
@@ -27,10 +29,11 @@ struct Value {
         long long i;   
         double f;       
         char *s;
-        char c;         // char storage
+        char c;         
         int b;
-        NativeFunc native; // Storage for function pointer
-        struct {        //List
+        NativeFunc native; 
+        FILE *file; // Standard C File Pointer
+        struct {        
             struct Value *items;
             int count;
             int capacity;
@@ -46,6 +49,7 @@ Value value_char(char c);
 Value value_bool(int b);
 Value value_list(void);
 Value value_native(NativeFunc fn); 
+Value value_file(FILE *f); // For file_lib
 Value value_null(void);
 
 // Utils for memory management

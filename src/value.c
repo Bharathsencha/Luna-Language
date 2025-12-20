@@ -69,6 +69,14 @@ Value value_native(NativeFunc fn) {
     return v;
 }
 
+// Constructor for file handles
+Value value_file(FILE *f) {
+    Value v;
+    v.type = VAL_FILE;
+    v.file = f;
+    return v;
+}
+
 // Constructor for null/void values
 Value value_null(void) {
     Value v;
@@ -89,6 +97,7 @@ void value_free(Value v) {
         free(v.list.items);
     }
     // VAL_NATIVE does not need freeing (function pointer is static/global)
+    // VAL_FILE does not need freeing here (files must be closed explicitly via close())
 }
 
 // Creates a deep copy of a Value
@@ -110,6 +119,9 @@ Value value_copy(Value v) {
             break;
         case VAL_NATIVE:
             r.native = v.native;
+            break;
+        case VAL_FILE:
+            r.file = v.file;
             break;
         case VAL_STRING:
             if (v.s) {
@@ -150,6 +162,9 @@ char *value_to_string(Value v) {
             return my_strdup(buf);
         case VAL_NATIVE:
             return my_strdup("<native function>");
+        case VAL_FILE:
+            if (v.file) return my_strdup("<file handle>");
+            else return my_strdup("<closed file>");
         case VAL_STRING:
             if (v.s) {
                 return my_strdup(v.s);

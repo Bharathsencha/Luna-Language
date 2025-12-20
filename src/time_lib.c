@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2025 Bharath
+
 #include <stdio.h>
 #include <time.h> // We need the struct definition
 #include "time_lib.h"
@@ -11,7 +14,7 @@ Value lib_time_clock(int argc, Value *argv) {
     struct timespec ts;
     
     // Call our Assembly function!
-    get_monotonic_time(&ts);
+    get_monotonic_time(&ts); // Didn't expect this to work honestly 
 
     // Convert seconds + nanoseconds to a single double precision float
     // e.g., 100s + 500000000ns = 100.5

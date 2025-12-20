@@ -1,0 +1,5 @@
+STATUS: Operational
+METRICS:
+	- Internal Temp: 32C
+	- Pressure: Stable
+MESSAGE: "All systems go!"

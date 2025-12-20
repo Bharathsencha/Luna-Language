@@ -1,0 +1,63 @@
+print("Testing File I/O...")
+let filename = "test_output.txt"
+
+# Helper function to print status
+func expect(cond, msg) {
+    if (not cond) {
+        print("FAILED: " + msg)
+        assert(false) # Force crash so we see the line
+    }
+    print("  [OK] " + msg)
+}
+
+# 1. Clean up potential leftovers
+if (file_exists(filename)) {
+    remove_file(filename)
+}
+
+# 2. Test Writing
+print("--- Step 1: Open for Write ---")
+let f = open(filename, "w")
+expect(f, "File opened successfully for write")
+
+print("--- Step 2: Write Content ---")
+let success = write(f, "Hello Luna\nSecond Line\n")
+expect(success, "Write operation returned true")
+
+close(f)
+
+# 3. Test Existence
+print("--- Step 3: Check Existence ---")
+expect(file_exists(filename), "File exists on disk")
+
+# 4. Test Reading Full Content
+print("--- Step 4: Read Full Content ---")
+f = open(filename, "r")
+expect(f, "File opened for read")
+
+let content = read(f)
+print("    Content read: " + content)
+expect(str_len(content) > 0, "Content length > 0")
+
+close(f)
+
+# 5. Test Reading Line by Line
+print("--- Step 5: Read Line by Line ---")
+f = open(filename, "r")
+let line1 = read_line(f)
+let line2 = read_line(f)
+close(f)
+
+print("    Line 1: " + line1)
+print("    Line 2: " + line2)
+
+expect(str_len(line1) > 0, "Line 1 is not empty")
+expect(str_len(line2) > 0, "Line 2 is not empty")
+
+# 6. Test Removal
+print("--- Step 6: Cleanup ---")
+let removed = remove_file(filename)
+expect(removed, "remove_file returned true")
+expect(not file_exists(filename), "File no longer exists")
+
+print("File I/O Tests Passed!")

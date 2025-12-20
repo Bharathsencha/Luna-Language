@@ -135,28 +135,42 @@ Token lexer_next(Lexer *L) {
         return t;
     }
 
-    // Handle Strings (Double Quotes)
+    // Handle Strings (Double Quotes) with Escape Sequence processing
     if (c == '"') {
         lx_advance(L); // Skip opening quote
-        size_t start = L->pos;
+        
+        // Buffer to build processed string. Max length is remaining source length.
+        char *buf = malloc(L->len - L->pos + 1);
+        int i = 0;
+
         while (lx_at(L) != 0 && lx_at(L) != '"') {
-            // Handle escape characters
-            if (lx_at(L) == '\\' && lx_peek(L, 1) != 0) {
-                L->pos += 2;
-                continue;
+            if (lx_at(L) == '\\') {
+                lx_advance(L); // Skip backslash
+                int next = lx_at(L);
+                if (next == 0) break;
+
+                switch (next) {
+                    case 'n':  buf[i++] = '\n'; break;
+                    case 't':  buf[i++] = '\t'; break;
+                    case 'r':  buf[i++] = '\r'; break;
+                    case '"':  buf[i++] = '"';  break;
+                    case '\\': buf[i++] = '\\'; break;
+                    default:   buf[i++] = (char)next; break; 
+                }
+            } else {
+                buf[i++] = (char)lx_at(L);
             }
             lx_advance(L);
         }
-        size_t len = L->pos - start;
-        char *buf = malloc(len + 1);
-        memcpy(buf, L->src + start, len);
-        buf[len] = '\0';
+
+        if (lx_at(L) == '"') lx_advance(L); // Eat closing quote
+        buf[i] = '\0';
         
-        lx_advance(L); // Eat closing quote
         Token t;
         t.type = T_STRING;
         t.lexeme = buf;
         t.number = 0;
+        t.fnumber = 0.0;
         t.line = token_line;
         t.col = token_col;
         return t;
@@ -360,7 +374,7 @@ Token lexer_next(Lexer *L) {
         else if (!strcmp(buf, "and")) tt = T_AND;
         else if (!strcmp(buf, "or"))  tt = T_OR;
         else if (!strcmp(buf, "not")) tt = T_NOT;
-        // THE BALLS EXTENSION 
+        // THE BALLS EXTENSION
         else if (!strcmp(buf, "balls")) tt = T_LET;
         else if (!strcmp(buf, "big_balls")) tt = T_LET;
         else if (!strcmp(buf, "shared_balls")) tt = T_LET;
@@ -377,6 +391,7 @@ Token lexer_next(Lexer *L) {
         t.type = tt;
         t.lexeme = buf;
         t.number = 0;
+        t.fnumber = 0.0;
         t.line = token_line;
         t.col = token_col;
         return t;

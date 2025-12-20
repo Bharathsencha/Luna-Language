@@ -44,6 +44,7 @@ static int is_truthy(Value v) {
         case VAL_LIST: return 1; // Lists are always true (even empty ones, usually)
         case VAL_NATIVE: return 1;
         case VAL_CHAR: return v.c != 0;
+        case VAL_FILE:   return v.file != NULL; // Files are truthy if open
         default: return 0;
     }
 }
@@ -74,7 +75,8 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
             char msg[128];
             snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d", 
                      idx.i, list->list.count);
-            error_report(ERR_INDEX, 0, 0, msg,
+            // Updated to use n->line from the AST node
+            error_report(ERR_INDEX, n->line, 0, msg,
                 "Check that your index is between 0 and len(list)-1");
             value_free(idx);
             return NULL;
@@ -197,6 +199,7 @@ static Value eval_expr(Env *e, AstNode *n) {
     if (!n) {
         return value_null();
     }
+    luna_current_line = n->line;
     switch (n->kind) {
         case NODE_NUMBER: return value_int(n->number.value);
         case NODE_FLOAT: return value_float(n->fnumber.value);
@@ -332,7 +335,8 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (list_ptr && list_ptr->type == VAL_LIST) {
                     value_list_append(list_ptr, item_val);
                 } else {
-                    error_report(ERR_ARGUMENT, 0, 0,
+                    // Use node line number
+                    error_report(ERR_ARGUMENT, n->line, 0,
                         "append() expects a list variable as the first argument",
                         "Use append(myList, value) where myList is a list variable");
                 }
@@ -471,6 +475,9 @@ static Value exec_stmt(Env *e, AstNode *n) {
     if (!n) {
         return value_null();
     }
+
+    luna_current_line = n->line;
+
     switch (n->kind) {
         case NODE_LET: {
             Value v = eval_expr(e, n->let.expr);
@@ -492,7 +499,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
             
             // Verify target is actually a list
             if (!target || target->type != VAL_LIST) {
-                error_report(ERR_TYPE, 0, 0,
+                // Use node line number
+                error_report(ERR_TYPE, n->line, 0,
                     "Cannot assign to non-list target - target must be a list",
                     "Use list indices only on list variables, e.g., myList[0] = value");
                 value_free(val);
@@ -502,7 +510,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
             // Evaluate the index
             Value idx = eval_expr(e, n->assign_index.index);
             if (idx.type != VAL_INT) {
-                error_report(ERR_TYPE, 0, 0,
+                // Use node line number
+                error_report(ERR_TYPE, n->line, 0,
                     "List index must be an integer",
                     "Use integer values for list indices, e.g., myList[0] or myList[i]");
                 value_free(val);
@@ -515,7 +524,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 char msg[128];
                 snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d",
                          idx.i, target->list.count);
-                error_report(ERR_INDEX, 0, 0, msg,
+                // Use node line number
+                error_report(ERR_INDEX, n->line, 0, msg,
                     "Ensure your index is between 0 and len(list)-1");
                 value_free(val);
                 value_free(idx);

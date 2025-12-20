@@ -4,6 +4,9 @@
 #ifndef ERROR_H
 #define ERROR_H
 
+// Added global line tracker to solve the "Line 0" problem
+extern int luna_current_line;
+
 // Error types for better categorization
 typedef enum {
     ERR_SYNTAX,

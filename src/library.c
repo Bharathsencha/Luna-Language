@@ -10,31 +10,32 @@
 #include "library.h"
 #include "value.h"
 #include "luna_error.h"
-
-// Include the implementation headers
 #include "math_lib.h"
 #include "string_lib.h"
 #include "time_lib.h"
 #include "vec_lib.h"
+#include "file_lib.h" 
 
 // Helper: Local truthiness check for assert
 // (This logic mirrors the interpreter's is_truthy to keep modules decoupled)
 static int lib_is_truthy(Value v) {
     switch (v.type) {
-        case VAL_BOOL: return v.b;
-        case VAL_INT: return v.i != 0;
-        case VAL_FLOAT: return v.f != 0.0;
+        case VAL_BOOL:   return v.b;
+        case VAL_INT:    return v.i != 0;
+        case VAL_FLOAT:  return v.f != 0.0;
         case VAL_STRING: return v.s && v.s[0] != '\0';
-        case VAL_NULL: return 0;
-        case VAL_LIST: return 1;
+        case VAL_NULL:   return 0;
+        case VAL_LIST:   return 1;
         case VAL_NATIVE: return 1;
-        case VAL_CHAR: return v.c != 0;
-        default: return 0;
+        case VAL_CHAR:   return v.c != 0;
+        case VAL_FILE:   return v.file != NULL; //  Files are truthy if open fuck you
+        default:         return 0;
     }
 }
 
 // Native implementation of assert()
 // We moved this here from interpreter.c to keep the core logic clean.
+// We use exit(1) here to fulfill the "Force crash" requirement in test scripts.
 static Value lib_assert(int argc, Value *argv) {
     if (argc != 1) {
         error_report(ERR_ARGUMENT, 0, 0,
@@ -44,10 +45,11 @@ static Value lib_assert(int argc, Value *argv) {
     }
     
     if (!lib_is_truthy(argv[0])) {
+        // Passing 0 here is fine; error.c will use luna_current_line
         error_report(ERR_ASSERTION, 0, 0,
             "Assertion failed",
             "The condition evaluated to false.");
-        exit(1); 
+        exit(1); // Exit here so that FAILED tests stop the process
     }
     return value_bool(1);
 }
@@ -97,9 +99,11 @@ void env_register_stdlib(Env *env) {
     env_def(env, "rad_to_deg", value_native(lib_math_rad_to_deg));
     env_def(env, "lerp", value_native(lib_math_lerp));
     
-    // String Library 
-    // Note: 'str_len' is aliased to avoid collision if we add a 'len' keyword later
+    // String Library
+    // Both 'len' and 'str_len' now point to the polymorphic lib_str_len
+    env_def(env, "len", value_native(lib_str_len));
     env_def(env, "str_len", value_native(lib_str_len)); 
+    
     env_def(env, "is_empty", value_native(lib_str_is_empty));
     env_def(env, "concat", value_native(lib_str_concat));
     
@@ -138,9 +142,20 @@ void env_register_stdlib(Env *env) {
     // Time Library
     env_def(env, "clock", value_native(lib_time_clock));
    
-    // Vector Math Library 
+    // Vector Math Library
     env_def(env, "vec_add", value_native(lib_vec_add));
     env_def(env, "vec_sub", value_native(lib_vec_sub));
     env_def(env, "vec_mul", value_native(lib_vec_mul));
     env_def(env, "vec_div", value_native(lib_vec_div));
+
+    // File I/O Library
+    env_def(env, "open", value_native(lib_file_open));
+    env_def(env, "close", value_native(lib_file_close));
+    env_def(env, "read", value_native(lib_file_read));
+    env_def(env, "read_line", value_native(lib_file_read_line));
+    env_def(env, "write", value_native(lib_file_write));
+    
+    env_def(env, "file_exists", value_native(lib_file_exists));
+    env_def(env, "remove_file", value_native(lib_file_remove));
+    env_def(env, "flush", value_native(lib_file_flush));
 }
