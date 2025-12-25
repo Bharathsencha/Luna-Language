@@ -122,7 +122,8 @@ make
 ```
 ./luna myscript.lu
 ```
-### or (let make file handle it. By deafult it will run "main.lu" You can modify it in make file )
+### or 
+### Let make file handle it. By deafult it will run "main.lu" You can modify it in make file 
 ```
 make run
 ```
