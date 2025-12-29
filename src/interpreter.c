@@ -436,7 +436,17 @@ static Value eval_expr(Env *e, AstNode *n) {
                 int argc = n->call.args.count;
                 Value *argv = malloc(sizeof(Value) * argc);
                 for (int i = 0; i < argc; i++) {
-                    argv[i] = eval_expr(e, n->call.args.items[i]);
+                    // Fixed it, now it Passes list identifiers by reference to allow in-place modification
+                    if (n->call.args.items[i]->kind == NODE_IDENT) {
+                        Value *env_ref = env_get(e, n->call.args.items[i]->ident.name);
+                        if (env_ref && env_ref->type == VAL_LIST) {
+                            argv[i] = *env_ref; // Pass direct reference
+                        } else {
+                            argv[i] = eval_expr(e, n->call.args.items[i]);
+                        }
+                    } else {
+                        argv[i] = eval_expr(e, n->call.args.items[i]);
+                    }
                 }
 
                 // Call the C Function Pointer
@@ -444,7 +454,10 @@ static Value eval_expr(Env *e, AstNode *n) {
 
                 // Clean up arguments
                 for (int i = 0; i < argc; i++) {
-                    value_free(argv[i]);
+                    // Only free if it was a deep-copied expression, not an environment reference
+                    if (n->call.args.items[i]->kind != NODE_IDENT) {
+                        value_free(argv[i]);
+                    }
                 }
                 free(argv);
                 return res;

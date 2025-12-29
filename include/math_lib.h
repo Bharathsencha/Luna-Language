@@ -4,7 +4,11 @@
 #ifndef MATH_LIB_H
 #define MATH_LIB_H
 
+#include <stdint.h>
 #include "value.h"
+
+// Internal helper for list_lib to access the random engine
+uint64_t math_internal_next(void);
 
 // Basic Arithmetic & Utility
 Value lib_math_abs(int argc, Value *argv);
@@ -43,10 +47,10 @@ Value lib_math_trunc(int argc, Value *argv);
 Value lib_math_fract(int argc, Value *argv); // Returns fractional part
 Value lib_math_mod(int argc, Value *argv);
 
-//  Random
+//  Random (Updated for xoroshiro128++ and unified dispatcher)
 Value lib_math_rand(int argc, Value *argv);
-Value lib_math_randint(int argc, Value *argv);
 Value lib_math_srand(int argc, Value *argv);
+Value lib_math_trand(int argc, Value *argv); // True randomness via OS
 
 // Conversions
 Value lib_math_deg_to_rad(int argc, Value *argv);

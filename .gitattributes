@@ -1,1 +1,4 @@
 *.lu linguist-language=Luna
+*.lu linguist-detectable=true
+*.lu linguist-vendored=false
+*.lu linguist-documentation=false

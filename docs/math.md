@@ -52,7 +52,7 @@ Standard trigonometric functions (angles in radians).
 | `asin(x)`     | Returns arc sine (inverse sine)                | `asin(0) → 0.0`            |
 | `acos(x)`     | Returns arc cosine (inverse cosine)            | `acos(1) → 0.0`            |
 | `atan(x)`     | Returns arc tangent (inverse tangent)          | `atan(0) → 0.0`            |
-| `atan2(y, x)` | Returns arc tangent of y/x with correct quadrant | `atan2(10, 10) → 0.785...` |
+| `atan2(y, x)` | Returns arc tangent of y/x with correct quadrant | `atan2(10, 10) → 0.785...`|
 
 ## Hyperbolic Functions
 
@@ -66,13 +66,29 @@ Hyperbolic trigonometric functions.
 
 ## Random Number Generation
 
-Generate random numbers for simulations and games.
+Generate random numbers for simulations, procedural content, and games.
 
-| Function            | Description                                          | Example              |
-| ------------------- | ---------------------------------------------------- | -------------------- |
-| `rand()`            | Returns a random float between 0.0 and 1.0           | `rand() → 0.42...`   |
-| `randint(min, max)` | Returns a random integer in the range [min, max]     | `randint(1, 10) → 7` |
-| `srand(seed)`       | Seeds the random number generator for reproducibility| `srand(123)`         |
+| Function         | Description                                           | Example            |
+| ---------------- | ----------------------------------------------------- | ------------------ |
+| `rand()`         | Returns a random float between 0.0 and 1.0            | `rand() → 0.42...` |
+| `rand(max)`      | Returns a random integer from 0 to max (exclusive)    | `rand(100) → 42...`|
+| `rand(min, max)` | Returns a random integer in the range (min, max)      | `rand(1, 10) → 7`  |
+| `srand(seed)`    | Seeds the random number generator for reproducibility | `srand(123)`       |
+| `trand()`        | Returns OS-level entropy seed for true randomness     | `trand() → 987654` |
+
+---
+
+## Sort and Shuffel
+
+Utility functions for working with arrays.
+
+| Function       | Description                               | Example                       |
+| -------------- | ----------------------------------------- | ----------------------------- |
+| `shuffle(arr)` | Randomly shuffles array elements in-place | `shuffle([1,2,3,4,5])`        |
+| `sort(arr)`    | Sorts array elements in ascending order   | `sort([5,2,8,1]) → [1,2,5,8]` |
+
+---
+
 
 ## Conversion & Interpolation
 
@@ -110,8 +126,7 @@ Simulate rolling multiple dice and calculate statistics.
 ```javascript
 # Roll a 6-sided die multiple times
 func roll_dice(num_rolls) {
-    # Using trand() ensures every "make run" gives you new results
-    srand(trand()) 
+    srand(42)  # Seed for reproducible results
     
     let rolls = []
     let total = 0
@@ -119,24 +134,124 @@ func roll_dice(num_rolls) {
     let max_roll = 1
     
     for (let i = 0; i < num_rolls; i++) {
-        let roll = rand(1, 7) 
-        
+        let roll = rand(1, 6)
         append(rolls, roll)
         total = total + roll
         
+        # Track min and max
         min_roll = min(min_roll, roll)
         max_roll = max(max_roll, roll)
     }
     
     let average = float(total) / float(num_rolls)
     
-    print("Results")
-    print("Rolls:   ", rolls)
-    print("Total:   ", total)
-    print("Average: ", average)
-    print("Min:     ", min_roll)
-    print("Max:     ", max_roll)
+    print("Rolls:", rolls)
+    print("Total:", total)
+    print("Average:", average)
+    print("Min Roll:", min_roll)
+    print("Max Roll:", max_roll)
 }
 
 roll_dice(10)
+```
+
+## Example 3 : Randomness,Shuffel and Sort test
+
+```javascript
+# Test 1: Basic rand() - float between 0.0 and 1.0
+print("--- Test 1: Random Float (0.0 to 1.0) ---")
+for (let i = 0; i < 5; i++) {
+    let r = rand()
+    print("Random float:", r)
+}
+
+# Test 2: rand(max) - integer from 0 to max
+print("\n--- Test 2: Random Int (0 to 100) ---")
+for (let i = 0; i < 5; i++) {
+    let r = rand(100)
+    print("Random int:", r)
+}
+
+# Test 3: rand(min, max) - integer from min to max
+print("\n--- Test 3: Random Int (50 to 60) ---")
+for (let i = 0; i < 5; i++) {
+    let r = rand(50, 60)
+    print("Random int:", r)
+}
+
+# Test 4: Deterministic seeding with srand()
+print("\n--- Test 4: Deterministic Seeding (srand) ---")
+srand(12345)
+let val1 = rand()
+let val2 = rand()
+print("First run: ", val1, val2)
+
+srand(12345)
+let val3 = rand()
+let val4 = rand()
+print("Second run:", val3, val4)
+print("Match:", val1 == val3 and val2 == val4)
+
+# Test 5: OS-level entropy with trand()
+print("\n--- Test 5: True Random (OS Entropy) ---")
+let entropy1 = trand()
+let entropy2 = trand()
+let entropy3 = trand()
+print("Entropy values:", entropy1, entropy2, entropy3)
+print("All different:", entropy1 != entropy2 and entropy2 != entropy3)
+
+# Test 6: Fisher-Yates Shuffle
+print("\n--- Test 6: Fisher-Yates Shuffle ---")
+let deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+print("Original deck:", deck)
+
+shuffle(deck)
+print("Shuffled deck:", deck)
+
+# Verify all elements still present
+sort(deck)
+print("After sorting:", deck)
+
+# Test 7: Hybrid Sort with random data
+print("\n--- Test 7: Hybrid Sort Performance ---")
+let unsorted = []
+for (let i = 0; i < 20; i++) {
+    append(unsorted, rand(1, 100))
+}
+print("Unsorted:", unsorted)
+
+sort(unsorted)
+print("Sorted:  ", unsorted)
+
+# Test 8: Large shuffle demonstration
+print("\n--- Test 8: Large Data Shuffle ---")
+let large = []
+for (let i = 0; i < 100; i++) {
+    append(large, i)
+}
+print("Created list of 100 sequential numbers (0-99)")
+
+shuffle(large)
+print("First 10 after shuffle:", slice(large, 0, 10))
+print("Last 10 after shuffle: ", slice(large, 90, 100))
+
+print("\n=== All Tests Complete! ===")
+```
+
+## Note :
+
+
+
+* **`trand()`** – Reads true randomness from the OS (Linux: `/dev/urandom`). Used mainly to generate an unpredictable seed.
+* **`srand(seed)`** – Initializes the PRNG using **SplitMix64**, which expands simple seeds into high‑quality internal state.
+* **`rand()`** – Uses **Xoshiro128++** to generate fast, deterministic pseudo‑random numbers (max is exclusive).
+* **`shuffle(arr)`** – Uses the **Fisher–Yates** algorithm to produce an unbiased in‑place shuffle in O(n) time.
+* **`sort(arr)`** – Uses a **hybrid sort** that combines fast divide‑and‑conquer sorting with insertion sort for small runs.
+
+### Example use of Srand
+```javascript
+srand(7)
+print(rand(1, 100)) # Always 17
+print(rand(1, 100)) # Always 100
+# (Every time you run this script, it is 42 then 18)
 ```

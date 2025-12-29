@@ -1,43 +1,188 @@
-print("--- Starting Math Library Tests ---")
+print("=== Running Math Tests ===")
 
-# Basic Utilities
-print("Testing abs/min/max...")
+# SECTION 1: Basic Arithmetic
+print("\n[1] Testing Basic Arithmetic...")
+
+# Integer operations
+assert(1 + 1 == 2)
+assert(10 - 2 == 8)
+assert(5 * 5 == 25)
+assert(20 / 4 == 5)
+assert(10 % 3 == 1)  # Modulo
+
+# Floating point operations
+assert(1.5 + 1.5 == 3.0)
+assert(5.0 / 2.0 == 2.5)
+assert(10.5 - 0.5 == 10.0)
+
+# Order of operations (precedence)
+assert(2 + 3 * 4 == 14)    # Multiplication before addition
+assert((2 + 3) * 4 == 20)  # Parentheses override precedence
+
+print("  ✓ Basic Arithmetic passed")
+
+# SECTION 2: Comparison Operators
+print("\n[2] Testing Comparisons...")
+
+assert(10 > 5)
+assert(5 < 10)
+assert(5 >= 5)
+assert(5 <= 5)
+assert(10 != 5)
+assert(10 == 10)
+
+print("  ✓ Comparisons passed")
+
+# SECTION 3: Logical Operators
+print("\n[3] Testing Logical Operators...")
+
+# Basic AND (&&) / OR (||)
+assert(true && true)
+assert(!(true && false))
+assert(true || false)
+assert(false || true)
+assert(!(false || false))
+
+# Keywords (and, or, not)
+assert(true and true)
+assert(not false)
+assert(true or false)
+
+# Precedence check: && before ||
+# true || false && false -> true || (false) -> true
+assert(true || false && false)
+
+# Truthiness (Numbers/Strings)
+assert(1 and "hello")
+assert(not 0)
+assert(not "")
+
+print("  ✓ Logical Operators passed")
+
+# SECTION 4: Short-Circuit Evaluation
+print("\n[4] Testing Short-Circuit Evaluation...")
+
+let ran = false
+
+func side_effect() {
+    ran = true
+    return true
+}
+
+# AND short-circuit: false && X means X never runs
+ran = false
+false && side_effect()
+assert(not ran) 
+
+# OR short-circuit: true || X means X never runs
+ran = false
+true || side_effect()
+assert(not ran)
+
+# Normal execution: must run
+ran = false
+true && side_effect()
+assert(ran)
+
+print("  ✓ Short-Circuit Evaluation passed")
+
+# SECTION 5: Math Library Functions
+print("\n[5] Testing Math Library...")
+
 assert(abs(-10) == 10)
-assert(min(10, 5) == 5)
-assert(max(10, 5) == 10)
+assert(min(5, 10) == 5)
+assert(max(5, 10) == 10)
+assert(floor(1.9) == 1)
+assert(ceil(1.1) == 2)
+assert(round(1.5) == 2)
 
-# Clamping and Sign
-print("Testing clamp/sign...")
+# Additional utility functions
 assert(clamp(15, 0, 10) == 10)
+assert(clamp(5, 0, 10) == 5)
 assert(clamp(-5, 0, 10) == 0)
 assert(sign(-50) == -1)
+assert(sign(50) == 1)
+assert(sign(0) == 0)
 
-# Powers and Roots
-print("Testing powers...")
-assert(sqrt(16) == 4.0)
+# Powers and roots
 assert(pow(2, 3) == 8.0)
-assert(cbrt(27) == 3.0) 
+assert(sqrt(16) == 4.0)
+assert(cbrt(27) == 3.0)
 
-# Rounding
-print("Testing rounding...")
-assert(floor(5.9) == 5)
-assert(ceil(5.1) == 6)
-assert(round(5.5) == 6)
+# Rounding functions
 assert(trunc(5.9) == 5)
+assert(trunc(-5.9) == -5)
+assert(fract(5.9) > 0.89)
+assert(fract(5.9) < 0.91)
+assert(mod(5.5, 2) > 1.4)
+assert(mod(5.5, 2) < 1.6)
 
-# Trigonometry
-print("Testing trig...")
+# Logarithms
+let e_val = exp(1)
+assert(e_val > 2.71)
+assert(e_val < 2.72)
+assert(log10(100) == 2.0)
+let ln_val = ln(10)
+assert(ln_val > 2.3)
+assert(ln_val < 2.31)
+
+# Trigonometry (basic checks)
 assert(sin(0) == 0.0)
 assert(cos(0) == 1.0)
+assert(tan(0) == 0.0)
+assert(asin(0) == 0.0)
+assert(acos(1) == 0.0)
+assert(atan(0) == 0.0)
 
-# Random
-print("Testing random...")
-let r = rand()
-assert(r >= 0.0)
-assert(r <= 1.0)
+# Hyperbolic functions
+assert(sinh(0) == 0.0)
+assert(cosh(0) == 1.0)
+assert(tanh(0) == 0.0)
 
-let ri = randint(1, 10)
-assert(ri >= 1)
-assert(ri <= 10)
+# Conversion functions
+let rad_val = deg_to_rad(180)
+assert(rad_val > 3.14)
+assert(rad_val < 3.15)
+let deg_val = rad_to_deg(3.14159)
+assert(deg_val > 179.9)
+assert(deg_val < 180.1)
 
-print("Math Tests Passed!")
+# Interpolation
+assert(lerp(0, 100, 0.5) == 50.0)
+assert(lerp(0, 100, 0.0) == 0.0)
+assert(lerp(0, 100, 1.0) == 100.0)
+
+print("  ✓ Math Library passed")
+
+# SECTION 6: Random Number Generation
+print("\n[6] Testing Random System (Xoroshiro128++)...")
+
+# Float range (0.0 to 1.0)
+let r_float = rand()
+assert(r_float >= 0.0)
+assert(r_float <= 1.0)
+
+# Integer range with 1 argument (0 to max)
+let r_int_max = rand(10)
+assert(r_int_max >= 0)
+assert(r_int_max <= 10)
+
+# Integer range with 2 arguments (min to max)
+let r_range = rand(50, 60)
+assert(r_range >= 50)
+assert(r_range <= 60)
+
+# Test determinism (srand)
+srand(12345)
+let val1 = rand()
+srand(12345)
+let val2 = rand()
+assert(val1 == val2)
+
+# Test true randomness (OS entropy via trand)
+let entropy = trand()
+assert(entropy != 0) 
+
+print("  ✓ Random System passed")
+
+print("\n=== All Math Tests Passed! ===")`

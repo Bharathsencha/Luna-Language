@@ -10,7 +10,7 @@ BINDIR = bin
 SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
        src/interpreter.c src/value.c src/main.c src/math_lib.c \
        src/string_lib.c src/error.c src/time_lib.c src/vec_lib.c \
-       src/env.c src/library.c src/file_lib.c
+       src/env.c src/library.c src/file_lib.c src/list_lib.c
 
 # Object files
 OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
@@ -18,7 +18,8 @@ OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
        $(OBJDIR)/value.o $(OBJDIR)/main.o $(OBJDIR)/math_lib.o \
        $(OBJDIR)/string_lib.o $(OBJDIR)/error.o $(OBJDIR)/time_lib.o \
        $(OBJDIR)/time.o $(OBJDIR)/vec_lib.o $(OBJDIR)/vec_math.o \
-       $(OBJDIR)/env.o $(OBJDIR)/library.o $(OBJDIR)/file_lib.o
+       $(OBJDIR)/env.o $(OBJDIR)/library.o $(OBJDIR)/file_lib.o \
+	   $(OBJDIR)/list_lib.o
 
 all: $(BINDIR)/$(TARGET)
 
@@ -43,34 +44,28 @@ $(OBJDIR)/%.o: asm/%.asm | $(OBJDIR)
 
 
 test: $(BINDIR)/$(TARGET)
-	@echo "==> Manual Check: test/math.lu"
-	@./$(BINDIR)/$(TARGET) test/math.lu
+	@echo "==> Manual Check: test/test_core.lu"
+	@./$(BINDIR)/$(TARGET) test/test_core.lu
 	@echo ""
-
-	@echo "==> Manual Check: test/flow.lu"
-	@./$(BINDIR)/$(TARGET) test/flow.lu
+	@echo "==> Manual Check: test/test_math.lu"
+	@./$(BINDIR)/$(TARGET) test/test_math.lu
 	@echo ""
-
-	@echo "==> Manual Check: test/func.lu"
-	@./$(BINDIR)/$(TARGET) test/func.lu
+	@echo "==> Manual Check: test/test_functions.lu"
+	@./$(BINDIR)/$(TARGET) test/test_functions.lu
 	@echo ""
-
-	@echo "==> Manual Check: test/types.lu"
-	@./$(BINDIR)/$(TARGET) test/types.lu
+	@echo "==> Manual Check: test/test_vectors.lu"
+	@./$(BINDIR)/$(TARGET) test/test_vectors.lu
 	@echo ""
-
-	@echo "==> Manual Check: test/arrays.lu"
-	@./$(BINDIR)/$(TARGET) test/arrays.lu
+	@echo "==> Manual Check: test/test_strings.lu"
+	@./$(BINDIR)/$(TARGET) test/test_strings.lu
+	@echo ""
+	@echo "==> Manual Check: test/test_file_io.lu"
+	@./$(BINDIR)/$(TARGET) test/test_file_io.lu
 	@echo ""
 
 	@echo "==> Manual Check: test/balls.lu"
 	@./$(BINDIR)/$(TARGET) test/balls.lu
 	@echo ""
-
-	@echo "==> Manual Check: test/fail_check.lu"
-	@./$(BINDIR)/$(TARGET) test/fail_check.lu || true
-	@echo ""
-
 	@./test_runner.sh
 	@echo "All tests passed!"
 

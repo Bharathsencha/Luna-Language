@@ -15,6 +15,7 @@
 #include "time_lib.h"
 #include "vec_lib.h"
 #include "file_lib.h" 
+#include "list_lib.h" // Added for sort and shuffle
 
 // Helper: Local truthiness check for assert
 // (This logic mirrors the interpreter's is_truthy to keep modules decoupled)
@@ -28,7 +29,7 @@ static int lib_is_truthy(Value v) {
         case VAL_LIST:   return 1;
         case VAL_NATIVE: return 1;
         case VAL_CHAR:   return v.c != 0;
-        case VAL_FILE:   return v.file != NULL; //  Files are truthy if open fuck you
+        case VAL_FILE:   return v.file != NULL; // Files are truthy if open
         default:         return 0;
     }
 }
@@ -91,9 +92,10 @@ void env_register_stdlib(Env *env) {
     env_def(env, "fract", value_native(lib_math_fract));
     env_def(env, "mod", value_native(lib_math_mod));
     
+    // Unified Random Interface (xoroshiro128++)
     env_def(env, "rand", value_native(lib_math_rand));
-    env_def(env, "randint", value_native(lib_math_randint));
     env_def(env, "srand", value_native(lib_math_srand));
+    env_def(env, "trand", value_native(lib_math_trand));
     
     env_def(env, "deg_to_rad", value_native(lib_math_deg_to_rad));
     env_def(env, "rad_to_deg", value_native(lib_math_rad_to_deg));
@@ -138,6 +140,10 @@ void env_register_stdlib(Env *env) {
     
     env_def(env, "to_int", value_native(lib_str_to_int));
     env_def(env, "to_float", value_native(lib_str_to_float));
+
+    // List Library (Hybrid Sort & Fisher-Yates Shuffle)
+    env_def(env, "sort", value_native(lib_list_sort));
+    env_def(env, "shuffle", value_native(lib_list_shuffle));
 
     // Time Library
     env_def(env, "clock", value_native(lib_time_clock));

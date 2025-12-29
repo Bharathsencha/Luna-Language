@@ -1,5 +1,5 @@
 func roll_dice(num_rolls) {
-    srand(42) 
+    srand(42)  # Seed for reproducible results
     
     let rolls = []
     let total = 0
@@ -7,7 +7,7 @@ func roll_dice(num_rolls) {
     let max_roll = 1
     
     for (let i = 0; i < num_rolls; i++) {
-        let roll = randint(1, 6)
+        let roll = rand(1, 6)
         append(rolls, roll)
         total = total + roll
         
@@ -20,7 +20,7 @@ func roll_dice(num_rolls) {
     
     print("Rolls:", rolls)
     print("Total:", total)
-    print("Average:", round(average))
+    print("Average:", average)
     print("Min Roll:", min_roll)
     print("Max Roll:", max_roll)
 }

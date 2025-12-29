@@ -12,6 +12,7 @@
 #include "luna_error.h"
 #include "env.h"
 #include "library.h"
+#include "math_lib.h" // Required for lib_math_srand auto-seed
 
 #define MAX_INPUT 1024
 
@@ -65,7 +66,12 @@ int main(int argc, char **argv) {
     // Initialize the global environment once to persist variables
     Env *global_env = env_create_global();
 
+    // Register all built-in standard library functions
     env_register_stdlib(global_env);
+
+    // AUTO-SEED: Initialize xoroshiro128++ state using OS entropy (/dev/urandom)
+    // Passing 0 and NULL triggers the internal get_os_entropy() fallback
+    lib_math_srand(0, NULL);
 
     if (argc < 2) {
         // No file provided: Run REPL mode
@@ -104,6 +110,7 @@ int main(int argc, char **argv) {
             return 1;
         }
 
+        // Execute the parsed program
         interpret(prog, global_env);
 
         ast_free(prog);

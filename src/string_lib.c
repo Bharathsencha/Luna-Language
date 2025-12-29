@@ -122,6 +122,30 @@ Value lib_str_substring(int argc, Value *argv) {
 
 Value lib_str_slice(int argc, Value *argv) {
     if (!check_args(argc, 3, "slice")) return value_null();
+
+    // FIX: Add List support for slicing
+    if (argv[0].type == VAL_LIST) {
+        Value src = argv[0];
+        long long start = argv[1].i;
+        long long end = argv[2].i;
+        long long count = src.list.count;
+
+        // Handle negative indices
+        if (start < 0) start += count;
+        if (end < 0) end += count;
+
+        // Clamp values
+        if (start < 0) start = 0;
+        if (end > count) end = count;
+        if (start >= end) return value_list();
+
+        Value result = value_list();
+        for (long long i = start; i < end; i++) {
+            value_list_append(&result, src.list.items[i]);
+        }
+        return result;
+    }
+
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
     
