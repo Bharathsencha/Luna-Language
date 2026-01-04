@@ -76,7 +76,7 @@ clean:
 
 # Run the interpreter on the main file
 run: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) main.lu
+	./$(BINDIR)/$(TARGET) main.lu   #Modify this with your file name to run it.
 
 # Shortcut to run the REPL
 repl: $(BINDIR)/$(TARGET)
