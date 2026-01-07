@@ -8,24 +8,46 @@ Luna is my own self-initiated programming language project—built from scratch 
 
 ## Why Luna?
 
-Honestly... I was bored. Coding felt unnecessarily hard everywhere I looked:
-- C with its pointers giving me headaches
-- Python with indentation being *way* too picky
-- Rust with borrow checking making my brain hurt
+Luna was born from a simple frustration: modern programming languages often get in your way. Whether it's wrestling with memory management, fighting strict type systems, or memorizing complex syntax rules, coding can feel harder than it needs to be.
 
-So I said screw it and built Luna—a language where you can just... code. No fighting the compiler, no memory management nightmares(for now), no syntax gymnastics. Just straightforward programming that actually makes sense.
+Luna takes a different approach—**just let you code**. No compiler battles, no boilerplate, no unnecessary complexity. It combines the intuitive parts of languages you already know while leaving out the friction:
 
-Luna takes the best parts from every language and leaves out the annoying bits:
-- **Python-like input()** for easy user interaction
-- **C-like loops** for familiar control flow
+- **Familiar syntax** inspired by JavaScript and Python
+- **Simple I/O** with easy-to-use `input()` and `print()` functions
+- **Flexible typing** that adapts to what you're building
+- **No setup headaches**—compile and run
 
-**Perfect for beginners** who want to learn programming without all the usual frustration, and great for anyone who just wants to get stuff done without overthinking it.
+**Perfect for:**
+- Beginners learning programming fundamentals without the usual frustrations
+- Quick scripting and prototyping when you just want to build something
+- Anyone who values readable, maintainable code over clever tricks
 
 **What makes Luna different:**
-- **Simple Syntax**: Clean, readable code that's easy to learn and write
-- **Fast Execution**: Built in C for optimal performance
-- **Dynamic Typing**: Flexible value system supporting multiple types
-- **Built-in Functions**: Rich standard library for common operations
+- **Clean Syntax**: Write code that reads like what it does
+- **Fast Execution**: Built in C for performance where it matters
+- **Dynamic Typing**: Mix types freely without ceremony
+- **Rich Standard Library**: Math, strings, files, and more—batteries included
+
+---
+
+## Installation
+
+### Prerequisites
+- GCC or Clang compiler
+- Make
+
+### Setup
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/luna.git
+cd luna
+
+# Build Luna
+make
+
+# Run your first program
+./luna your_file_name.lu
+```
 
 ## Quick Start
 
