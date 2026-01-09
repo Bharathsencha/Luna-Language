@@ -171,7 +171,7 @@ static Value eval_binop(BinOpKind op, Value l, Value r)
             res = dr == 0 ? 0 : dl / dr;
             break;
         case OP_MOD:
-            res = (long long)dl % (long long)dr;
+            res = fmod(dl, dr); // Use fmod to avoid int64 -> double conversion warning
             is_res_float = 0;
             break;
 
@@ -424,7 +424,7 @@ static Value eval_expr(Env *e, AstNode *n)
             if (call_node.args.count == 1)
             {
                 Value v = eval_expr(e, call_node.args.items[0]);
-                int len = 0;
+                size_t len = 0;
                 if (v.type == VAL_STRING)
                 {
                     len = strlen(v.s);

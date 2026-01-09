@@ -16,7 +16,7 @@ static int check_args(int argc, int expected, std::string_view name)
 {
     if (argc != expected)
     {
-        fprintf(stderr, "Runtime Error: %s() takes %d arguments.\n", name, expected);
+        fprintf(stderr, "Runtime Error: %s() takes %d arguments.\n", name.data(), expected);
         return 0;
     }
     return 1;
