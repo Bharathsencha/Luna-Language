@@ -190,7 +190,6 @@ The REPL (Read-Eval-Print Loop) allows you to test Luna code interactively:
 ```bash
 make repl
 ```
-
 In REPL mode, you can:
 - Execute Luna statements line by line
 - Test expressions and see immediate results
@@ -199,6 +198,42 @@ In REPL mode, you can:
 
 ---
 
+### For Windows
+
+Open your terminal (**PowerShell** or **Command Prompt**) in the project folder.
+
+#### Generate build files
+
+```bash
+mkdir build
+cd build
+cmake .. -G "MinGW Makefiles"
+```
+
+**Note:**
+If you have **Visual Studio** installed, you can simply run:
+
+```bash
+cmake ..
+```
+
+This will generate a `.sln` file.
+
+#### Compile
+
+```bash
+cmake --build .
+```
+
+#### Run
+
+Your executable will be located at:
+
+```
+build/bin/luna.exe
+```
+
+---
 ## User Input in Luna
 
 The language supports runtime input using the built-in `input(prompt)` function. It displays the given prompt string and waits for the user to type something, which is returned as a string.
