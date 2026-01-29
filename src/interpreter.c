@@ -30,7 +30,7 @@ typedef struct {
     int continue_active;
 } LoopException;
 
-static ReturnException return_exception = {0};
+static ReturnException return_exception = {0}; 
 static LoopException loop_exception = {0};
 
 // Centralized Truthiness Logic ~~~

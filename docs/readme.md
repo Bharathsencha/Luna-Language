@@ -39,7 +39,7 @@ Luna takes a different approach—**just let you code**. No compiler battles, no
 ### Setup
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/luna.git
+git clone https://github.com/Bharathsencha/luna.git
 cd luna
 
 # Build Luna
