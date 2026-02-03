@@ -164,21 +164,24 @@ for (let i = 0; i < 5; i++) {
     let r = rand()
     print("Random float:", r)
 }
-
+```
+```javascript
 # Test 2: rand(max) - integer from 0 to max
 print("\n--- Test 2: Random Int (0 to 100) ---")
 for (let i = 0; i < 5; i++) {
     let r = rand(100)
     print("Random int:", r)
 }
-
+```
+```javascript
 # Test 3: rand(min, max) - integer from min to max
 print("\n--- Test 3: Random Int (50 to 60) ---")
 for (let i = 0; i < 5; i++) {
     let r = rand(50, 60)
     print("Random int:", r)
 }
-
+```
+```javascript
 # Test 4: Deterministic seeding with srand()
 print("\n--- Test 4: Deterministic Seeding (srand) ---")
 srand(12345)
@@ -191,7 +194,8 @@ let val3 = rand()
 let val4 = rand()
 print("Second run:", val3, val4)
 print("Match:", val1 == val3 and val2 == val4)
-
+```
+```javascript
 # Test 5: OS-level entropy with trand()
 print("\n--- Test 5: True Random (OS Entropy) ---")
 let entropy1 = trand()
@@ -199,7 +203,8 @@ let entropy2 = trand()
 let entropy3 = trand()
 print("Entropy values:", entropy1, entropy2, entropy3)
 print("All different:", entropy1 != entropy2 and entropy2 != entropy3)
-
+```
+```javascript
 # Test 6: Fisher-Yates Shuffle
 print("\n--- Test 6: Fisher-Yates Shuffle ---")
 let deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -211,7 +216,8 @@ print("Shuffled deck:", deck)
 # Verify all elements still present
 sort(deck)
 print("After sorting:", deck)
-
+```
+```javascript
 # Test 7: Hybrid Sort with random data
 print("\n--- Test 7: Hybrid Sort Performance ---")
 let unsorted = []
@@ -222,7 +228,9 @@ print("Unsorted:", unsorted)
 
 sort(unsorted)
 print("Sorted:  ", unsorted)
+```
 
+```javascript
 # Test 8: Large shuffle demonstration
 print("\n--- Test 8: Large Data Shuffle ---")
 let large = []
