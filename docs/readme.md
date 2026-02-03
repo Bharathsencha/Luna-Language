@@ -4,31 +4,24 @@
 
 # Luna 
 
-Luna is my own self-initiated programming language project—built from scratch in C—with the simple goal of creating something that's easy to read, straightforward to work with, and fast as hell.
+Luna is my own self-initiated programming language project—built from scratch in C.
 
-## Why Luna?
+You know.. enough of this fake intro. I tried multiple different approaches, even asked AI for help, but nothing felt right. What I said before wasn't necessarily fake, but it's not the whole story either.
 
-Luna was born from a simple frustration: modern programming languages often get in your way. Whether it's wrestling with memory management, fighting strict type systems, or memorizing complex syntax rules, coding can feel harder than it needs to be.
+Every programmer wants to create their own programming language. So did I. I wanted to see how far I could push myself and C.. Well, now we have an answer. I always wondered how people do it on YouTube. This was so fucking hard. It's my 3rd language that I have created. First was jlox or kaleidoscope from LLVM on windows(I don't remember lost both files), second was Jlox but in C not clox I forgot abot 2nd part in Crafting Interpreters, and now this.
 
-Luna takes a different approach—**just let you code**. No compiler battles, no boilerplate, no unnecessary complexity. It combines the intuitive parts of languages you already know while leaving out the friction:
+Everyone is in a rat race, focusing only on AI. colleges and companies included.. little do they know your AI runs on C/C++. The Cuda compiler also uses LLVM and no one teaches this. AI is all the hype and I know it won't last long. So many people are going into it. I wanted to do something different.
 
-- **Familiar syntax** inspired by JavaScript and Python
-- **Simple I/O** with easy-to-use `input()` and `print()` functions
-- **Flexible typing** that adapts to what you're building
-- **No setup headaches**—compile and run
+well
 
-**Perfect for:**
-- Beginners learning programming fundamentals without the usual frustrations
-- Quick scripting and prototyping when you just want to build something
-- Anyone who values readable, maintainable code over clever tricks
+i achieved it. Now I will try bootstrapping or add raylib support here idk which to do first. I thought adding many features will make bootsatrapping esay but
+I later realised i should have done way early on. welp they say "Write as shitty compiler first and improve it later"
 
-**What makes Luna different:**
-- **Clean Syntax**: Write code that reads like what it does
-- **Fast Execution**: Built in C for performance where it matters
-- **Dynamic Typing**: Mix types freely without ceremony
-- **Rich Standard Library**: Math, strings, files, and more—batteries included
+Also I use "Fix" flags in code that's what GPT told me and it's pretty useful to find what I changed and it works!!!
 
----
+Most updates to this language are at least 2 weeks old. I code in another folder and when that works I paste it here and push it then git pull here and paste there. It's a mess but it works ig.
+
+Enjoy coding ppl 
 
 ## Installation
 
@@ -39,7 +32,7 @@ Luna takes a different approach—**just let you code**. No compiler battles, no
 ### Setup
 ```bash
 # Clone the repository
-git clone https://github.com/Bharathsencha/luna.git
+git clone https://github.com/Bharathsencha/Luna-Language
 cd luna
 
 # Build Luna
