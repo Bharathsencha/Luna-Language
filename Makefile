@@ -10,7 +10,7 @@ BINDIR = bin
 SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
        src/interpreter.c src/value.c src/main.c src/math_lib.c \
        src/string_lib.c src/error.c src/time_lib.c src/vec_lib.c \
-       src/env.c src/library.c src/file_lib.c src/list_lib.c
+       src/env.c src/library.c src/file_lib.c src/list_lib.c src/gc.c
 
 # Object files
 OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
@@ -19,7 +19,7 @@ OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
        $(OBJDIR)/string_lib.o $(OBJDIR)/error.o $(OBJDIR)/time_lib.o \
        $(OBJDIR)/time.o $(OBJDIR)/vec_lib.o $(OBJDIR)/vec_math.o \
        $(OBJDIR)/env.o $(OBJDIR)/library.o $(OBJDIR)/file_lib.o \
-	   $(OBJDIR)/list_lib.o
+	   $(OBJDIR)/list_lib.o $(OBJDIR)/gc.o
 
 all: $(BINDIR)/$(TARGET)
 

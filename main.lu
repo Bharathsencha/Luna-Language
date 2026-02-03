@@ -1,28 +1,38 @@
-func roll_dice(num_rolls) {
-    srand(42)  # Seed for reproducible results
-    
-    let rolls = []
-    let total = 0
-    let min_roll = 6
-    let max_roll = 1
-    
-    for (let i = 0; i < num_rolls; i++) {
-        let roll = rand(1, 6)
-        append(rolls, roll)
-        total = total + roll
-        
-        # Track min and max
-        min_roll = min(min_roll, roll)
-        max_roll = max(max_roll, roll)
+func create_matrix(rows, cols, val) {
+    let m = []
+    for (let r = 0; r < rows; r++) {
+        let row = []
+        for (let c = 0; c < cols; c++) {
+            append(row, val)
+        }
+        append(m, row)
     }
-    
-    let average = float(total) / float(num_rolls)
-    
-    print("Rolls:", rolls)
-    print("Total:", total)
-    print("Average:", average)
-    print("Min Roll:", min_roll)
-    print("Max Roll:", max_roll)
+    return m
 }
 
-roll_dice(10)
+print("Simulating 50x50 Matrix Multiplication...")
+let start = clock()
+
+let size = 50
+let A = create_matrix(size, size, 2)
+let B = create_matrix(size, size, 3)
+let C = create_matrix(size, size, 0)
+
+for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+        let sum = 0
+        for (let k = 0; k < size; k++) {
+            let a_val = A[i][k]
+            let b_val = B[k][j]
+            sum = sum + (a_val * b_val)
+        }
+        C[i][j] = sum
+    }
+}
+
+let end = clock()
+
+# Verify result (should be 50 * 2 * 3 = 300)
+let r0 = C[0]
+print("Value at [0][0] (expected 300):", r0[0])
+print("Time taken:", end - start, "seconds")

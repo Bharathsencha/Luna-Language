@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,8 +20,9 @@ static int check_args(int argc, int expected, const char *name) {
 
 // Helper to ensure an argument is a string and return it
 static const char *get_str_arg(Value *argv, int index) {
-    if (argv[index].type != VAL_STRING) return NULL;
-    return argv[index].s;
+    //  Check for Object type and String subtype
+    if (!IS_OBJ(argv[index]) || AS_OBJ(argv[index])->type != OBJ_STRING) return NULL;
+    return AS_STRING(argv[index])->chars;
 }
 
 // Basic Operations
@@ -33,11 +34,12 @@ Value lib_len(int argc, Value *argv) {
     }
 
     Value v = argv[0];
-    if (v.type == VAL_STRING) {
-        return value_int((long long)strlen(v.s));
+    //  Updated to use IS_OBJ and subtype checks
+    if (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) {
+        return value_int((long long)strlen(AS_STRING(v)->chars));
     } 
-    else if (v.type == VAL_LIST) {
-        return value_int((long long)v.list.count);
+    else if (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_LIST) {
+        return value_int((long long)AS_LIST(v)->count);
     } 
     else {
         error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
@@ -53,11 +55,12 @@ Value lib_str_len(int argc, Value *argv) {
     }
 
     Value v = argv[0];
-    if (v.type == VAL_STRING) {
-        return value_int((long long)strlen(v.s));
+    //  Updated to use IS_OBJ and subtype checks
+    if (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) {
+        return value_int((long long)strlen(AS_STRING(v)->chars));
     } 
-    else if (v.type == VAL_LIST) {
-        return value_int((long long)v.list.count);
+    else if (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_LIST) {
+        return value_int((long long)AS_LIST(v)->count);
     } 
     else {
         error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
@@ -123,12 +126,15 @@ Value lib_str_substring(int argc, Value *argv) {
 Value lib_str_slice(int argc, Value *argv) {
     if (!check_args(argc, 3, "slice")) return value_null();
 
-    // FIX: Add List support for slicing
-    if (argv[0].type == VAL_LIST) {
-        Value src = argv[0];
+    // Add List support for slicing
+    // Updated check for List Object
+    if (IS_OBJ(argv[0]) && AS_OBJ(argv[0])->type == OBJ_LIST) {
+        Value src_val = argv[0];
+        ObjList *src = AS_LIST(src_val); // Cast to ObjList
+        
         long long start = argv[1].i;
         long long end = argv[2].i;
-        long long count = src.list.count;
+        long long count = src->count;
 
         // Handle negative indices
         if (start < 0) start += count;
@@ -141,7 +147,7 @@ Value lib_str_slice(int argc, Value *argv) {
 
         Value result = value_list();
         for (long long i = start; i < end; i++) {
-            value_list_append(&result, src.list.items[i]);
+            value_list_append(&result, src->items[i]);
         }
         return result;
     }
@@ -158,6 +164,7 @@ Value lib_str_slice(int argc, Value *argv) {
     if (end < 0) end += str_len;
     
     // Clamp
+    // I still down understand how tf this works
     if (start < 0) start = 0;
     if (end > str_len) end = str_len;
     if (start >= end) return value_string("");
@@ -486,17 +493,21 @@ Value lib_str_join(int argc, Value *argv) {
     if (!check_args(argc, 2, "join")) return value_null();
     
     // Arg 0 is LIST, Arg 1 is Delimiter
-    if (argv[0].type != VAL_LIST) return value_string("");
+    // Updated check for List Object
+    if (!IS_OBJ(argv[0]) || AS_OBJ(argv[0])->type != OBJ_LIST) return value_string("");
+    
     const char *delim = get_str_arg(argv, 1);
     if (!delim) delim = "";
     
     // Calculate total length
     size_t total_len = 0;
     size_t delim_len = strlen(delim);
-    int count = argv[0].list.count;
+    
+    ObjList *list = AS_LIST(argv[0]); // Cast to ObjList
+    int count = list->count;
     
     for (int i = 0; i < count; i++) {
-        char *s = value_to_string(argv[0].list.items[i]);
+        char *s = value_to_string(list->items[i]);
         total_len += strlen(s);
         free(s);
         if (i < count - 1) total_len += delim_len;
@@ -506,7 +517,7 @@ Value lib_str_join(int argc, Value *argv) {
     res[0] = '\0';
     
     for (int i = 0; i < count; i++) {
-        char *s = value_to_string(argv[0].list.items[i]);
+        char *s = value_to_string(list->items[i]);
         strcat(res, s);
         free(s);
         if (i < count - 1) strcat(res, delim);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #ifndef INTERPRETER_H
 #define INTERPRETER_H

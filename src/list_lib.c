@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +18,12 @@ static int value_less_than(Value a, Value b) {
     if (a.type == VAL_FLOAT && b.type == VAL_FLOAT) return a.f < b.f;
     if (a.type == VAL_INT && b.type == VAL_FLOAT) return (double)a.i < b.f;
     if (a.type == VAL_FLOAT && b.type == VAL_INT) return a.f < (double)b.i;
-    if (a.type == VAL_STRING && b.type == VAL_STRING) return strcmp(a.s, b.s) < 0;
+    
+    // Updated for Object System
+    if (IS_OBJ(a) && AS_OBJ(a)->type == OBJ_STRING && 
+        IS_OBJ(b) && AS_OBJ(b)->type == OBJ_STRING) {
+        return strcmp(AS_STRING(a)->chars, AS_STRING(b)->chars) < 0;
+    }
     return 0; 
 }
 
@@ -79,14 +84,16 @@ static void hybrid_sort(Value *items, int l, int r) {
 }
 
 Value lib_list_sort(int argc, Value *argv) {
-    if (argc != 1 || argv[0].type != VAL_LIST) {
+    //  Update type check for Object List
+    if (argc != 1 || !IS_OBJ(argv[0]) || AS_OBJ(argv[0])->type != OBJ_LIST) {
         error_report(ERR_ARGUMENT, 0, 0, "sort() expects 1 list", "Usage: sort(myList)");
         return value_null();
     }
 
-    Value list = argv[0];
-    if (list.list.count > 1) {
-        hybrid_sort(list.list.items, 0, list.list.count - 1);
+    // Use AS_LIST macro to access internal data
+    ObjList *list = AS_LIST(argv[0]);
+    if (list->count > 1) {
+        hybrid_sort(list->items, 0, list->count - 1);
     }
     return value_null();
 }
@@ -94,13 +101,15 @@ Value lib_list_sort(int argc, Value *argv) {
 // Fisher-Yates Shuffle Implementation
 //It should work now I suppose
 Value lib_list_shuffle(int argc, Value *argv) {
-    if (argc != 1 || argv[0].type != VAL_LIST) {
+    // FIX: Update type check for Object List
+    if (argc != 1 || !IS_OBJ(argv[0]) || AS_OBJ(argv[0])->type != OBJ_LIST) {
         error_report(ERR_ARGUMENT, 0, 0, "shuffle() expects 1 list", "Usage: shuffle(myList)");
         return value_null();
     }
 
-    Value list = argv[0];
-    int n = list.list.count;
+    // d Use AS_LIST macro
+    ObjList *list = AS_LIST(argv[0]);
+    int n = list->count;
     if (n <= 1) return value_null();
 
     for (int i = n - 1; i > 0; i--) {
@@ -108,9 +117,9 @@ Value lib_list_shuffle(int argc, Value *argv) {
         int j = (int)(math_internal_next() % (i + 1));
         
         // Swap
-        Value temp = list.list.items[i];
-        list.list.items[i] = list.list.items[j];
-        list.list.items[j] = temp;
+        Value temp = list->items[i];
+        list->items[i] = list->items[j];
+        list->items[j] = temp;
     }
     
     return value_null();

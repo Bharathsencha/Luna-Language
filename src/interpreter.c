@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2025 Bharath
-
+//I geneunely hate working this file. 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,9 +39,17 @@ static int is_truthy(Value v) {
         case VAL_BOOL: return v.b;
         case VAL_INT: return v.i != 0;
         case VAL_FLOAT: return v.f != 0.0;
-        case VAL_STRING: return v.s && v.s[0] != '\0'; // Empty strings are false
+        // Check string contents and list existence via the Obj system
+        case VAL_OBJ: {
+            Obj *obj = AS_OBJ(v);
+            if (obj->type == OBJ_STRING) {
+                char *s = AS_STRING(v)->chars;
+                return s && s[0] != '\0';
+            }
+            if (obj->type == OBJ_LIST) return 1; 
+            return 0;
+        }
         case VAL_NULL: return 0;
-        case VAL_LIST: return 1; // Lists are always true (even empty ones, usually)
         case VAL_NATIVE: return 1;
         case VAL_CHAR: return v.c != 0;
         case VAL_FILE:   return v.file != NULL; // Files are truthy if open
@@ -60,8 +68,11 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
     } 
     else if (n->kind == NODE_INDEX) {
         // Recursively get the parent list
-        Value *list = get_mutable_value(e, n->index.target);
-        if (!list || list->type != VAL_LIST) return NULL;
+        Value *list_val = get_mutable_value(e, n->index.target);
+        //Verify it is a List Object
+        if (!list_val || !IS_OBJ(*list_val) || AS_OBJ(*list_val)->type != OBJ_LIST) return NULL;
+        
+        ObjList *list = AS_LIST(*list_val);
         
         // Evaluate index
         Value idx = eval_expr(e, n->index.index);
@@ -71,9 +82,9 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
         }
         
         // Check bounds
-        if (idx.i < 0 || idx.i >= list->list.count) {
+        if (idx.i < 0 || idx.i >= list->count) {
             char msg[128];
-            snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d", idx.i, list->list.count);
+            snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d", idx.i, list->count);
             // Updated to use n->line from the AST node
             error_report(ERR_INDEX, n->line, 0, msg,
                 "Check that your index is between 0 and len(list)-1");
@@ -82,7 +93,7 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
         }
         
         // Return pointer to the specific item slot
-        Value *item_ptr = &list->list.items[idx.i];
+        Value *item_ptr = &list->items[idx.i];
         value_free(idx);
         return item_ptr;
     }
@@ -145,9 +156,10 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
     }
     
     // Handle String Equality
-    if (l.type == VAL_STRING && r.type == VAL_STRING) {
-        if (op == OP_EQ) return value_bool(strcmp(l.s, r.s) == 0);
-        if (op == OP_NEQ) return value_bool(strcmp(l.s, r.s) != 0);
+    //Compare using AS_STRING macro
+    if (IS_OBJ(l) && AS_OBJ(l)->type == OBJ_STRING && IS_OBJ(r) && AS_OBJ(r)->type == OBJ_STRING) {
+        if (op == OP_EQ) return value_bool(strcmp(AS_STRING(l)->chars, AS_STRING(r)->chars) == 0);
+        if (op == OP_NEQ) return value_bool(strcmp(AS_STRING(l)->chars, AS_STRING(r)->chars) != 0);
     }
 
     // Handle Boolean and Null Equality
@@ -169,7 +181,8 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
     }
 
     // Handle String Concatenation
-    if (op == OP_ADD && (l.type == VAL_STRING || r.type == VAL_STRING)) {
+    //Logic for Object Strings
+    if (op == OP_ADD && (IS_OBJ(l) || IS_OBJ(r))) {
         char *sl = value_to_string(l);
         char *sr = value_to_string(r);
         char *comb = malloc(strlen(sl) + strlen(sr) + 1);
@@ -181,7 +194,8 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
         free(comb);
         return v;
     }
-    if (l.type == VAL_LIST && r.type == VAL_LIST) {
+    //Use SIMD Vector Math for Lists
+    if (IS_OBJ(l) && AS_OBJ(l)->type == OBJ_LIST && IS_OBJ(r) && AS_OBJ(r)->type == OBJ_LIST) {
         switch (op) {
             case OP_ADD: return vec_add_values(l, r);
             case OP_SUB: return vec_sub_values(l, r);
@@ -261,9 +275,11 @@ static Value eval_expr(Env *e, AstNode *n) {
         case NODE_INDEX: {
             Value target = eval_expr(e, n->index.target);
             Value idx = eval_expr(e, n->index.index);
-            if (target.type == VAL_LIST && idx.type == VAL_INT) {
-                if (idx.i >= 0 && idx.i < target.list.count) {
-                    Value res = value_copy(target.list.items[idx.i]);
+            //Access list items via ObjList structure
+            if (IS_OBJ(target) && AS_OBJ(target)->type == OBJ_LIST && idx.type == VAL_INT) {
+                ObjList *l = AS_LIST(target);
+                if (idx.i >= 0 && idx.i < l->count) {
+                    Value res = value_copy(l->items[idx.i]);
                     value_free(target);
                     value_free(idx);
                     return res;
@@ -313,8 +329,11 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (n->call.args.count == 1) {
                     Value v = eval_expr(e, n->call.args.items[0]);
                     int len = 0;
-                    if (v.type == VAL_STRING) len = strlen(v.s);
-                    if (v.type == VAL_LIST) len = v.list.count;
+                    //Access lengths via Obj system
+                    if (IS_OBJ(v)) {
+                        if (AS_OBJ(v)->type == OBJ_STRING) len = strlen(AS_STRING(v)->chars);
+                        else if (AS_OBJ(v)->type == OBJ_LIST) len = AS_LIST(v)->count;
+                    }
                     value_free(v);
                     return value_int(len);
                 }
@@ -331,7 +350,8 @@ static Value eval_expr(Env *e, AstNode *n) {
                 Value *list_ptr = get_mutable_value(e, n->call.args.items[0]);
                 Value item_val = eval_expr(e, n->call.args.items[1]);
                 
-                if (list_ptr && list_ptr->type == VAL_LIST) {
+                //Type check via IS_OBJ
+                if (list_ptr && IS_OBJ(*list_ptr) && AS_OBJ(*list_ptr)->type == OBJ_LIST) {
                     value_list_append(list_ptr, item_val);
                 } else {
                     // Use node line number
@@ -360,12 +380,16 @@ static Value eval_expr(Env *e, AstNode *n) {
                             }
                             break;
                         case VAL_FLOAT: tname = "float"; break;
-                        case VAL_STRING: tname = "string"; break;
                         case VAL_CHAR: tname = "char"; break;
                         case VAL_BOOL: tname = "boolean"; break;
-                        case VAL_LIST: tname = "list"; break;
                         case VAL_NATIVE: tname = "native_function"; break;
                         case VAL_NULL: tname = "null"; break;
+                        // Updated: Subtype check for objects
+                        case VAL_OBJ: {
+                            if (AS_OBJ(v)->type == OBJ_STRING) tname = "string";
+                            else if (AS_OBJ(v)->type == OBJ_LIST) tname = "list";
+                            break;
+                        }
                     }
                     value_free(v);
                     return value_string(tname);
@@ -377,7 +401,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (n->call.args.count == 1) {
                     Value v = eval_expr(e, n->call.args.items[0]);
                     long long res = 0;
-                    if (v.type == VAL_STRING) res = atoll(v.s);
+                    if (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) res = atoll(AS_STRING(v)->chars);
                     else if (v.type == VAL_FLOAT) res = (long long)v.f;
                     else if (v.type == VAL_INT) res = v.i;
                     else if (v.type == VAL_BOOL) res = v.b;
@@ -391,7 +415,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (n->call.args.count == 1) {
                     Value v = eval_expr(e, n->call.args.items[0]);
                     double res = 0.0;
-                    if (v.type == VAL_STRING) res = atof(v.s);
+                    if (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) res = atof(AS_STRING(v)->chars);
                     else if (v.type == VAL_INT) res = (double)v.i;
                     else if (v.type == VAL_FLOAT) res = v.f;
                     else if (v.type == VAL_BOOL) res = v.b ? 1.0 : 0.0;
@@ -439,7 +463,8 @@ static Value eval_expr(Env *e, AstNode *n) {
                     // Fixed it, now it Passes list identifiers by reference to allow in-place modification
                     if (n->call.args.items[i]->kind == NODE_IDENT) {
                         Value *env_ref = env_get(e, n->call.args.items[i]->ident.name);
-                        if (env_ref && env_ref->type == VAL_LIST) {
+                        //Reference logic for objects
+                        if (env_ref && IS_OBJ(*env_ref) && AS_OBJ(*env_ref)->type == OBJ_LIST) {
                             argv[i] = *env_ref; // Pass direct reference
                         } else {
                             argv[i] = eval_expr(e, n->call.args.items[i]);
@@ -509,8 +534,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
             // Get pointer to the actual list item in the environment
             Value *target = get_mutable_value(e, n->assign_index.list);
             
-            // Verify target is actually a list
-            if (!target || target->type != VAL_LIST) {
+            //Verify target is a list via Obj system
+            if (!target || !IS_OBJ(*target) || AS_OBJ(*target)->type != OBJ_LIST) {
                 // Use node line number
                 error_report(ERR_TYPE, n->line, 0,
                     "Cannot assign to non-list target - target must be a list",
@@ -518,6 +543,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 value_free(val);
                 return value_null();
             }
+
+            ObjList *list = AS_LIST(*target);
 
             // Evaluate the index
             Value idx = eval_expr(e, n->assign_index.index);
@@ -532,10 +559,10 @@ static Value exec_stmt(Env *e, AstNode *n) {
             }
 
             // Bounds Check
-            if (idx.i < 0 || idx.i >= target->list.count) {
+            if (idx.i < 0 || idx.i >= list->count) {
                 char msg[128];
                 snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d",
-                         idx.i, target->list.count);
+                         idx.i, list->count);
                 // Use node line number
                 error_report(ERR_INDEX, n->line, 0, msg,
                     "Ensure your index is between 0 and len(list)-1");
@@ -545,7 +572,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
             }
 
             // Assign to the specific slot
-            Value *slot = &target->list.items[idx.i];
+            Value *slot = &list->items[idx.i];
             value_free(*slot);      // Free the old value in this slot
             *slot = value_copy(val); // Assign the new value
             
@@ -670,7 +697,10 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 if (val.type == cval.type) {
                     if (val.type == VAL_INT) eq = (val.i == cval.i);
                     else if (val.type == VAL_FLOAT) eq = (val.f == cval.f);
-                    else if (val.type == VAL_STRING) eq = !strcmp(val.s, cval.s);
+                    // Updated: Compare strings via Obj system
+                    else if (IS_OBJ(val) && AS_OBJ(val)->type == OBJ_STRING) {
+                         eq = !strcmp(AS_STRING(val)->chars, AS_STRING(cval)->chars);
+                    }
                     else if (val.type == VAL_BOOL) eq = (val.b == cval.b);
                     else if (val.type == VAL_CHAR) eq = (val.c == cval.c);
                 } else if (val.type == VAL_INT && cval.type == VAL_FLOAT) eq = (val.i == cval.f);
