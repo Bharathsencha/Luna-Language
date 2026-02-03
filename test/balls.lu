@@ -1,0 +1,52 @@
+print("--- Running Balls Extension Tests ---")
+
+# 1. Variable Declarations (balls -> let)
+balls a = 10
+big_balls b = 20
+shared_balls c = 30
+
+assert(a + b == 30)
+print("Balls variables working...")
+
+# 2. Conditionals (if_balls -> if)
+if_balls (a == 10) {
+    assert(true)
+} else_balls {
+    assert(false)
+}
+
+# 3. While Loop (spin_balls -> while)
+balls i = 0
+spin_balls (i < 5) {
+    i++
+}
+assert(i == 5)
+
+# 4. For Loop (loop_your_balls -> for)
+# This was the failing part. It MUST use C-style syntax: (init; cond; incr)
+balls count = 0
+loop_your_balls (balls j = 0; j < 5; j++) {
+    count = count + 1
+}
+assert(count == 5)
+
+# 5. Functions (grab_balls -> func)
+grab_balls double_it(val) {
+    return val * 2
+}
+assert(double_it(10) == 20)
+
+# 6. Break/Continue (drop_balls / jiggle_balls)
+balls k = 0
+spin_balls (true) {
+    k++
+    if_balls (k == 2) {
+        jiggle_balls # continue
+    }
+    if_balls (k == 5) {
+        drop_balls # break
+    }
+}
+assert(k == 5)
+
+print("All Balls Extension tests passed!")

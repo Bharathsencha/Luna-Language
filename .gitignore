@@ -20,9 +20,7 @@ build/
 .idea/
 .DS_Store
 tags
-balz.md
 test/failcheck
 test/error_demo.lu
 test/comprehensive_errors.lu
 test/index_error.lu
-test/balls.lu
