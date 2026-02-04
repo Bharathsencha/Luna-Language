@@ -69,6 +69,12 @@ test: $(BINDIR)/$(TARGET)
 	@./test_runner.sh
 	@echo "All tests passed!"
 
+bootstrap: $(BINDIR)/$(TARGET)
+	@echo "==> Building Bootstrap Test..."
+	@cat bootstrap/lexer.lu bootstrap/main.lu > bootstrap/combined.lu
+	@echo "==> Running Luna-in-Luna Lexer..."
+	@./$(BINDIR)/$(TARGET) bootstrap/combined.lu
+	@rm bootstrap/combined.lu
 
 # Clean build artifacts
 clean:
