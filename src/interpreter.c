@@ -180,7 +180,21 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
         if (op == OP_NEQ) return value_bool(l.c != r.c);
     }
 
-    // Handle String Concatenation
+    // Moved vector math check above string CONCATENATION
+    // This ensures [1,2] + [3,4] does vector addition instead of string concatenation "[1,2][3,4]"
+    //Use SIMD Vector Math for Lists
+    // this took fucking hours, prove my point i made above .. all the best to peron who will work on this in future
+    if (IS_OBJ(l) && AS_OBJ(l)->type == OBJ_LIST && IS_OBJ(r) && AS_OBJ(r)->type == OBJ_LIST) {
+        switch (op) {
+            case OP_ADD: return vec_add_values(l, r);
+            case OP_SUB: return vec_sub_values(l, r);
+            case OP_MUL: return vec_mul_values(l, r);
+            case OP_DIV: return vec_div_values(l, r);
+            default: break; // Fall through for other ops (like ==)
+        }
+    }
+
+    // Handle String Concatenation (Fallback for other Objects)
     //Logic for Object Strings
     if (op == OP_ADD && (IS_OBJ(l) || IS_OBJ(r))) {
         char *sl = value_to_string(l);
@@ -194,16 +208,7 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
         free(comb);
         return v;
     }
-    //Use SIMD Vector Math for Lists
-    if (IS_OBJ(l) && AS_OBJ(l)->type == OBJ_LIST && IS_OBJ(r) && AS_OBJ(r)->type == OBJ_LIST) {
-        switch (op) {
-            case OP_ADD: return vec_add_values(l, r);
-            case OP_SUB: return vec_sub_values(l, r);
-            case OP_MUL: return vec_mul_values(l, r);
-            case OP_DIV: return vec_div_values(l, r);
-            default: break; // Fall through for other ops (like ==)
-        }
-    }
+
     return value_null();
 }
 

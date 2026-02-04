@@ -79,6 +79,11 @@ let Mul = X * Y
 let Div = X / Y
 
 # Verify results
+#print("DEBUG Sum array:")
+#print(Sum)
+#print("DEBUG Sum[0]:")
+#print(Sum[0])
+
 assert(Sum[0] == 3)   # 1 + 2 = 3
 assert(Sub[0] == -1)  # 1 - 2 = -1
 assert(Mul[0] == 2)   # 1 * 2 = 2
