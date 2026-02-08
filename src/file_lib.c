@@ -29,16 +29,13 @@ static int check_args(int argc, int expected, const char *name) {
 Value lib_file_open(int argc, Value *argv) {
     if (!check_args(argc, 2, "open")) return value_null();
     
-    //Updated to check for Object Strings
-    if (!IS_OBJ(argv[0]) || AS_OBJ(argv[0])->type != OBJ_STRING || 
-        !IS_OBJ(argv[1]) || AS_OBJ(argv[1])->type != OBJ_STRING) {
+    if (argv[0].type != VAL_STRING || argv[1].type != VAL_STRING) {
         fprintf(stderr, "Runtime Error: open() expects strings for path and mode.\n");
         return value_null();
     }
 
-    // access char data via AS_STRING macro
-    const char *path = AS_STRING(argv[0])->chars;
-    const char *mode = AS_STRING(argv[1])->chars;
+    const char *path = argv[0].s;
+    const char *mode = argv[1].s;
 
     FILE *f = fopen(path, mode);
     if (!f) return value_null();
@@ -124,12 +121,9 @@ Value lib_file_write(int argc, Value *argv) {
 // file_exists(path) -> returns boolean
 Value lib_file_exists(int argc, Value *argv) {
     if (!check_args(argc, 1, "file_exists")) return value_null();
-    
-    // Updated to check for Object String
-    if (!IS_OBJ(argv[0]) || AS_OBJ(argv[0])->type != OBJ_STRING) return value_bool(0);
+    if (argv[0].type != VAL_STRING) return value_bool(0);
 
-    //] Access char data via AS_STRING macro
-    FILE *f = fopen(AS_STRING(argv[0])->chars, "r");
+    FILE *f = fopen(argv[0].s, "r");
     if (f) {
         fclose(f);
         return value_bool(1);
@@ -140,12 +134,9 @@ Value lib_file_exists(int argc, Value *argv) {
 // remove_file(path) -> returns boolean
 Value lib_file_remove(int argc, Value *argv) {
     if (!check_args(argc, 1, "remove_file")) return value_null();
+    if (argv[0].type != VAL_STRING) return value_bool(0);
     
-    //updated to check for Object String
-    if (!IS_OBJ(argv[0]) || AS_OBJ(argv[0])->type != OBJ_STRING) return value_bool(0);
-    
-    // Access char data via AS_STRING macro
-    int res = remove(AS_STRING(argv[0])->chars);
+    int res = remove(argv[0].s);
     return value_bool(res == 0);
 }
 

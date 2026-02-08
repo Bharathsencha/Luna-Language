@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Bharath
+// Copyright (c) 2025 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "value.h"
 #include "mystr.h"
-#include "gc.h" 
 
 // Constructor for integer values
 Value value_int(long long x) {
@@ -27,16 +26,12 @@ Value value_float(double x) {
 // Constructor for string values
 Value value_string(const char *s) {
     Value v;
-    v.type = VAL_OBJ; // Changed to VAL_OBJ for GC
-    
-    ObjString *str = (ObjString*)gc_allocate(sizeof(ObjString), OBJ_STRING);
+    v.type = VAL_STRING;
     if (s) {
-        str->chars = my_strdup(s);
+        v.s = my_strdup(s);
     } else {
-        str->chars = my_strdup("");
+        v.s = my_strdup("");
     }
-    
-    v.obj = (Obj*)str;
     return v;
 }
 
@@ -59,14 +54,10 @@ Value value_bool(int b) {
 // Constructor for empty lists
 Value value_list(void) {
     Value v;
-    v.type = VAL_OBJ; // Changed to VAL_OBJ for GC
-    
-    ObjList *list = (ObjList*)gc_allocate(sizeof(ObjList), OBJ_LIST);
-    list->items = NULL;
-    list->count = 0;
-    list->capacity = 0;
-    
-    v.obj = (Obj*)list;
+    v.type = VAL_LIST;
+    v.list.items = NULL;
+    v.list.count = 0;
+    v.list.capacity = 0;
     return v;
 }
 
@@ -94,24 +85,23 @@ Value value_null(void) {
     return v;
 }
 
-// Frees memory associated with a Value (Updated: Objects are now managed by GC)
+// Frees memory associated with a Value (deep free for lists)
 void value_free(Value v) {
-    // With reference semantics, we DO NOT free objects here.
-    // They are cleaned up by the Garbage Collector.
-    if (v.type == VAL_OBJ) {
-        return; 
+    if (v.type == VAL_STRING && v.s) {
+        free(v.s);
+    }
+    if (v.type == VAL_LIST) {
+        for (int i = 0; i < v.list.count; i++) {
+            value_free(v.list.items[i]);
+        }
+        free(v.list.items);
     }
     // VAL_NATIVE does not need freeing (function pointer is static/global)
     // VAL_FILE does not need freeing here (files must be closed explicitly via close())
 }
 
-// Creates a copy of a Value (Updated: Shallow copy for Objects)
+// Creates a deep copy of a Value
 Value value_copy(Value v) {
-    // For objects, we only copy the pointer (Reference Semantics)
-    if (v.type == VAL_OBJ) {
-        return v;
-    }
-    
     Value r;
     r.type = v.type;
     switch (v.type) {
@@ -133,8 +123,23 @@ Value value_copy(Value v) {
         case VAL_FILE:
             r.file = v.file;
             break;
+        case VAL_STRING:
+            if (v.s) {
+                r.s = my_strdup(v.s);
+            } else {
+                r.s = my_strdup("");
+            }
+            break;
+        case VAL_LIST:
+            r.list.count = v.list.count;
+            r.list.capacity = v.list.count;
+            r.list.items = malloc(sizeof(Value) * r.list.count);
+            for (int i = 0; i < r.list.count; i++) {
+                r.list.items[i] = value_copy(v.list.items[i]);
+            }
+            break;
         default:
-            r.i = 0; // NULL
+            r.i = 0;
             break;
     }
     return r;
@@ -160,29 +165,27 @@ char *value_to_string(Value v) {
         case VAL_FILE:
             if (v.file) return my_strdup("<file handle>");
             else return my_strdup("<closed file>");
-            
-        case VAL_OBJ: {
-            Obj *obj = AS_OBJ(v);
-            if (obj->type == OBJ_STRING) {
-                return my_strdup(AS_STRING(v)->chars);
-            } 
-            else if (obj->type == OBJ_LIST) {
-                ObjList *list = AS_LIST(v);
-                char *res = my_strdup("[");
-                for (int i = 0; i < list->count; i++) {
-                    char *vs = value_to_string(list->items[i]);
-                    size_t new_len = strlen(res) + strlen(vs) + 3;
-                    res = realloc(res, new_len);
-                    strcat(res, vs);
-                    if (i < list->count - 1) {
-                        strcat(res, ", ");
-                    }
-                    free(vs);
-                }
-                res = realloc(res, strlen(res) + 2);
-                strcat(res, "]");
-                return res;
+        case VAL_STRING:
+            if (v.s) {
+                return my_strdup(v.s);
+            } else {
+                return my_strdup("");
             }
+        case VAL_LIST: {
+            char *res = my_strdup("[");
+            for (int i = 0; i < v.list.count; i++) {
+                char *vs = value_to_string(v.list.items[i]);
+                size_t new_len = strlen(res) + strlen(vs) + 3;
+                res = realloc(res, new_len);
+                strcat(res, vs);
+                if (i < v.list.count - 1) {
+                    strcat(res, ", ");
+                }
+                free(vs);
+            }
+            res = realloc(res, strlen(res) + 2);
+            strcat(res, "]");
+            return res;
         }
         default:
             return my_strdup("null");
@@ -190,17 +193,14 @@ char *value_to_string(Value v) {
 }
 
 // Appends a value to a list, resizing capacity if needed
-void value_list_append(Value *list_val, Value v) {
-    if (!IS_OBJ(*list_val) || AS_OBJ(*list_val)->type != OBJ_LIST) {
+void value_list_append(Value *list, Value v) {
+    if (list->type != VAL_LIST) {
         return;
     }
-    
-    ObjList *list = AS_LIST(*list_val);
-    
-    if (list->count >= list->capacity) {
-        int n = list->capacity == 0 ? 4 : list->capacity * 2;
-        list->items = realloc(list->items, sizeof(Value) * n);
-        list->capacity = n;
+    if (list->list.count >= list->list.capacity) {
+        int n = list->list.capacity == 0 ? 4 : list->list.capacity * 2;
+        list->list.items = realloc(list->list.items, sizeof(Value) * n);
+        list->list.capacity = n;
     }
-    list->items[list->count++] = value_copy(v);
+    list->list.items[list->list.count++] = value_copy(v);
 }

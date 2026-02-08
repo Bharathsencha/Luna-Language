@@ -279,10 +279,10 @@ Value lib_math_rand(int argc, Value *argv) {
     
     long long min = 0, max = 0;
     if (argc == 1) {
-        max = (argv[0].type == VAL_INT) ? argv[0].i : (long long)val_to_double(argv[0]);
+        max = (argv[0].type == VAL_INT) ? argv[0].i : (long long)argv[0].f;
     } else if (argc == 2) {
-        min = (argv[0].type == VAL_INT) ? argv[0].i : (long long)val_to_double(argv[0]);
-        max = (argv[1].type == VAL_INT) ? argv[1].i : (long long)val_to_double(argv[1]);
+        min = (argv[0].type == VAL_INT) ? argv[0].i : (long long)argv[0].f;
+        max = (argv[1].type == VAL_INT) ? argv[1].i : (long long)argv[1].f;
     } else {
         fprintf(stderr, "Runtime Error: rand() takes 0, 1, or 2 arguments.\n");
         return value_null();

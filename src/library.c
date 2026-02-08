@@ -24,17 +24,9 @@ static int lib_is_truthy(Value v) {
         case VAL_BOOL:   return v.b;
         case VAL_INT:    return v.i != 0;
         case VAL_FLOAT:  return v.f != 0.0;
-        // Updated: Access object-based strings and lists
-        case VAL_OBJ: {
-            Obj *obj = AS_OBJ(v);
-            if (obj->type == OBJ_STRING) {
-                char *s = AS_STRING(v)->chars;
-                return s && s[0] != '\0';
-            }
-            if (obj->type == OBJ_LIST) return 1;
-            return 0;
-        }
+        case VAL_STRING: return v.s && v.s[0] != '\0';
         case VAL_NULL:   return 0;
+        case VAL_LIST:   return 1;
         case VAL_NATIVE: return 1;
         case VAL_CHAR:   return v.c != 0;
         case VAL_FILE:   return v.file != NULL; // Files are truthy if open

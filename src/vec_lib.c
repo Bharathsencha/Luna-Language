@@ -27,16 +27,11 @@ static double get_val(Value v) {
 // Generic handler that takes Values directly
 static Value vec_op_direct(Value list_a, Value list_b, VecOp op) {
     // Safety check: both must be lists
-    // Updated to use IS_OBJ and OBJ_LIST check
-    if (!IS_OBJ(list_a) || AS_OBJ(list_a)->type != OBJ_LIST ||
-        !IS_OBJ(list_b) || AS_OBJ(list_b)->type != OBJ_LIST) {
+    if (list_a.type != VAL_LIST || list_b.type != VAL_LIST) {
         return value_null();
     }
-// Use AS_LIST macro to access internal data
-    ObjList *la = AS_LIST(list_a);
-    ObjList *lb = AS_LIST(list_b);
 
-    int count = la->count < lb->count ? la->count : lb->count;
+    int count = list_a.list.count < list_b.list.count ? list_a.list.count : list_b.list.count;
     if (count == 0) return value_list();
 
     // Allocate & Pack
@@ -45,8 +40,8 @@ static Value vec_op_direct(Value list_a, Value list_b, VecOp op) {
     double *raw_out = malloc(sizeof(double) * count);
 
     for (int i = 0; i < count; i++) {
-        raw_a[i] = get_val(la->items[i]);
-        raw_b[i] = get_val(lb->items[i]);
+        raw_a[i] = get_val(list_a.list.items[i]);
+        raw_b[i] = get_val(list_b.list.items[i]);
     }
 
     // Call ASM
