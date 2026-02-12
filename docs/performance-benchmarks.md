@@ -236,7 +236,7 @@ print("Verification - Result[0][0]:", C[0][0])
 | Implementation | Time (seconds) | Relative Speed |
 |---------------|----------------|----------------|
 | Naive Python | 2.3519 | 1× (baseline) |
-| NumPy (BLAS) | 0.0453 | **52× faster** |
+| NumPy | 0.0453 | **52× faster** |
 | Luna Language | 0.0169 | **139× faster** |
 
 ### 50×50 Matrix
@@ -244,7 +244,7 @@ print("Verification - Result[0][0]:", C[0][0])
 | Implementation | Time (seconds) | Relative Speed |
 |---------------|----------------|----------------|
 | Naive Python | 0.0237 | 1× (baseline) |
-| NumPy (BLAS) | 0.000156 | **152× faster** |
+| NumPy | 0.000156 | **152× faster** |
 | Luna Language | 0.000245 | **97× faster** |
 
 ### Key Notes
@@ -487,10 +487,10 @@ print("Environment lookup time:", end - start, "seconds")
 | Benchmark | Implementation | Operations | Time (s) | Ops/Second | Speedup |
 |-----------|---------------|------------|----------|------------|---------|
 | **Matrix Mult (200×200)** | Naive Python | 8M | 2.3519 | 3.4M | 1× |
-| | NumPy BLAS | 8M | 0.0453 | 176.6M | 52× |
+| | NumPy| 8M | 0.0453 | 176.6M | 52× |
 | | **Luna C/SIMD** | 8M | 0.0169 | **473.4M** | **139×** |
 | **Matrix Mult (50×50)** | Naive Python | 125K | 0.0237 | 5.3M | 1× |
-| | **NumPy BLAS** | 125K | 0.000156 | **801M** | **152×** |
+| | **NumPy** | 125K | 0.000156 | **801M** | **152×** |
 | | Luna C/SIMD | 125K | 0.000245 | 510M | 97× |
 | **Vector Mult (1M)** | Naive Python | 1M | 0.2168 | 4.6M | 1× |
 | | Luna SIMD | 1M | 0.0641 | 15.6M | 3.4× |
