@@ -17,5 +17,6 @@ Value lib_vec_add(int argc, Value *argv);
 Value lib_vec_sub(int argc, Value *argv);
 Value lib_vec_mul(int argc, Value *argv);
 Value lib_vec_div(int argc, Value *argv);
+Value lib_mat_mul(int argc, Value *argv); // Prototype for native matrix multiplication
 
 #endif

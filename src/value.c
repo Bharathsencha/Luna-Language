@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,6 +61,16 @@ Value value_list(void) {
     return v;
 }
 
+// Constructor for empty dense lists
+Value value_dense_list(void) {
+    Value v;
+    v.type = VAL_DENSE_LIST;
+    v.dlist.data = NULL;
+    v.dlist.count = 0;
+    v.dlist.capacity = 0;
+    return v;
+}
+
 // Constructor for native functions
 Value value_native(NativeFunc fn) {
     Value v;
@@ -95,6 +105,9 @@ void value_free(Value v) {
             value_free(v.list.items[i]);
         }
         free(v.list.items);
+    }
+    if (v.type == VAL_DENSE_LIST) {
+        free(v.dlist.data);
     }
     // VAL_NATIVE does not need freeing (function pointer is static/global)
     // VAL_FILE does not need freeing here (files must be closed explicitly via close())
@@ -137,6 +150,12 @@ Value value_copy(Value v) {
             for (int i = 0; i < r.list.count; i++) {
                 r.list.items[i] = value_copy(v.list.items[i]);
             }
+            break;
+        case VAL_DENSE_LIST:
+            r.dlist.count = v.dlist.count;
+            r.dlist.capacity = v.dlist.count;
+            r.dlist.data = malloc(sizeof(double) * r.dlist.count);
+            memcpy(r.dlist.data, v.dlist.data, sizeof(double) * r.dlist.count);
             break;
         default:
             r.i = 0;
@@ -187,6 +206,22 @@ char *value_to_string(Value v) {
             strcat(res, "]");
             return res;
         }
+        case VAL_DENSE_LIST: {
+            char *res = my_strdup("d[");
+            for (int i = 0; i < v.dlist.count; i++) {
+                char tbuf[64];
+                snprintf(tbuf, 64, "%.6g", v.dlist.data[i]);
+                size_t new_len = strlen(res) + strlen(tbuf) + 3;
+                res = realloc(res, new_len);
+                strcat(res, tbuf);
+                if (i < v.dlist.count - 1) {
+                    strcat(res, ", ");
+                }
+            }
+            res = realloc(res, strlen(res) + 2);
+            strcat(res, "]");
+            return res;
+        }
         default:
             return my_strdup("null");
     }
@@ -203,4 +238,17 @@ void value_list_append(Value *list, Value v) {
         list->list.capacity = n;
     }
     list->list.items[list->list.count++] = value_copy(v);
+}
+
+// Appends a double directly to a dense list
+void value_dlist_append(Value *list, double v) {
+    if (list->type != VAL_DENSE_LIST) {
+        return;
+    }
+    if (list->dlist.count >= list->dlist.capacity) {
+        int n = list->dlist.capacity == 0 ? 4 : list->dlist.capacity * 2;
+        list->dlist.data = realloc(list->dlist.data, sizeof(double) * n);
+        list->dlist.capacity = n;
+    }
+    list->dlist.data[list->dlist.count++] = v;
 }

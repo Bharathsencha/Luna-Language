@@ -26,7 +26,8 @@ static int lib_is_truthy(Value v) {
         case VAL_FLOAT:  return v.f != 0.0;
         case VAL_STRING: return v.s && v.s[0] != '\0';
         case VAL_NULL:   return 0;
-        case VAL_LIST:   return 1;
+        case VAL_LIST:   
+        case VAL_DENSE_LIST: return 1; // Updated to include Dense Lists
         case VAL_NATIVE: return 1;
         case VAL_CHAR:   return v.c != 0;
         case VAL_FILE:   return v.file != NULL; // Files are truthy if open
@@ -153,6 +154,7 @@ void env_register_stdlib(Env *env) {
     env_def(env, "vec_sub", value_native(lib_vec_sub));
     env_def(env, "vec_mul", value_native(lib_vec_mul));
     env_def(env, "vec_div", value_native(lib_vec_div));
+    env_def(env, "mat_mul", value_native(lib_mat_mul)); // New native matrix multiplication
 
     // File I/O Library
     env_def(env, "open", value_native(lib_file_open));

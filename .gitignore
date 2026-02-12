@@ -25,3 +25,8 @@ test/error_demo.lu
 test/comprehensive_errors.lu
 test/index_error.lu
 bootstrap/
+ir/
+test_file.txt
+docs/my_strdup.md
+preprocessed/
+speed/*

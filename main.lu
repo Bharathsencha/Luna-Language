@@ -1,28 +1,25 @@
-func roll_dice(num_rolls) {
-    srand(42)  # Seed for reproducible results
-    
-    let rolls = []
-    let total = 0
-    let min_roll = 6
-    let max_roll = 1
-    
-    for (let i = 0; i < num_rolls; i++) {
-        let roll = rand(1, 6)
-        append(rolls, roll)
-        total = total + roll
-        
-        # Track min and max
-        min_roll = min(min_roll, roll)
-        max_roll = max(max_roll, roll)
+let size = 50
+let A = []
+let B = []
+
+print("Initializing", size, "x", size, "matrices...")
+for (let i = 0; i < size; i++) {
+    let rowA = []
+    let rowB = []
+    for (let j = 0; j < size; j++) {
+        append(rowA, 1.0) 
+        append(rowB, 2.0)
     }
-    
-    let average = float(total) / float(num_rolls)
-    
-    print("Rolls:", rolls)
-    print("Total:", total)
-    print("Average:", average)
-    print("Min Roll:", min_roll)
-    print("Max Roll:", max_roll)
+    append(A, rowA)
+    append(B, rowB)
 }
 
-roll_dice(10)
+
+let start = clock()
+let C = mat_mul(A, B)
+let end = clock()
+
+print("Matrix Multiplication took:", end - start, "seconds")
+
+print("Verification - Result[0][0]:", C[0][0])
+

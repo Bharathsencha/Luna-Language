@@ -69,6 +69,12 @@ test: $(BINDIR)/$(TARGET)
 	@./test_runner.sh
 	@echo "All tests passed!"
 
+bootstrap: $(BINDIR)/$(TARGET)
+	@echo "==> Building Bootstrap Test..."
+	@cat bootstrap/lexer.lu bootstrap/main.lu > bootstrap/combined.lu
+	@echo "==> Running Luna-in-Luna Lexer..."
+	@./$(BINDIR)/$(TARGET) bootstrap/combined.lu
+	@rm bootstrap/combined.lu
 
 # Clean build artifacts
 clean:
@@ -82,4 +88,25 @@ run: $(BINDIR)/$(TARGET)
 repl: $(BINDIR)/$(TARGET)
 	./$(BINDIR)/$(TARGET)
 
-.PHONY: all clean run repl test
+# Generate IR (GIMPLE) representation
+ir:
+	@mkdir -p ir
+	@for src in $(SRCS); do \
+		base=$$(basename $$src .c); \
+		echo "Generating GIMPLE IR for $$src..."; \
+		$(CC) $(CFLAGS) -fdump-tree-gimple -c $$src -o /dev/null; \
+	done
+	@find . -name "*.gimple" -exec mv {} ir/ \;
+	@echo "IR files generated in ir/ directory"
+
+# Generate preprocessed source files
+preprocess:
+	@mkdir -p preprocessed
+	@for src in $(SRCS); do \
+		base=$$(basename $$src .c); \
+		echo "Preprocessing $$src..."; \
+		$(CC) $(CFLAGS) -E $$src -o preprocessed/$$base.i; \
+	done
+	@echo "Preprocessed files generated in preprocessed/ directory"
+
+.PHONY: all clean run repl test ir preprocess

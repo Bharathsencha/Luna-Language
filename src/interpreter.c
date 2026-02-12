@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +41,8 @@ static int is_truthy(Value v) {
         case VAL_FLOAT: return v.f != 0.0;
         case VAL_STRING: return v.s && v.s[0] != '\0'; // Empty strings are false
         case VAL_NULL: return 0;
-        case VAL_LIST: return 1; // Lists are always true (even empty ones, usually)
+        case VAL_LIST: 
+        case VAL_DENSE_LIST: return 1; // Lists are always true (even empty ones, usually) brrrrrrrrrrrrrrrr
         case VAL_NATIVE: return 1;
         case VAL_CHAR: return v.c != 0;
         case VAL_FILE:   return v.file != NULL; // Files are truthy if open
@@ -61,8 +62,11 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
     else if (n->kind == NODE_INDEX) {
         // Recursively get the parent list
         Value *list = get_mutable_value(e, n->index.target);
-        if (!list || list->type != VAL_LIST) return NULL;
+        if (!list || (list->type != VAL_LIST && list->type != VAL_DENSE_LIST)) return NULL;
         
+        // Return list reference for dense lists; indexing is handled in assignment logic
+        if (list->type == VAL_DENSE_LIST) return list;
+
         // Evaluate index
         Value idx = eval_expr(e, n->index.index);
         if (idx.type != VAL_INT) {
@@ -181,7 +185,8 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
         free(comb);
         return v;
     }
-    if (l.type == VAL_LIST && r.type == VAL_LIST) {
+    if ((l.type == VAL_LIST || l.type == VAL_DENSE_LIST) && 
+        (r.type == VAL_LIST || r.type == VAL_DENSE_LIST)) {
         switch (op) {
             case OP_ADD: return vec_add_values(l, r);
             case OP_SUB: return vec_sub_values(l, r);
@@ -261,12 +266,21 @@ static Value eval_expr(Env *e, AstNode *n) {
         case NODE_INDEX: {
             Value target = eval_expr(e, n->index.target);
             Value idx = eval_expr(e, n->index.index);
-            if (target.type == VAL_LIST && idx.type == VAL_INT) {
-                if (idx.i >= 0 && idx.i < target.list.count) {
-                    Value res = value_copy(target.list.items[idx.i]);
-                    value_free(target);
-                    value_free(idx);
-                    return res;
+            if (idx.type == VAL_INT) {
+                if (target.type == VAL_LIST) {
+                    if (idx.i >= 0 && idx.i < target.list.count) {
+                        Value res = value_copy(target.list.items[idx.i]);
+                        value_free(target);
+                        value_free(idx);
+                        return res;
+                    }
+                } else if (target.type == VAL_DENSE_LIST) {
+                    if (idx.i >= 0 && idx.i < target.dlist.count) {
+                        Value res = value_float(target.dlist.data[idx.i]);
+                        value_free(target);
+                        value_free(idx);
+                        return res;
+                    }
                 }
             }
             value_free(target);
@@ -315,6 +329,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                     int len = 0;
                     if (v.type == VAL_STRING) len = strlen(v.s);
                     if (v.type == VAL_LIST) len = v.list.count;
+                    if (v.type == VAL_DENSE_LIST) len = v.dlist.count;
                     value_free(v);
                     return value_int(len);
                 }
@@ -333,6 +348,9 @@ static Value eval_expr(Env *e, AstNode *n) {
                 
                 if (list_ptr && list_ptr->type == VAL_LIST) {
                     value_list_append(list_ptr, item_val);
+                } else if (list_ptr && list_ptr->type == VAL_DENSE_LIST) {
+                    double dv = (item_val.type == VAL_INT) ? (double)item_val.i : item_val.f;
+                    value_dlist_append(list_ptr, dv);
                 } else {
                     // Use node line number
                     error_report(ERR_ARGUMENT, n->line, 0,
@@ -363,7 +381,8 @@ static Value eval_expr(Env *e, AstNode *n) {
                         case VAL_STRING: tname = "string"; break;
                         case VAL_CHAR: tname = "char"; break;
                         case VAL_BOOL: tname = "boolean"; break;
-                        case VAL_LIST: tname = "list"; break;
+                        case VAL_LIST: 
+                        case VAL_DENSE_LIST: tname = "list"; break;
                         case VAL_NATIVE: tname = "native_function"; break;
                         case VAL_NULL: tname = "null"; break;
                     }
@@ -436,10 +455,10 @@ static Value eval_expr(Env *e, AstNode *n) {
                 int argc = n->call.args.count;
                 Value *argv = malloc(sizeof(Value) * argc);
                 for (int i = 0; i < argc; i++) {
-                    // Fixed it, now it Passes list identifiers by reference to allow in-place modification
+                    // Now it Passes list identifiers by reference to allow in-place modification
                     if (n->call.args.items[i]->kind == NODE_IDENT) {
                         Value *env_ref = env_get(e, n->call.args.items[i]->ident.name);
-                        if (env_ref && env_ref->type == VAL_LIST) {
+                        if (env_ref && (env_ref->type == VAL_LIST || env_ref->type == VAL_DENSE_LIST)) {
                             argv[i] = *env_ref; // Pass direct reference
                         } else {
                             argv[i] = eval_expr(e, n->call.args.items[i]);
@@ -510,7 +529,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
             Value *target = get_mutable_value(e, n->assign_index.list);
             
             // Verify target is actually a list
-            if (!target || target->type != VAL_LIST) {
+            if (!target || (target->type != VAL_LIST && target->type != VAL_DENSE_LIST)) {
                 // Use node line number
                 error_report(ERR_TYPE, n->line, 0,
                     "Cannot assign to non-list target - target must be a list",
@@ -531,23 +550,30 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 return value_null();
             }
 
-            // Bounds Check
-            if (idx.i < 0 || idx.i >= target->list.count) {
-                char msg[128];
-                snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d",
-                         idx.i, target->list.count);
-                // Use node line number
-                error_report(ERR_INDEX, n->line, 0, msg,
-                    "Ensure your index is between 0 and len(list)-1");
-                value_free(val);
-                value_free(idx);
-                return value_null();
-            }
+            if (target->type == VAL_LIST) {
+                // Bounds Check
+                if (idx.i < 0 || idx.i >= target->list.count) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d",
+                            idx.i, target->list.count);
+                    // Use node line number
+                    error_report(ERR_INDEX, n->line, 0, msg,
+                        "Ensure your index is between 0 and len(list)-1");
+                    value_free(val);
+                    value_free(idx);
+                    return value_null();
+                }
 
-            // Assign to the specific slot
-            Value *slot = &target->list.items[idx.i];
-            value_free(*slot);      // Free the old value in this slot
-            *slot = value_copy(val); // Assign the new value
+                // Assign to the specific slot
+                Value *slot = &target->list.items[idx.i];
+                value_free(*slot);      // Free the old value in this slot
+                *slot = value_copy(val); // Assign the new value
+            } else {
+                // Direct high-performance assignment for dense lists
+                if (idx.i >= 0 && idx.i < target->dlist.count) {
+                    target->dlist.data[idx.i] = (val.type == VAL_INT) ? (double)val.i : val.f;
+                }
+            }
             
             value_free(val);
             value_free(idx);
