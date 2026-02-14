@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 let size = 50
+=======
+let size = 200
+>>>>>>> 5b4b1cf (Added make native make native-run and make native-clean. The code ran ~15% faster.)
 let A = []
 let B = []
 
