@@ -1,4 +1,10 @@
+# Force Luna files to be detected as the 'Luna' language
 *.lu linguist-language=Luna
-*.lu linguist-detectable=true
-*.lu linguist-vendored=false
-*.lu linguist-documentation=false
+
+# Ignore compiled binaries and object files from language statistics
+bin/* linguist-vendored
+obj/* linguist-vendored
+lib/* linguist-vendored
+
+# Treat specific asset folders as documentation/vendo red if needed (optional)
+# fun/assets/* linguist-vendored
