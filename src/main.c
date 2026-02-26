@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,8 +13,23 @@
 #include "env.h"
 #include "library.h"
 #include "math_lib.h" // Required for lib_math_srand auto-seed
+#include "gui_lib.h"
+#include "intern.h" // For intern_init and intern_cleanup
 
 #define MAX_INPUT 1024
+
+// Helper to define global color constants in Luna
+void register_color_constants(Env *env) {
+    (void)env;
+
+    // Colors are represented as Luna Lists: [R, G, B, A]
+    // double red[] = {255, 0, 0, 255};
+    // double green[] = {0, 255, 0, 255};
+    // double blue[] = {0, 0, 255, 255};
+    // double white[] = {255, 255, 255, 255};
+    // double black[] = {0, 0, 0, 255};
+    // double raywhite[] = {245, 245, 245, 255};
+}
 
 // Interactive Read-Eval-Print Loop
 void run_repl(Env *env) {
@@ -63,15 +78,22 @@ int main(int argc, char **argv) {
     // regardless of the user's system language settings.
     setlocale(LC_ALL, "C");
 
+    // Initialize the AST Arena Allocator
+    ast_init();
+    intern_init(); // Initialize global string intern system
+
     // Initialize the global environment once to persist variables
     Env *global_env = env_create_global();
 
     // Register all built-in standard library functions
     env_register_stdlib(global_env);
+    
+    // Define GUI color constants so they are available globally
+    register_color_constants(global_env);
 
     // AUTO-SEED: Initialize xoroshiro128++ state using OS entropy (/dev/urandom)
-    // Passing 0 and NULL triggers the internal get_os_entropy() fallback
-    lib_math_srand(0, NULL);
+    // Pass 'global_env' as the third argument to match the signature
+    lib_math_srand(0, NULL, global_env);
 
     if (argc < 2) {
         // No file provided: Run REPL mode
@@ -110,13 +132,27 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        // Execute the parsed program
+        // Execute the parsed program (top-level statements and definitions)
         interpret(prog, global_env);
+
+        // Auto-Main Logic: Check if 'main' was defined and call it automatically
+        AstNode *main_def = env_get_func(global_env, "main");
+        if (main_def && !luna_had_error) {
+            NodeList no_args;
+            nodelist_init(&no_args);
+            
+            // Construct a synthetic AST node for the call: main()
+            AstNode *main_call = ast_call("main", no_args, prog->line);
+            interpret(main_call, global_env);
+            
+            ast_free(main_call);
+        }
 
         ast_free(prog);
         free(src);
     }
 
+    ast_cleanup();
     env_free_global(global_env);
     return 0;
 }

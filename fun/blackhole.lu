@@ -1,0 +1,228 @@
+func main() {
+    init_window(1024, 768, "Luna - Schwarzschild Event Horizon")
+    set_fps(60)
+
+    let cx = 512.0
+    let cy = 384.0
+
+    # Schwarzschild constants
+    let rs        = 55.0        # Event horizon radius
+    let isco      = rs * 3.0    # Innermost Stable Circular Orbit
+    let shadow_r  = rs * 2.3    # Apparent shadow (larger than rs due to lensing)
+
+    #  1. Background starfield 
+    let bg_x = []
+    let bg_y = []
+    let bg_s = []
+    let bg_b = []
+    let bg_h = []
+    for (let i = 0; i < 800; i++) {
+        append(bg_x, rand() * 1024)
+        append(bg_y, rand() * 768)
+        append(bg_s, rand() * 1.2 + 0.3)
+        append(bg_b, rand() * 160 + 60)
+        # Occasional blue/orange tinted stars
+        let sh = 0.0
+        if (rand() > 0.85) { sh = 210.0 }
+        if (rand() > 0.92) { sh = 30.0  }
+        append(bg_h, sh)
+    }
+
+    #  2. Accretion disk particles (3D Keplerian) 
+    let px   = []
+    let py   = []
+    let pz   = []
+    let pvx  = []
+    let pvy  = []
+    let pvz  = []
+    let pcol = []
+    let psz  = []
+
+    let max_p = 40000
+
+    for (let i = 0; i < max_p; i++) {
+        let r_norm = pow(rand(), 1.4)
+        let r      = rs * 2.2 + r_norm * 380.0
+        let a      = rand() * 6.28318
+
+        append(px, cos(a) * r)
+        append(py, (rand() - 0.5) * 4.0)   # thin disk, slight vertical scatter
+        append(pz, sin(a) * r)
+
+        # Keplerian orbital speed
+        let spd = sqrt(1.0 / (r + 0.01)) * 5.0
+        append(pvx, -sin(a) * spd)
+        append(pvy, (rand() - 0.5) * 0.015)
+        append(pvz,  cos(a) * spd)
+
+        append(psz, rand() * 0.9 + 0.3)
+
+        # Heat-map hue: innermost = white-yellow (0-40), outer = deep orange-red
+        let hue = r_norm * 42.0
+        if (hue > 42.0) { hue = 42.0 }
+        append(pcol, hue)
+    }
+
+    #  3. Nebula dust clouds (background atmosphere) 
+    let neb_x   = []
+    let neb_y   = []
+    let neb_r   = []
+    let neb_hue = []
+    for (let i = 0; i < 18; i++) {
+        let na = rand() * 6.28318
+        let nr = 180.0 + rand() * 280.0
+        append(neb_x,   cx + cos(na) * nr)
+        append(neb_y,   cy + sin(na) * nr * 0.4)
+        append(neb_r,   60.0 + rand() * 120.0)
+        let nh = 10.0 + rand() * 30.0
+        append(neb_hue, nh)
+    }
+
+    let global_time = 0.0
+    let dt          = 0.016
+    let tilt_v      = 0.18     # disk viewing angle
+
+    while (window_open()) {
+        global_time = global_time + dt
+
+        begin_drawing()
+
+        # Deep space background gradient feel
+        clear_background(0, 0, 4, 255)
+
+        # Subtle radial darkening toward edges (vignette via large dim circles)
+        draw_circle(cx, cy, 520, [0, 0, 0, 60])
+        draw_circle(cx, cy, 620, [0, 0, 4, 80])
+
+        #  Nebula dust 
+        for (let i = 0; i < 18; i++) {
+            let nc = hsl(neb_hue[i], 0.7, 0.12)
+            draw_circle(neb_x[i], neb_y[i], neb_r[i], [nc[0], nc[1], nc[2], 8])
+            draw_circle(neb_x[i], neb_y[i], neb_r[i] * 0.55, [nc[0], nc[1], nc[2], 12])
+        }
+
+        #  Background stars with gravitational lensing warp
+        for (let i = 0; i < 800; i++) {
+            let dx  = bg_x[i] - cx
+            let dy  = bg_y[i] - cy
+            let d2  = dx*dx + dy*dy
+            let d   = sqrt(d2) + 0.001
+            let warp = 1.0 + (rs * rs * 70.0) / (d2 + 300.0)
+            let lx  = cx + dx * warp
+            let ly  = cy + dy * warp
+            let br  = bg_b[i] + sin(global_time * 2.5 + float(i) * 0.3) * 45.0
+            if (br > 255) { br = 255 }
+            if (br < 0)   { br = 0   }
+            let bri = int(br)
+            let sh  = bg_h[i]
+            if (sh > 0.0) {
+                let sc = hsl(sh, 0.8, 0.75)
+                draw_circle(lx, ly, bg_s[i], [sc[0], sc[1], sc[2], bri])
+            } else {
+                draw_circle(lx, ly, bg_s[i], [255, 248, 235, bri])
+            }
+        }
+
+        #  Accretion disk physics + render 
+        for (let i = 0; i < max_p; i++) {
+            let x  = px[i]
+            let y  = py[i]
+            let z  = pz[i]
+            let d2 = x*x + y*y + z*z
+            let d  = sqrt(d2) + 0.0001
+
+            # Schwarzschild-approximated gravity (stronger inside ISCO)
+            let grav = 9.0 / (d2 + 8.0)
+            if (d < isco) { grav = grav * (1.0 + (isco - d) * 0.12) }
+
+            pvx[i] = pvx[i] - (x / d) * grav
+            pvy[i] = pvy[i] - (y / d) * grav
+            pvz[i] = pvz[i] - (z / d) * grav
+
+            # Slight viscous drag to keep disk stable
+            pvx[i] = pvx[i] * 0.9995
+            pvy[i] = pvy[i] * 0.9990
+            pvz[i] = pvz[i] * 0.9995
+
+            px[i] = px[i] + pvx[i]
+            py[i] = py[i] + pvy[i]
+            pz[i] = pz[i] + pvz[i]
+
+            # Doppler shift: left side moves toward viewer = brighter/bluer
+            let doppler_shift = 1.0 - (px[i] / (d + 0.001)) * 0.65
+
+            let hue = pcol[i]
+            # Doppler blue shift on approaching side
+            if (doppler_shift > 1.0) { hue = hue - 8.0 }
+            if (hue < 0.0) { hue = 0.0 }
+
+            let sat = 0.95
+            let lit = 0.38 + (1.0 - hue / 42.0) * 0.22  # inner = brighter
+
+            if (pz[i] < 0.0) {
+                # BEHIND the black hole — gravitational lensing bends light
+                # into top and bottom Einstein arcs
+                let r_xz    = sqrt(px[i]*px[i] + pz[i]*pz[i]) + 0.001
+                let lens_r  = r_xz + (rs * rs * 1.6) / r_xz
+                let sx_arc  = cx + px[i] * (lens_r / r_xz)
+
+                # Top arc (bent over the top)
+                let sy_top  = cy - lens_r * 0.55
+                # Bottom arc (bent under)
+                let sy_bot  = cy + lens_r * 0.55
+
+                let alpha   = int(doppler_shift * 35.0)
+                if (alpha < 0)   { alpha = 0   }
+                if (alpha > 120) { alpha = 120  }
+
+                let c = hsl(hue, sat, lit)
+                draw_circle(sx_arc, sy_top, psz[i], [c[0], c[1], c[2], alpha])
+                draw_circle(sx_arc, sy_bot, psz[i], [c[0], c[1], c[2], alpha])
+            } else {
+                # FRONT of disk — visible directly
+                let sx    = cx + px[i]
+                let sy    = cy + py[i] + pz[i] * tilt_v
+                let alpha = int(doppler_shift * 200.0)
+                if (alpha < 0)   { alpha = 0   }
+                if (alpha > 255) { alpha = 255  }
+                let c = hsl(hue, sat, lit)
+                draw_circle(sx, sy, psz[i], [c[0], c[1], c[2], alpha])
+            }
+        }
+
+        #  Accretion disk inner glow (corona) 
+        let corona_pulse = 0.8 + sin(global_time * 7.0) * 0.2
+        draw_circle(cx, cy, shadow_r + 55, [255, 120, 20, 6])
+        draw_circle(cx, cy, shadow_r + 35, [255, 160, 40, 10])
+        draw_circle(cx, cy, shadow_r + 18, [255, 200, 80, 18])
+        draw_circle(cx, cy, shadow_r + 8,  [255, 240, 140, int(28 * corona_pulse)])
+
+        #  Event horizon shadow 
+        draw_circle(cx, cy, shadow_r, [0, 0, 0, 255])
+
+        #  Photon sphere: layered orange glow ring 
+        for (let i = 0; i < 20; i++) {
+            let gr  = shadow_r + float(i) * 3.5
+            let ga  = int(14.0 - float(i) * 0.55)
+            if (ga < 1) { ga = 1 }
+            let gc  = hsl(28.0 + float(i) * 1.5, 0.95, 0.55)
+            draw_circle(cx, cy, gr, [gc[0], gc[1], gc[2], ga])
+        }
+
+        # Sharp photon ring with pulse
+        let ring_a = int(160.0 + sin(global_time * 12.0) * 80.0)
+        if (ring_a > 255) { ring_a = 255 }
+        draw_circle(cx, cy, shadow_r + 3.0, [255, 230, 150, ring_a])
+        draw_circle(cx, cy, shadow_r + 1.5, [255, 255, 220, int(ring_a * 0.6)])
+
+        # Labels 
+        draw_text_default("Schwarzschild Black Hole", 20, 20, 22, [255, 130, 60, 200])
+        draw_text_default("40,000 relativistic particles  |  Keplerian accretion disk  |  Einstein lensing arcs", 20, 48, 13, [200, 120, 60, 120])
+
+        end_drawing()
+    }
+
+    close_window()
+}
+
+main()

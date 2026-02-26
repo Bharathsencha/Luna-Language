@@ -1,0 +1,61 @@
+init_window(1024, 768, "Luna - Hypnotic Ripples")
+set_fps(60)
+
+let time = 0.0
+let spacing = 40
+let cols = 1024 / spacing
+let rows = 768 / spacing
+
+while (window_open()) {
+    time = time + 0.05
+    let m = get_mouse_position()
+    let mx = m[0]
+    let my = m[1]
+    
+    begin_drawing()
+    clear_background(10, 10, 20, 255) # Dark Blue/Black
+    
+    # Grid Loop
+    let y = 0
+    while (y < rows) {
+        let x = 0
+        while (x < cols) {
+            let cx = x * spacing + (spacing / 2)
+            let cy = y * spacing + (spacing / 2)
+            
+            # Calculate distance to mouse
+            let dx = mx - cx
+            let dy = my - cy
+            let dist = sqrt(dx*dx + dy*dy)
+            
+            # Calculate Ripple Effect
+            # sin(dist - time) creates outward waves
+            let angle = (dist * 0.02) - time
+            let rain = (0.5 + sin(angle) * 0.5) 
+            
+            # Size and Color based on wave
+            let radius = rain * (spacing * 0.8)
+            
+            # Color Palette (Cyan to Purple)
+            let r = to_int((sin(angle) * 100) + 127)
+            let g = to_int((cos(angle) * 100) + 127)
+            let b = 255
+            let a = 200
+            
+            # Interactive: Mouse Proximity increases size
+            if (dist < 200) {
+                radius = radius + (200 - dist) * 0.1
+            }
+            
+            draw_circle(cx, cy, radius, [r, g, b, a])
+            
+            x = x + 1
+        }
+        y = y + 1
+    }
+    
+    draw_text_default("Move Mouse!", 20, 20, 30, WHITE)
+    end_drawing()
+}
+
+close_window()

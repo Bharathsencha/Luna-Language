@@ -1,0 +1,26 @@
+let m_size = 300
+let A = []
+let B = []
+let m = 0
+
+# Generate 300x300 matrices
+while (m < m_size) {
+    let rowA = []
+    let rowB = []
+    let n = 0
+    while (n < m_size) {
+        append(rowA, 1.5)
+        append(rowB, 2.5)
+        n = n + 1
+    }
+    append(A, rowA)
+    append(B, rowB)
+    m = m + 1
+}
+
+let start_time = clock()
+
+let C = mat_mul(A, B)
+
+let end_time = clock()
+print("Luna Time: ", end_time - start_time, " seconds")

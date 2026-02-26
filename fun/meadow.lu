@@ -1,0 +1,173 @@
+# Sunlit Meadow
+# A bright, peaceful scene with rolling hills, clouds, and flowers
+
+init_window(1024, 768, "Luna - Sunlit Meadow")
+set_fps(60)
+init_audio_device()
+
+let music = load_music_stream("fun/music/グッド・ドクター-(143k).mp3")
+play_music_stream(music)
+
+let time = 0.0
+
+while (window_open()) {
+    time = time + 0.01
+    begin_drawing()
+    update_music_stream(music)
+
+    # Bright sky gradient (light blue to soft blue)
+    let sky_top = hsl(210.0, 0.7, 0.75)
+    let sky_mid = hsl(200.0, 0.6, 0.85)
+    draw_gradient_ex(0, 0, 1024, 768, sky_top, sky_mid, sky_mid, sky_top)
+
+    # Sun with glow
+    let sun_x = 780
+    let sun_y = 120
+    let sun_pulse = 0.95 + sin(time * 0.8) * 0.05
+    # Outer glow
+    draw_circle(sun_x, sun_y, 120, [255, 245, 200, 15])
+    draw_circle(sun_x, sun_y, 90, [255, 240, 180, 25])
+    draw_circle(sun_x, sun_y, 65, [255, 235, 160, 40])
+    # Sun body
+    draw_circle(sun_x, sun_y, to_int(45 * sun_pulse), [255, 250, 220, 255])
+    draw_circle(sun_x, sun_y, to_int(40 * sun_pulse), [255, 255, 240, 255])
+
+    # Sun rays
+    let ray = 0
+    while (ray < 12) {
+        let r_angle = ray * 0.524 + time * 0.3
+        let r_len = 70 + sin(time * 2 + ray * 1.3) * 20
+        let rx1 = sun_x + cos(r_angle) * 50
+        let ry1 = sun_y + sin(r_angle) * 50
+        let rx2 = sun_x + cos(r_angle) * (50 + r_len)
+        let ry2 = sun_y + sin(r_angle) * (50 + r_len)
+        let r_alpha = to_int(40 + sin(time + ray) * 20)
+        draw_line(rx1, ry1, rx2, ry2, 2, [255, 245, 200, r_alpha])
+        ray = ray + 1
+    }
+
+    # Fluffy clouds
+    let c = 0
+    while (c < 5) {
+        let cx = ((c * 253 + 80) % 1200) - 100 + sin(time * 0.3 + c * 2) * 30
+        let cy = 60 + c * 55 + sin(time * 0.5 + c) * 10
+        let c_alpha = 200 + to_int(sin(time * 0.4 + c) * 40)
+        if (c_alpha > 255) { c_alpha = 255 }
+        # Cloud body (overlapping circles)
+        draw_circle(cx, cy, 35, [255, 255, 255, c_alpha])
+        draw_circle(cx + 30, cy - 8, 30, [255, 255, 255, c_alpha])
+        draw_circle(cx + 55, cy, 28, [255, 255, 255, c_alpha])
+        draw_circle(cx + 25, cy + 5, 25, [250, 252, 255, c_alpha])
+        draw_circle(cx - 15, cy + 5, 22, [248, 250, 255, c_alpha])
+        c = c + 1
+    }
+
+    # Far hills (soft blue-green, misty)
+    let hx = 0
+    while (hx < 1024) {
+        let hill_y = 480 - sin(hx * 0.005 + 0.8) * 60 - cos(hx * 0.012) * 30
+        let hill_h = 768 - hill_y
+        let h_col = hsl(150.0, 0.3, 0.65)
+        draw_rectangle(hx, to_int(hill_y), 4, to_int(hill_h), [h_col[0], h_col[1], h_col[2], 200])
+        hx = hx + 3
+    }
+
+    # Mid hills (rich green)
+    hx = 0
+    while (hx < 1024) {
+        let hill_y = 520 - sin(hx * 0.007 + 2.0) * 50 - sin(hx * 0.018 + 1.0) * 25
+        let hill_h = 768 - hill_y
+        let wave = sin(time * 0.5 + hx * 0.01) * 0.05
+        let h_col = hsl(120.0 + wave * 20, 0.5, 0.45)
+        draw_rectangle(hx, to_int(hill_y), 4, to_int(hill_h), [h_col[0], h_col[1], h_col[2], 255])
+        hx = hx + 3
+    }
+
+    # Near meadow (warm green, brighter)
+    hx = 0
+    while (hx < 1024) {
+        let hill_y = 580 - sin(hx * 0.004 + 0.3) * 30 - sin(hx * 0.015 + 3.5) * 20
+        let hill_h = 768 - hill_y
+        let h_col = hsl(100.0 + sin(hx * 0.01 + time * 0.3) * 15, 0.6, 0.4)
+        draw_rectangle(hx, to_int(hill_y), 4, to_int(hill_h), [h_col[0], h_col[1], h_col[2], 255])
+        hx = hx + 3
+    }
+
+    # Grass blades (swaying in the wind)
+    let g = 0
+    while (g < 100) {
+        let gx = (g * 11 + 3) % 1024
+        let g_base_y = 580 - sin(gx * 0.004 + 0.3) * 30 - sin(gx * 0.015 + 3.5) * 20
+        let g_height = 12 + sin(g * 1.7) * 6
+        let sway = sin(time * 2.5 + gx * 0.02 + g * 0.5) * 4
+        let g_col = hsl(110.0 + sin(g * 0.7) * 20, 0.7, 0.35 + sin(g * 0.3) * 0.05)
+        draw_line(gx, g_base_y, gx + sway, g_base_y - g_height, 2, [g_col[0], g_col[1], g_col[2], 200])
+        g = g + 1
+    }
+
+    # Wildflowers
+    let f = 0
+    while (f < 40) {
+        let fx = (f * 29 + 17) % 1000 + 12
+        let f_base_y = 575 - sin(fx * 0.004 + 0.3) * 30 - sin(fx * 0.015 + 3.5) * 20
+        let f_sway = sin(time * 2.0 + fx * 0.02 + f * 0.8) * 3
+        let stem_h = 18 + sin(f * 2.3) * 6
+        let f_top_x = fx + f_sway
+        let f_top_y = f_base_y - stem_h
+
+        # Stem
+        let stem_col = hsl(120.0, 0.6, 0.3)
+        draw_line(fx, f_base_y, f_top_x, f_top_y, 1, [stem_col[0], stem_col[1], stem_col[2], 180])
+
+        # Flower head (different colors)
+        let f_type = f % 5
+        let f_hue = 0.0
+        if (f_type == 0) { f_hue = 350.0 }
+        if (f_type == 1) { f_hue = 45.0 }
+        if (f_type == 2) { f_hue = 280.0 }
+        if (f_type == 3) { f_hue = 25.0 }
+        if (f_type == 4) { f_hue = 200.0 }
+        let f_col = hsl(f_hue, 0.9, 0.6)
+        let f_r = 4 + sin(f * 1.1 + time) * 1
+        draw_circle(f_top_x, f_top_y, f_r, [f_col[0], f_col[1], f_col[2], 230])
+        # Center dot
+        draw_circle(f_top_x, f_top_y, 2, [255, 240, 100, 220])
+        f = f + 1
+    }
+
+    # Butterflies
+    let bf = 0
+    while (bf < 4) {
+        let bf_cx = 200 + bf * 200 + sin(time * 1.2 + bf * 3) * 80
+        let bf_cy = 400 + sin(time * 0.8 + bf * 2.5) * 60 + cos(time * 1.5 + bf) * 30
+        let wing_flap = abs(sin(time * 8 + bf * 4)) * 6
+        let bf_hue = bf * 70 + 30 + sin(time + bf) * 20
+        let bf_col = hsl(bf_hue, 0.9, 0.6)
+
+        # Wings (two circles on each side, size varies with flap)
+        draw_circle(bf_cx - 4, bf_cy, wing_flap, [bf_col[0], bf_col[1], bf_col[2], 180])
+        draw_circle(bf_cx + 4, bf_cy, wing_flap, [bf_col[0], bf_col[1], bf_col[2], 180])
+        # Body
+        draw_rectangle(to_int(bf_cx) - 1, to_int(bf_cy) - 3, 2, 6, [40, 30, 20, 255])
+        bf = bf + 1
+    }
+
+    # Gentle light particles / pollen floating
+    let p = 0
+    while (p < 25) {
+        let ppx = (p * 47 + 13) % 1024
+        let ppy = 300 + (p * 31 + 7) % 300
+        let p_drift_x = sin(time * 0.7 + p * 1.3) * 30
+        let p_drift_y = sin(time * 0.5 + p * 0.9) * 20
+        let p_alpha = to_int(80 + sin(time * 2 + p * 1.5) * 60)
+        if (p_alpha > 200) { p_alpha = 200 }
+        if (p_alpha < 10) { p_alpha = 10 }
+        draw_circle(ppx + p_drift_x, ppy + p_drift_y, 2, [255, 255, 220, p_alpha])
+        p = p + 1
+    }
+
+    end_drawing()
+}
+
+close_audio_device()
+close_window()

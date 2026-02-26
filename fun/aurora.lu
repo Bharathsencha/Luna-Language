@@ -1,0 +1,174 @@
+# Aurora Dreams
+# A serene Northern Lights simulation with twinkling stars
+# and a mountain silhouette
+
+init_window(1024, 768, "Luna - Aurora Dreams")
+set_fps(60)
+init_audio_device()
+
+let music = load_music_stream("fun/music/はじまりの曲-(146k).mp3")
+play_music_stream(music)
+
+let time = 0.0
+
+while (window_open()) {
+    time = time + 0.008
+    begin_drawing()
+    update_music_stream(music)
+
+    # Night sky gradient (deep navy to black)
+    let sky_top = hsl(230.0, 0.6, 0.03)
+    let sky_bot = hsl(240.0, 0.4, 0.12)
+    draw_gradient_ex(0, 0, 1024, 768, sky_top, sky_bot, sky_bot, sky_top)
+
+    # Stars - fixed positions using math for pseudo-randomness
+    let s = 0
+    while (s < 80) {
+        let sx = (s * 137 + 53) % 1024
+        let sy = (s * 97 + 29) % 500
+        let twinkle = sin(time * (2.0 + s * 0.3) + s * 1.7)
+        let star_alpha = to_int(120 + twinkle * 130)
+        if (star_alpha > 255) { star_alpha = 255 }
+        if (star_alpha < 30) { star_alpha = 30 }
+        let star_r = 1.5 + twinkle * 0.8
+        if (star_r < 0.8) { star_r = 0.8 }
+        draw_circle(sx, sy, star_r, [255, 255, 255, star_alpha])
+        s = s + 1
+    }
+
+    # A few bright stars with soft glow
+    let bs = 0
+    while (bs < 6) {
+        let bx = (bs * 211 + 100) % 950
+        let by = (bs * 83 + 40) % 300
+        let glow = sin(time * 1.5 + bs * 2.5)
+        let glow_alpha = to_int(20 + glow * 15)
+        draw_circle(bx, by, 8, [200, 220, 255, glow_alpha])
+        draw_circle(bx, by, 3, [255, 255, 255, to_int(200 + glow * 50)])
+        bs = bs + 1
+    }
+
+    # Moon
+    let moon_x = 850
+    let moon_y = 80
+    let moon_glow = 0.7 + sin(time * 0.5) * 0.1
+    draw_circle(moon_x, moon_y, 50, [255, 250, 230, to_int(moon_glow * 15)])
+    draw_circle(moon_x, moon_y, 35, [255, 250, 230, to_int(moon_glow * 30)])
+    draw_circle(moon_x, moon_y, 25, [255, 255, 240, to_int(moon_glow * 220)])
+
+    # Moon shadow (dark crater effect)
+    draw_circle(moon_x + 6, moon_y - 3, 22, [200, 210, 220, 40])
+
+    # Aurora Borealis - vertical rays hanging from the sky
+    # Each curtain is a set of vertical columns with wavy top edge
+
+    # Curtain 1 - Green (dominant)
+    let ax = 50
+    while (ax < 900) {
+        # Wavy top edge
+        let top_y = 60 + sin(time * 1.0 + ax * 0.02) * 40 + cos(time * 0.6 + ax * 0.01) * 25
+        # Ray height varies per column
+        let ray_h = 200 + sin(time * 0.8 + ax * 0.03) * 80 + sin(ax * 0.05) * 60
+        # Intensity shimmer
+        let shimmer = 0.6 + sin(time * 3.0 + ax * 0.1) * 0.4
+        let aurora_h = 130.0 + sin(time * 0.5 + ax * 0.015) * 15
+        let a_col = hsl(aurora_h, 0.9, 0.5 * shimmer)
+        # Draw vertical gradient: bright at top, fading down
+        let ry = 0
+        while (ry < ray_h) {
+            let fade = 1.0 - (ry / ray_h)
+            let a_alpha = to_int(fade * fade * 90 * shimmer)
+            if (a_alpha > 1) {
+                draw_rectangle(ax, to_int(top_y + ry), 5, 6, [a_col[0], a_col[1], a_col[2], a_alpha])
+            }
+            ry = ry + 5
+        }
+        ax = ax + 8
+    }
+
+    # Curtain 2 - Cyan (shifted right, different wave)
+    ax = 200
+    while (ax < 1000) {
+        let top_y = 80 + sin(time * 0.7 + ax * 0.025 + 2.0) * 35 + sin(time * 1.3 + ax * 0.008) * 30
+        let ray_h = 180 + sin(time * 0.9 + ax * 0.04 + 1.0) * 70 + cos(ax * 0.06) * 40
+        let shimmer = 0.5 + sin(time * 2.5 + ax * 0.12 + 1.5) * 0.5
+        let aurora_h = 175.0 + sin(time * 0.6 + ax * 0.02) * 10
+        let a_col = hsl(aurora_h, 0.95, 0.45 * shimmer)
+        let ry = 0
+        while (ry < ray_h) {
+            let fade = 1.0 - (ry / ray_h)
+            let a_alpha = to_int(fade * fade * 75 * shimmer)
+            if (a_alpha > 1) {
+                draw_rectangle(ax, to_int(top_y + ry), 5, 6, [a_col[0], a_col[1], a_col[2], a_alpha])
+            }
+            ry = ry + 5
+        }
+        ax = ax + 9
+    }
+
+    # Curtain 3 - Blue (shifted left, slower wave)
+    ax = 0
+    while (ax < 700) {
+        let top_y = 100 + sin(time * 1.2 + ax * 0.03 + 4.0) * 30 + cos(time * 0.5 + ax * 0.012) * 25
+        let ray_h = 150 + sin(time * 0.6 + ax * 0.035 + 2.0) * 60 + sin(ax * 0.07) * 30
+        let shimmer = 0.4 + sin(time * 2.0 + ax * 0.08 + 3.0) * 0.5
+        let aurora_h = 200.0 + sin(time * 0.4 + ax * 0.018) * 15
+        let a_col = hsl(aurora_h, 0.85, 0.4 * shimmer)
+        let ry = 0
+        while (ry < ray_h) {
+            let fade = 1.0 - (ry / ray_h)
+            let a_alpha = to_int(fade * fade * 65 * shimmer)
+            if (a_alpha > 1) {
+                draw_rectangle(ax, to_int(top_y + ry), 5, 6, [a_col[0], a_col[1], a_col[2], a_alpha])
+            }
+            ry = ry + 5
+        }
+        ax = ax + 10
+    }
+
+    # Mountain silhouettes
+
+    # Layer 1 - far mountains (darker, smaller)
+    let mx = 0
+    while (mx < 1024) {
+        let peak1 = sin(mx * 0.008 + 1.0) * 100 + cos(mx * 0.015) * 50
+        let mtn_y = 520 - peak1
+        let mtn_h = 768 - mtn_y
+        if (mtn_h > 0) {
+            draw_rectangle(mx, to_int(mtn_y), 4, to_int(mtn_h), [15, 18, 30, 255])
+        }
+        mx = mx + 3
+    }
+
+    # Layer 2 - near mountains (blacker, taller)
+    mx = 0
+    while (mx < 1024) {
+        let peak2 = sin(mx * 0.006 + 0.5) * 80 + sin(mx * 0.02 + 3.0) * 40
+        let mtn_y = 570 - peak2
+        let mtn_h = 768 - mtn_y
+        if (mtn_h > 0) {
+            draw_rectangle(mx, to_int(mtn_y), 4, to_int(mtn_h), [8, 10, 18, 255])
+        }
+        mx = mx + 3
+    }
+
+    # Tree line (tiny triangle silhouettes along the horizon)
+    let tx = 0
+    while (tx < 1024) {
+        let tree_base = 570 - sin(tx * 0.006 + 0.5) * 80 - sin(tx * 0.02 + 3.0) * 40
+        let tree_h = 10 + sin(tx * 0.3 + tx * 0.07) * 8
+        if (tree_h > 3) {
+            let tw = 4 + to_int(sin(tx * 0.5) * 2)
+            draw_rectangle(tx, to_int(tree_base - tree_h), tw, to_int(tree_h), [5, 8, 12, 255])
+        }
+        tx = tx + 7
+    }
+
+    # Ground (dark base)
+    draw_rectangle(0, 700, 1024, 68, [5, 6, 12, 255])
+
+    end_drawing()
+}
+
+close_audio_device()
+close_window()

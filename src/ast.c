@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdlib.h>
 #include <string.h>
 #include "ast.h"
 #include "mystr.h"
+#include "arena.h"
+#include "intern.h"
+
+Arena *ast_arena = NULL;
 
 //Node List Management
 
@@ -38,8 +42,10 @@ void nodelist_free(NodeList *l) {
 //AST Node Constructors
 
 static AstNode *mk(NodeKind k, int line) {
-    AstNode *n = malloc(sizeof(AstNode));
+    if (!ast_arena) ast_init();
+    AstNode *n = arena_alloc(ast_arena, sizeof(AstNode));
     if (n) {
+        memset(n, 0, sizeof(AstNode));
         n->kind = k;
         n->line = line;
     }
@@ -60,7 +66,7 @@ AstNode *ast_float(double v, int line) {
 
 AstNode *ast_string(const char *s, int line) {
     AstNode *n = mk(NODE_STRING, line);
-    n->string.text = my_strdup(s);
+    n->string.text = arena_strdup(ast_arena, s);
     return n;
 }
 
@@ -84,21 +90,21 @@ AstNode *ast_list(NodeList items, int line) {
 
 AstNode *ast_ident(const char *name, int line) {
     AstNode *n = mk(NODE_IDENT, line);
-    n->ident.name = my_strdup(name);
+    n->ident.name = intern_string(name);
     return n;
 }
 
 // Increment 
 AstNode *ast_inc(const char *name, int line) {
     AstNode *n = mk(NODE_INC, line);
-    n->inc.name = my_strdup(name);
+    n->inc.name = intern_string(name);
     return n;
 }
 
 // Decrement
 AstNode *ast_dec(const char *name, int line) {
     AstNode *n = mk(NODE_DEC, line);
-    n->dec.name = my_strdup(name);
+    n->dec.name = intern_string(name);
     return n;
 }
 
@@ -112,14 +118,14 @@ AstNode *ast_binop(BinOpKind op, AstNode *l, AstNode *r, int line) {
 
 AstNode *ast_let(const char *name, AstNode *expr, int line) {
     AstNode *n = mk(NODE_LET, line);
-    n->let.name = my_strdup(name);
+    n->let.name = intern_string(name);
     n->let.expr = expr;
     return n;
 }
 
 AstNode *ast_assign(const char *name, AstNode *expr, int line) {
     AstNode *n = mk(NODE_ASSIGN, line);
-    n->assign.name = my_strdup(name);
+    n->assign.name = intern_string(name);
     n->assign.expr = expr;
     return n;
 }
@@ -132,7 +138,7 @@ AstNode *ast_print(NodeList args, int line) {
 
 AstNode *ast_input(const char *prompt, int line) {
     AstNode *n = mk(NODE_INPUT, line);
-    n->input.prompt = prompt ? my_strdup(prompt) : NULL;
+    n->input.prompt = prompt ? arena_strdup(ast_arena, prompt) : NULL;
     return n;
 }
 
@@ -188,7 +194,7 @@ AstNode *ast_group(NodeList items, int line) {
 
 AstNode *ast_call(const char *name, NodeList args, int line) {
     AstNode *n = mk(NODE_CALL, line);
-    n->call.name = my_strdup(name);
+    n->call.name = intern_string(name);
     n->call.args = args;
     return n;
 }
@@ -200,12 +206,12 @@ AstNode *ast_index(AstNode *target, AstNode *index, int line) {
     return n;
 }
 
-AstNode *ast_funcdef(const char *name, char **params, int count, NodeList body, int line) {
+AstNode *ast_funcdef(const char *name, const char **params, int count, NodeList body, int line) {
     AstNode *n = mk(NODE_FUNC_DEF, line);
-    n->funcdef.name = my_strdup(name);
-    n->funcdef.params = malloc(sizeof(char*) * count);
+    n->funcdef.name = intern_string(name);
+    n->funcdef.params = arena_alloc(ast_arena, sizeof(const char*) * count);
     for (int i = 0; i < count; i++) {
-        n->funcdef.params[i] = my_strdup(params[i]);
+        n->funcdef.params[i] = intern_string(params[i]);
     }
     n->funcdef.param_count = count;
     n->funcdef.body = body;
@@ -243,101 +249,19 @@ AstNode *ast_not(AstNode *expr, int line) {
 
 //AST Node Destructor
 void ast_free(AstNode *n) {
-    if (!n) {
-        return;
+    // No-op for individual nodes because they are owned by ast_arena!
+    (void)n;
+}
+
+void ast_init(void) {
+    if (!ast_arena) {
+        ast_arena = arena_create(1024 * 1024 * 4); // 4MB default
     }
-    switch (n->kind) {
-        case NODE_STRING:
-            free(n->string.text);
-            break;
-        case NODE_IDENT:
-            free(n->ident.name);
-            break;
-        case NODE_INC:
-            free(n->inc.name);
-            break;
-        case NODE_DEC:  
-            free(n->dec.name);
-            break;
-        case NODE_LIST:
-            nodelist_free(&n->list.items);
-            break;
-        case NODE_BINOP:
-            ast_free(n->binop.left);
-            ast_free(n->binop.right);
-            break;
-        case NODE_LET:
-            free(n->let.name);
-            ast_free(n->let.expr);
-            break;
-        case NODE_ASSIGN:
-            free(n->assign.name);
-            ast_free(n->assign.expr);
-            break;
-        case NODE_PRINT:
-            nodelist_free(&n->print.args);
-            break;
-        case NODE_INPUT:
-            if (n->input.prompt) {
-                free(n->input.prompt);
-            }
-            break;
-        case NODE_IF:
-            ast_free(n->ifstmt.cond);
-            nodelist_free(&n->ifstmt.then_block);
-            nodelist_free(&n->ifstmt.else_block);
-            break;
-        case NODE_WHILE:
-            ast_free(n->whilestmt.cond);
-            nodelist_free(&n->whilestmt.body);
-            break;
-        case NODE_FOR:
-            ast_free(n->forstmt.init);
-            ast_free(n->forstmt.cond);
-            ast_free(n->forstmt.incr);
-            nodelist_free(&n->forstmt.body);
-            break;
-        case NODE_SWITCH:
-            ast_free(n->switchstmt.expr);
-            nodelist_free(&n->switchstmt.cases);
-            nodelist_free(&n->switchstmt.default_case);
-            break;
-        case NODE_CASE:
-            ast_free(n->casestmt.value);
-            nodelist_free(&n->casestmt.body);
-            break;
-        case NODE_BLOCK:
-            nodelist_free(&n->block.items);
-            break;
-        case NODE_CALL:
-            free(n->call.name);
-            nodelist_free(&n->call.args);
-            break;
-        case NODE_INDEX:
-            ast_free(n->index.target);
-            ast_free(n->index.index);
-            break;
-        case NODE_FUNC_DEF:
-            free(n->funcdef.name);
-            for (int i = 0; i < n->funcdef.param_count; i++) {
-                free(n->funcdef.params[i]);
-            }
-            free(n->funcdef.params);
-            nodelist_free(&n->funcdef.body);
-            break;
-        case NODE_RETURN:
-            ast_free(n->ret.expr);
-            break;
-        case NODE_ASSIGN_INDEX:
-            ast_free(n->assign_index.list);
-            ast_free(n->assign_index.index);
-            ast_free(n->assign_index.value);
-            break;
-        case NODE_NOT:
-            ast_free(n->logic_not.expr);
-            break;
-        default:
-            break;
+}
+
+void ast_cleanup(void) {
+    if (ast_arena) {
+        arena_free(ast_arena);
+        ast_arena = NULL;
     }
-    free(n);
 }

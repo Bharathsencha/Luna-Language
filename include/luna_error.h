@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #ifndef ERROR_H
 #define ERROR_H
 
-// Added global line tracker to solve the "Line 0" problem
+
 extern int luna_current_line;
+extern int luna_had_error;
 
 // Error types for better categorization
 typedef enum {

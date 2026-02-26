@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +9,7 @@
 
 // Initialize the global tracker
 int luna_current_line = 0;
+int luna_had_error = 0;
 
 // Global source information for context display
 static SourceInfo g_source_info = {NULL, NULL};
@@ -85,6 +86,7 @@ static char *get_line_from_source(const char *source, int line_num) {
 }
 
 void error_report(ErrorType type, int line, int col, const char *message, const char *suggestion) {
+    luna_had_error = 1;
     // Fallback to global tracker if line is unknown
     if (line <= 0) line = luna_current_line;
 
@@ -108,6 +110,7 @@ void error_report(ErrorType type, int line, int col, const char *message, const 
 }
 
 void error_report_with_context(ErrorType type, int line, int col, const char *message, const char *suggestion) {
+    luna_had_error = 1;
     // Fallback to global tracker if line is unknown
     if (line <= 0) line = luna_current_line;
 

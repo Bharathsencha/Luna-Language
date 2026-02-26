@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +8,7 @@
 #include "string_lib.h"
 #include "mystr.h" // For my_strdup
 #include "luna_error.h"
+#include "env.h"
 
 // Helpers
 static int check_args(int argc, int expected, const char *name) {
@@ -20,25 +21,28 @@ static int check_args(int argc, int expected, const char *name) {
 
 // Helper to ensure an argument is a string and return it
 static const char *get_str_arg(Value *argv, int index) {
-    if (argv[index].type != VAL_STRING) return NULL;
-    return argv[index].s;
+    if (argv[index].type != VAL_STRING || !argv[index].string) return NULL;
+    return argv[index].string->chars;
 }
 
 // Basic Operations
 // consolidated len() implementation in string_lib.c or a general lib file
-Value lib_len(int argc, Value *argv) {
+Value lib_str_len(int argc, Value *argv, Env *env) {
     if (argc != 1) {
         error_report(ERR_ARGUMENT, 0, 0, "len() expects exactly 1 argument", "Usage: len(variable)");
         return value_null();
     }
 
     Value v = argv[0];
-    if (v.type == VAL_STRING) {
-        return value_int((long long)strlen(v.s));
+    if (v.type == VAL_STRING && v.string) {
+        return value_int((long long)strlen(v.string->chars));
     } 
-    else if (v.type == VAL_LIST) {
-        return value_int((long long)v.list.count);
+    else if (v.type == VAL_LIST && v.list) {
+        return value_int((long long)v.list->count);
     } 
+    else if (v.type == VAL_DENSE_LIST && v.dlist) {
+        return value_int((long long)v.dlist->count);
+    }
     else {
         error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
                      "len() works on strings and lists.");
@@ -46,34 +50,14 @@ Value lib_len(int argc, Value *argv) {
     }
 }
 
-Value lib_str_len(int argc, Value *argv) {
-    if (argc != 1) {
-        error_report(ERR_ARGUMENT, 0, 0, "len() expects exactly 1 argument", "Usage: len(variable)");
-        return value_null();
-    }
-
-    Value v = argv[0];
-    if (v.type == VAL_STRING) {
-        return value_int((long long)strlen(v.s));
-    } 
-    else if (v.type == VAL_LIST) {
-        return value_int((long long)v.list.count);
-    } 
-    else {
-        error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
-                     "len() works on strings and lists.");
-        return value_null();
-    }
-}
-
-Value lib_str_is_empty(int argc, Value *argv) {
+Value lib_str_is_empty(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "is_empty")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_bool(1);
     return value_bool(strlen(s) == 0);
 }
 
-Value lib_str_concat(int argc, Value *argv) {
+Value lib_str_concat(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "concat")) return value_null();
     
     // Convert both to strings if they aren't already
@@ -97,7 +81,7 @@ Value lib_str_concat(int argc, Value *argv) {
 
 // Slicing
 
-Value lib_str_substring(int argc, Value *argv) {
+Value lib_str_substring(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 3, "substring")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -120,15 +104,15 @@ Value lib_str_substring(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_slice(int argc, Value *argv) {
+Value lib_str_slice(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 3, "slice")) return value_null();
 
-    // FIX: Add List support for slicing
-    if (argv[0].type == VAL_LIST) {
+    // Add List support for slicing
+    if (argv[0].type == VAL_LIST && argv[0].list) {
         Value src = argv[0];
         long long start = argv[1].i;
         long long end = argv[2].i;
-        long long count = src.list.count;
+        long long count = src.list->count;
 
         // Handle negative indices
         if (start < 0) start += count;
@@ -141,7 +125,7 @@ Value lib_str_slice(int argc, Value *argv) {
 
         Value result = value_list();
         for (long long i = start; i < end; i++) {
-            value_list_append(&result, src.list.items[i]);
+            value_list_append(&result, src.list->items[i]);
         }
         return result;
     }
@@ -172,7 +156,7 @@ Value lib_str_slice(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_char_at(int argc, Value *argv) {
+Value lib_str_char_at(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "char_at")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -186,7 +170,7 @@ Value lib_str_char_at(int argc, Value *argv) {
 }
 
 //  Searching 
-Value lib_str_index_of(int argc, Value *argv) {
+Value lib_str_index_of(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "index_of")) return value_null();
     const char *haystack = get_str_arg(argv, 0);
     const char *needle = get_str_arg(argv, 1);
@@ -198,7 +182,7 @@ Value lib_str_index_of(int argc, Value *argv) {
     return value_int((long long)(found - haystack));
 }
 
-Value lib_str_last_index_of(int argc, Value *argv) {
+Value lib_str_last_index_of(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "last_index_of")) return value_null();
     const char *haystack = get_str_arg(argv, 0);
     const char *needle = get_str_arg(argv, 1);
@@ -218,14 +202,14 @@ Value lib_str_last_index_of(int argc, Value *argv) {
     return value_int(-1);
 }
 
-Value lib_str_contains(int argc, Value *argv) {
-    Value idx = lib_str_index_of(argc, argv);
+Value lib_str_contains(int argc, Value *argv, Env *env) {
+    Value idx = lib_str_index_of(argc, argv, env);
     int found = (idx.i != -1);
     value_free(idx); // Just checking existence
     return value_bool(found);
 }
 
-Value lib_str_starts_with(int argc, Value *argv) {
+Value lib_str_starts_with(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "starts_with")) return value_null();
     const char *s = get_str_arg(argv, 0);
     const char *pre = get_str_arg(argv, 1);
@@ -238,7 +222,7 @@ Value lib_str_starts_with(int argc, Value *argv) {
     return value_bool(strncmp(s, pre, plen) == 0);
 }
 
-Value lib_str_ends_with(int argc, Value *argv) {
+Value lib_str_ends_with(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "ends_with")) return value_null();
     const char *s = get_str_arg(argv, 0);
     const char *suf = get_str_arg(argv, 1);
@@ -252,7 +236,7 @@ Value lib_str_ends_with(int argc, Value *argv) {
 }
 
 // Transformations 
-Value lib_str_to_upper(int argc, Value *argv) {
+Value lib_str_to_upper(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "to_upper")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -266,7 +250,7 @@ Value lib_str_to_upper(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_to_lower(int argc, Value *argv) {
+Value lib_str_to_lower(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "to_lower")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -280,7 +264,7 @@ Value lib_str_to_lower(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_trim(int argc, Value *argv) {
+Value lib_str_trim(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "trim")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -301,7 +285,7 @@ Value lib_str_trim(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_trim_left(int argc, Value *argv) {
+Value lib_str_trim_left(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "trim_left")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -310,7 +294,7 @@ Value lib_str_trim_left(int argc, Value *argv) {
     return value_string(s);
 }
 
-Value lib_str_trim_right(int argc, Value *argv) {
+Value lib_str_trim_right(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "trim_right")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -331,16 +315,16 @@ Value lib_str_trim_right(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_replace(int argc, Value *argv) {
+Value lib_str_replace(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 3, "replace")) return value_null();
     const char *s = get_str_arg(argv, 0);
     const char *old = get_str_arg(argv, 1);
-    const char *new = get_str_arg(argv, 2);
+    const char *new_text = get_str_arg(argv, 2);
     
-    if (!s || !old || !new) return value_null();
+    if (!s || !old || !new_text) return value_null();
     
     size_t old_len = strlen(old);
-    size_t new_len = strlen(new);
+    size_t new_len = strlen(new_text);
     if (old_len == 0) return value_string(s); // Prevent infinite loop
     
     // Count occurrences
@@ -355,13 +339,14 @@ Value lib_str_replace(int argc, Value *argv) {
     char *result = malloc(result_len + 1);
     char *ptr = result;
     
-    while (*s) {
-        if (strncmp(s, old, old_len) == 0) {
-            strcpy(ptr, new);
+    const char *src = s;
+    while (*src) {
+        if (strncmp(src, old, old_len) == 0) {
+            strcpy(ptr, new_text);
             ptr += new_len;
-            s += old_len;
+            src += old_len;
         } else {
-            *ptr++ = *s++;
+            *ptr++ = *src++;
         }
     }
     *ptr = '\0';
@@ -371,7 +356,7 @@ Value lib_str_replace(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_reverse(int argc, Value *argv) {
+Value lib_str_reverse(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "reverse")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_null();
@@ -387,7 +372,7 @@ Value lib_str_reverse(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_repeat(int argc, Value *argv) {
+Value lib_str_repeat(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "repeat")) return value_null();
     const char *s = get_str_arg(argv, 0);
     long long count = argv[1].i;
@@ -399,14 +384,14 @@ Value lib_str_repeat(int argc, Value *argv) {
     res[0] = '\0';
 
     for (int i = 0; i < count; i++) {
-        strcat(res, s); // Slightly inefficient but safe. memcpy is faster.
+        strcat(res, s); // Slightly inefficient but safe.
     }
     Value v = value_string(res);
     free(res);
     return v;
 }
 
-Value lib_str_pad_left(int argc, Value *argv) {
+Value lib_str_pad_left(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 3, "pad_left")) return value_null();
     const char *s = get_str_arg(argv, 0);
     long long width = argv[1].i;
@@ -431,7 +416,7 @@ Value lib_str_pad_left(int argc, Value *argv) {
     return v;
 }
 
-Value lib_str_pad_right(int argc, Value *argv) {
+Value lib_str_pad_right(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 3, "pad_right")) return value_null();
     const char *s = get_str_arg(argv, 0);
     long long width = argv[1].i;
@@ -455,7 +440,7 @@ Value lib_str_pad_right(int argc, Value *argv) {
 }
 
 // Lists (Split/Join)
-Value lib_str_split(int argc, Value *argv) {
+Value lib_str_split(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "split")) return value_null();
     const char *s = get_str_arg(argv, 0);
     const char *delim = get_str_arg(argv, 1);
@@ -482,21 +467,21 @@ Value lib_str_split(int argc, Value *argv) {
     return list;
 }
 
-Value lib_str_join(int argc, Value *argv) {
+Value lib_str_join(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "join")) return value_null();
     
     // Arg 0 is LIST, Arg 1 is Delimiter
-    if (argv[0].type != VAL_LIST) return value_string("");
+    if (argv[0].type != VAL_LIST || !argv[0].list) return value_string("");
     const char *delim = get_str_arg(argv, 1);
     if (!delim) delim = "";
     
     // Calculate total length
     size_t total_len = 0;
     size_t delim_len = strlen(delim);
-    int count = argv[0].list.count;
+    int count = argv[0].list->count;
     
     for (int i = 0; i < count; i++) {
-        char *s = value_to_string(argv[0].list.items[i]);
+        char *s = value_to_string(argv[0].list->items[i]);
         total_len += strlen(s);
         free(s);
         if (i < count - 1) total_len += delim_len;
@@ -506,7 +491,7 @@ Value lib_str_join(int argc, Value *argv) {
     res[0] = '\0';
     
     for (int i = 0; i < count; i++) {
-        char *s = value_to_string(argv[0].list.items[i]);
+        char *s = value_to_string(argv[0].list->items[i]);
         strcat(res, s);
         free(s);
         if (i < count - 1) strcat(res, delim);
@@ -518,7 +503,7 @@ Value lib_str_join(int argc, Value *argv) {
 }
 
 // Character Checks
-Value lib_str_is_digit(int argc, Value *argv) {
+Value lib_str_is_digit(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "is_digit")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s || strlen(s) == 0) return value_bool(0);
@@ -529,7 +514,7 @@ Value lib_str_is_digit(int argc, Value *argv) {
     return value_bool(1);
 }
 
-Value lib_str_is_alpha(int argc, Value *argv) {
+Value lib_str_is_alpha(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "is_alpha")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s || strlen(s) == 0) return value_bool(0);
@@ -540,7 +525,7 @@ Value lib_str_is_alpha(int argc, Value *argv) {
     return value_bool(1);
 }
 
-Value lib_str_is_alnum(int argc, Value *argv) {
+Value lib_str_is_alnum(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "is_alnum")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s || strlen(s) == 0) return value_bool(0);
@@ -551,7 +536,7 @@ Value lib_str_is_alnum(int argc, Value *argv) {
     return value_bool(1);
 }
 
-Value lib_str_is_space(int argc, Value *argv) {
+Value lib_str_is_space(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "is_space")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s || strlen(s) == 0) return value_bool(0);
@@ -563,16 +548,26 @@ Value lib_str_is_space(int argc, Value *argv) {
 }
 
 // Type Conversions
-Value lib_str_to_int(int argc, Value *argv) {
+Value lib_str_to_int(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "to_int")) return value_null();
-    const char *s = get_str_arg(argv, 0);
-    if (!s) return value_int(0);
-    return value_int(strtoll(s, NULL, 10));
+    Value v = argv[0];
+    if (v.type == VAL_INT) return v;
+    if (v.type == VAL_FLOAT) return value_int((long long)v.f);
+    if (v.type == VAL_STRING && v.string && v.string->chars) return value_int(strtoll(v.string->chars, NULL, 10));
+    return value_int(0);
 }
 
-Value lib_str_to_float(int argc, Value *argv) {
+Value lib_str_to_float(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "to_float")) return value_null();
     const char *s = get_str_arg(argv, 0);
     if (!s) return value_float(0.0);
     return value_float(atof(s));
+}
+
+Value lib_str_to_string(int argc, Value *argv, Env *env) {
+    if (argc != 1) return value_string("");
+    char *s = value_to_string(argv[0]);
+    Value v = value_string(s);
+    free(s);
+    return v;
 }

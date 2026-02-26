@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #ifndef AST_H
 #define AST_H
 
+#include <stdint.h>
 #include "value.h"
 
 // Enumeration of all possible AST node types
@@ -78,13 +79,33 @@ struct AstNode {
         struct { char value; } character;  
         struct { int value; } boolean;
         struct { NodeList items; } list;  
-        struct { char *name; } ident;
-        struct { char *name; } inc; 
-        struct { char *name; } dec; // for NODE_DEC
+        // Fast Local Caches for Identifier Binding (O(0) Lookups inside loops)
+        struct { 
+            const char *name;
+            Value *cached_val; // Points directly to Environment slot
+            uint64_t cached_env_version;
+        } ident;
+        
+        struct { 
+            const char *name; 
+            Value *cached_val;
+            uint64_t cached_env_version;
+        } inc;
+        
+        struct { 
+            const char *name; 
+            Value *cached_val;
+            uint64_t cached_env_version;
+        } dec; // for NODE_DEC
 
         struct { BinOpKind op; AstNode *left; AstNode *right; } binop;
-        struct { char *name; AstNode *expr; } let;
-        struct { char *name; AstNode *expr; } assign;
+        struct { const char *name; AstNode *expr; } let;
+        struct { 
+            const char *name; 
+            AstNode *expr; 
+            Value *cached_val;
+            uint64_t cached_env_version;
+        } assign;
         struct { AstNode *list; AstNode *index; AstNode *value; } assign_index; 
         struct { AstNode *target; AstNode *index; } index; 
 
@@ -117,11 +138,11 @@ struct AstNode {
 
         struct { AstNode *value; NodeList body; } casestmt;
         struct { NodeList items; } block;
-        struct { char *name; NodeList args; } call;
+        struct { const char *name; NodeList args; } call;
 
         struct {
-            char *name;
-            char **params;
+            const char *name;
+            const char **params;
             int param_count;
             NodeList body;
         } funcdef;
@@ -161,11 +182,13 @@ AstNode *ast_block(NodeList items, int line);
 AstNode *ast_group(NodeList items, int line);
 AstNode *ast_call(const char *name, NodeList args, int line);
 AstNode *ast_index(AstNode *target, AstNode *index, int line); 
-AstNode *ast_funcdef(const char *name, char **params, int count, NodeList body, int line);
+AstNode *ast_funcdef(const char *name, const char **params, int count, NodeList body, int line);
 AstNode *ast_return(AstNode *expr, int line);
 AstNode *ast_assign_index(AstNode *list, AstNode *index, AstNode *value, int line);
 AstNode *ast_not(AstNode *expr, int line);
 
 void ast_free(AstNode *node);
+void ast_init(void);
+void ast_cleanup(void);
 
 #endif

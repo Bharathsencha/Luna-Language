@@ -1,0 +1,14 @@
+print("Starting Luna Vector Multiplication (1,000,000 elements)...")
+
+let size = 1000000
+let A = dense_list(size, 1.5)
+let B = dense_list(size, 2.5)
+
+let _ = vec_mul(A, B)
+
+let start_time = clock()
+
+vec_mul_inline(A, B)
+
+let end_time = clock()
+print("Luna Vector Time: ", end_time - start_time, " seconds")

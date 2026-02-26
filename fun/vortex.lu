@@ -1,0 +1,236 @@
+func main() {
+    init_window(1024, 768, "Luna - Cosmic Vortex Engine")
+    set_fps(60)
+
+    # 1. Background Starfield
+    let bg_x = []
+    let bg_y = []
+    let bg_s = []
+    let bg_b = []
+    for (let i = 0; i < 600; i++) {
+        append(bg_x, rand() * 1024)
+        append(bg_y, rand() * 768)
+        append(bg_s, rand() * 1.5 + 0.2)
+        append(bg_b, rand() * 180 + 20)
+    }
+
+    # 2. Particle Engine Data
+    # We use Cartesian coordinates for fluid physics
+    let px = []
+    let py = []
+    let pvx = []
+    let pvy = []
+    let psize = []
+    let pcolor = []
+    let pphase = [] # For shimmering
+    let ptype = []  # 0: Core, 1: Star, 2: Nebula, 3: Jet
+
+    let max_particles = 18000
+    let cx = 1024.0 / 2.0
+    let cy = 768.0 / 2.0
+
+    # Initialization: We still give them an initial "kick" in a spiral pattern
+    # but the physics will take over once they are moving.
+    for (let i = 0; i < max_particles; i++) {
+        let type = 1 # Default: Star
+        let r_norm = pow(rand(), 2.8)
+        
+        # Determine particle role
+        if (i < 800) { type = 0 }           # Hot Quasar Core
+        else { if (i > 17500) { type = 3 } } # Bipolar Jets
+
+        let r = r_norm * 500.0
+        let angle = rand() * 6.28318
+        
+        # Spiral biasing for initial placement
+        let spiral = (1.0 / 0.5) * ln(r / 10.0 + 1.0)
+        let arm = float(rand(0, 5)) * (6.28318 / 5.0)
+        let final_angle = arm + spiral + (rand() - 0.5) * (0.4 + r_norm * 2.0)
+
+        append(px, cx + cos(final_angle) * r)
+        append(py, cy + sin(final_angle) * r)
+        
+        # Give them an initial tangential "Orbit" velocity
+        # Perpendicular to the radius vector
+        let orbital_force = 1.8 / (sqrt(r) + 5.0)
+        if (type == 0) { orbital_force = orbital_force * 2.5 } # Core is fast
+        
+        append(pvx, -sin(final_angle) * orbital_force * r)
+        append(pvy, cos(final_angle) * orbital_force * r)
+        
+        append(psize, rand() * 1.5 + 0.4)
+        append(pphase, rand() * 6.28)
+        append(ptype, type)
+
+        # Color Calculation based on type and heat
+        let rr = 255
+        let gg = 255
+        let bb = 255
+        let alpha = int(100.0 + (1.0 - r_norm) * 155.0)
+
+        if (type == 0) { # Quasar Core: Hyper-White
+            rr = 255
+            gg = 255
+            bb = 200
+        } else {
+            if (type == 3) { # Jets: Electric Purple/Pink
+                rr = 255
+                gg = 50
+                bb = 255
+                alpha = 80
+            } else { # Standard Population
+                let temp = rand()
+                if (temp > 0.95) {
+                    rr = 100
+                    gg = 150
+                    bb = 255
+                } # Blue Giant
+                else { if (temp > 0.85) {
+                    rr = 255
+                    gg = 120
+                    bb = 100
+                } # Red Giant
+                else { 
+                    rr = int(100.0 + (1.0 - r_norm) * 155.0)
+                    gg = int(140.0 + (1.0 - r_norm) * 115.0)
+                    bb = 255 
+                } }
+            }
+        }
+        append(pcolor, [rr, gg, bb, alpha])
+    }
+
+    # 3. Massive Nebula Haze
+    let nx = []
+    let ny = []
+    let nvx = []
+    let nvy = []
+    let nsize = []
+    let ncolor = []
+
+    for (let i = 0; i < 200; i++) {
+        let nr = rand() * 500.0
+        let na = rand() * 6.28
+        append(nx, cx + cos(na) * nr)
+        append(ny, cy + sin(na) * nr)
+        let v_spd = 0.4 / (sqrt(nr) + 2.0)
+        append(nvx, -sin(na) * v_spd * nr)
+        append(nvy, cos(na) * v_spd * nr)
+        append(nsize, 40 + rand() * 100)
+        
+        if (rand() > 0.5) { append(ncolor, [255, 100, 255, 2]) }
+        else { append(ncolor, [50, 150, 255, 2]) }
+    }
+
+    let global_time = 0.0
+    let dt = 0.016
+
+    # 4. Main Simulation Loop
+    while (window_open()) {
+        global_time = global_time + dt
+        
+        begin_drawing()
+        clear_background(2, 2, 8, 255)
+
+        # Draw Background Stars (Slow parallax drift)
+        for (let i = 0; i < 600; i++) {
+            let spark = bg_b[i] + (sin(global_time * 4.0 + float(i)) * 60)
+            if (spark > 255) { spark = 255 }
+            if (spark < 0) { spark = 0 }
+            draw_circle(bg_x[i], bg_y[i], bg_s[i], [255, 255, 255, int(spark)])
+        }
+
+        # Dynamic Camera Parameters
+        let tilt = 0.5 + sin(global_time * 0.3) * 0.1
+        let cam_rot = sin(global_time * 0.1) * 0.05
+
+        # Update and Draw Nebula Haze
+        for (let i = 0; i < 200; i++) {
+            # Low-Gravity drift
+            let dx = nx[i] - cx
+            let dy = ny[i] - cy
+            let d2 = dx*dx + dy*dy
+            let d = sqrt(d2) + 1.0
+            
+            # Simple Central Attraction
+            let gravity = 0.05 / d2
+            nvx[i] = nvx[i] - (dx/d) * gravity
+            nvy[i] = nvy[i] - (dy/d) * gravity
+            
+            nx[i] = nx[i] + nvx[i]
+            ny[i] = ny[i] + nvy[i]
+            
+            let final_y = cy + (ny[i] - cy) * tilt
+            draw_circle(nx[i], final_y, nsize[i], ncolor[i])
+        }
+
+        # Update and Draw Particles
+        for (let i = 0; i < max_particles; i++) {
+            let dx = px[i] - cx
+            let dy = py[i] - cy
+            let dist_sq = dx*dx + dy*dy
+            let dist = sqrt(dist_sq) + 1.0
+            
+            # --- PHYSICS FORCES ---
+            
+            # 1. Central "Black Hole" Gravity
+            let g_strength = 2.5
+            if (ptype[i] == 0) { g_strength = 4.0 } # Core particles pulled harder
+            let gf = g_strength / (dist_sq * 0.01 + 5.0)
+            
+            pvx[i] = pvx[i] - (dx / dist) * gf
+            pvy[i] = pvy[i] - (dy / dist) * gf
+            
+            # 2. Frame-Dragging "Spiral Force"
+            # We apply a tangential force that keeps the arms persistent
+            let spiral_push = 0.005
+            pvx[i] = pvx[i] - (dy / dist) * spiral_push
+            pvy[i] = pvy[i] + (dx / dist) * spiral_push
+            
+            # 3. Friction / Viscosity (Prevents escape velocity)
+            pvx[i] = pvx[i] * 0.998
+            pvy[i] = pvy[i] * 0.998
+            
+            # 4. Turbulence/Brownian Motion
+            pvx[i] = pvx[i] + (rand() - 0.5) * 0.01
+            pvy[i] = pvy[i] + (rand() - 0.5) * 0.01
+            
+            # --- JET PHYSICS ---
+            if (ptype[i] == 3) {
+                # Shoot outward perpendicular to galaxy "disk"
+                pvy[i] = pvy[i] - 0.2
+            }
+
+            # Integration
+            px[i] = px[i] + pvx[i]
+            py[i] = py[i] + pvy[i]
+            
+            # --- RENDERING ---
+            let screen_y = cy + (py[i] - cy) * tilt
+            
+            # Subtle Motion Trail (Draw small line from previous pos or just small circle)
+            let col = pcolor[i]
+            # Pulsing alpha
+            let p_pulse = int(sin(global_time * 3.0 + pphase[i]) * 40)
+            let final_alpha = col[3] + p_pulse
+            if (final_alpha > 255) { final_alpha = 255 }
+            if (final_alpha < 0) { final_alpha = 0 }
+
+            draw_circle(px[i], screen_y, psize[i], [col[0], col[1], col[2], final_alpha])
+        }
+
+        # 5. The Singularity Bloom
+        let core_pulse = 1.0 + sin(global_time * 8.0) * 0.1
+        draw_circle(cx, cy, 180, [255, 245, 200, 2])
+        draw_circle(cx, cy, 100, [255, 255, 255, 5])
+        draw_circle(cx, cy, 30, [255, 255, 255, 20])
+        draw_circle(cx, cy, int(15 * core_pulse), [255, 255, 255, 255])
+        draw_circle(cx, cy, int(6 * core_pulse), [255, 255, 255, 255])
+
+        draw_text_default("Cosmic Vortex Engine - Liquid Cartesian Dynamics", 20, 20, 20, [200, 220, 255, 150])
+        draw_text_default("18,000 Physically Simulated Entities", 20, 45, 15, [150, 180, 255, 100])
+
+        end_drawing()
+    }
+    close_window()
+}
