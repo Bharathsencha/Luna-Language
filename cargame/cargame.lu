@@ -1,0 +1,345 @@
+# Raceee Game Port
+# Note: Requires assets in the root folder to run correctly. 
+
+# Constants
+let WIDTH = 1300
+let HEIGHT = 1000
+let PI = 3.14159
+
+# Game States
+let MENU = 0
+let GAME = 1
+let SETTINGS = 2
+
+
+
+# Game-Specific Colors
+let BACKGROUND_COLOR = [186, 149, 127, 255]
+
+# Global Variables
+let current_state = MENU
+let target_fps = 60
+
+# Car Physics
+let car_speed = 0.0
+let car_max_speed = 800.0
+let car_speedup = 200.0
+let car_slowdown = 100.0
+let car_rotation = -90.0
+let ROTATION_SPEED = 120.0
+let car_direction = -1
+
+let car_x = 0.0
+let car_y = 0.0
+let car_w = 0
+let car_h = 0
+
+# Camera
+let camera = [WIDTH/2, HEIGHT/2, 0, 0, 0.0, 1.0]
+
+func main() {
+    init_window(WIDTH, HEIGHT, "Raceee")
+    init_audio_device()
+    set_fps(target_fps)
+
+    # Load Resources
+    let menu_bg = load_texture("cargame/assets/home_page_background.jpg")
+    let btn_sound = load_sound("cargame/assets/coin-collect-retro-8-bit-sound-effect-145251.mp3")
+    let menu_music = load_music_stream("cargame/assets/8-bit-heaven-26287.mp3")
+    let arrow_left = load_texture("cargame/assets/left-arrow.png")
+    let arrow_right = load_texture("cargame/assets/right-arrow.png")
+    
+    # Fonts
+    let title_font = load_font("cargame/assets/ShadeBlue-2OozX.ttf", 90)
+    let ui_font = load_font("cargame/assets/ShadeBlue-2OozX.ttf", 40)
+    
+    # Game World Resources
+    let soil_img = load_image("cargame/assets/Soil_Tile.png")
+    image_rotate_cw(soil_img)
+    let soil_tex = load_texture_from_image(soil_img)
+    unload_image(soil_img)
+
+    let car_img = load_image("cargame/assets/Car_1_01.png")
+    image_rotate_cw(car_img)
+    let car_tex = load_texture_from_image(car_img)
+    unload_image(car_img)
+    
+    # Calculate Car Dimensions
+    let tex_w = get_texture_width(car_tex)
+    let tex_h = get_texture_height(car_tex)
+    
+    if (tex_w == 0) { 
+        tex_w = 64
+        tex_h = 128
+    }
+    
+    let desired_car_width = 120
+    let scale_factor = 1.0
+    if (tex_w > 0) { scale_factor = desired_car_width / tex_w }
+    
+    car_w = desired_car_width
+    car_h = tex_h * scale_factor
+    
+    let world_w = 15000
+    let world_h = 15000
+    
+    car_x = world_w/2 - car_w/2
+    car_y = world_h/2 - car_h/2
+
+    play_music_stream(menu_music)
+
+    while(window_open()) {
+        let dt = get_delta_time()
+        let mouse = get_mouse_position() # [x, y]
+        let mx = mouse[0]
+        let my = mouse[1]
+
+        update_music_stream(menu_music)
+
+        # Update
+        if (current_state == MENU) {
+            let play_btn = [WIDTH/2 - 100, HEIGHT/2 - 50, 200, 60]
+            let settings_btn = [WIDTH/2 - 100, HEIGHT/2 + 50, 200, 60]
+            let exit_btn = [WIDTH/2 - 100, HEIGHT/2 + 150, 200, 60]
+            
+            if (check_collision_point_rec(mouse, play_btn) && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+                play_sound(btn_sound)
+                stop_music_stream(menu_music)
+                current_state = GAME
+            }
+            if (check_collision_point_rec(mouse, settings_btn) && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+                play_sound(btn_sound)
+                current_state = SETTINGS
+            }
+            if (check_collision_point_rec(mouse, exit_btn) && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+                play_sound(btn_sound)
+                close_window() # Exit game
+            }
+        } else {
+            if (current_state == SETTINGS) {
+                let back_btn = [50, 50, 100, 40]
+                if (check_collision_point_rec(mouse, back_btn) && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+                    play_sound(btn_sound)
+                    current_state = MENU
+                }
+                
+                # FPS Settings
+                let fps_left = [WIDTH/2 - 80, HEIGHT/2 + 5, 30, 30]
+                let fps_right = [WIDTH/2 + 50, HEIGHT/2 + 5, 30, 30]
+
+                if ((check_collision_point_rec(mouse, fps_left) || check_collision_point_rec(mouse, fps_right)) && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+                    play_sound(btn_sound)
+                    if (target_fps == 60) {
+                        target_fps = 30
+                    } else {
+                        target_fps = 60
+                    }
+                    set_fps(target_fps)
+                }
+            
+            } else {
+                if (current_state == GAME) {
+                    
+                    let move_accel = 0.0
+                    let turn_dir = 0
+
+                    if (is_key_down(KEY_UP)) {
+                        move_accel = 1.0
+                    }
+                    if (is_key_down(KEY_DOWN)) {
+                        move_accel = -1.0
+                    }
+                    if (is_key_down(KEY_LEFT)) {
+                        turn_dir = -1
+                    }
+                    if (is_key_down(KEY_RIGHT)) {
+                        turn_dir = 1
+                    }
+
+                    # Physics Update
+                    if (move_accel != 0.0) {
+                        car_speed = car_speed + (move_accel * car_speedup * dt)
+                        if (car_speed > car_max_speed) { car_speed = car_max_speed }
+                        if (car_speed < -car_max_speed) { car_speed = -car_max_speed }
+                    } else {
+                        # Friction
+                        if (car_speed > 10.0) {
+                            car_speed = car_speed - car_slowdown * dt
+                        } else {
+                            if (car_speed < -10.0) {
+                                car_speed = car_speed + car_slowdown * dt
+                            } else {
+                                car_speed = 0.0
+                            }
+                        }
+                    }
+
+                    car_rotation = car_rotation + (turn_dir * ROTATION_SPEED * dt)
+                    
+                    if (car_rotation >= 360) { car_rotation = car_rotation - 360 }
+                    if (car_rotation < 0) { car_rotation = car_rotation + 360 }
+
+                    # Movement
+                    let rad = car_rotation * PI / 180.0
+                    let x_move = car_speed * cos(rad) * dt * (car_direction * -1)
+                    let y_move = car_speed * sin(rad) * dt * (car_direction * -1)
+                    
+                    car_x = car_x + x_move
+                    car_y = car_y + y_move
+
+                    # Camera Follow
+                    let target_x = camera[2]
+                    let target_y = camera[3]
+                    
+                    let dx = (car_x + car_w/2) - target_x
+                    let dy = (car_y + car_h/2) - target_y
+                    
+                    target_x = target_x + dx * 2.0 * dt
+                    target_y = target_y + dy * 2.0 * dt
+                    
+                    camera = [WIDTH/2, HEIGHT/2, target_x, target_y, 0.0, 1.0]
+                    
+                    if (is_key_pressed(KEY_ESCAPE)) {
+                        play_music_stream(menu_music)
+                        current_state = MENU
+                    }
+                }
+            }
+        }
+
+        # Draw
+        begin_drawing()
+        clear_background(BACKGROUND_COLOR)
+
+        if (current_state == MENU) {
+             if (menu_bg != -1) {
+                 draw_texture_pro(menu_bg, [0,0, get_texture_width(menu_bg), get_texture_height(menu_bg)], [0,0,WIDTH,HEIGHT], [0,0], 0, WHITE)
+             }
+             
+             if (title_font != -1) {
+                 draw_text(title_font, "Raceee", WIDTH/2 - measure_text("Raceee", 80)/2, HEIGHT/4 - 40, 80, 2, BLACK)
+             } else {
+                 draw_text_default("Raceee", WIDTH/2 - measure_text("Raceee", 80)/2, HEIGHT/4 - 40, 80, BLACK)
+             }
+             
+             let play_btn = [WIDTH/2 - 100, HEIGHT/2 - 50, 200, 60]
+             draw_rectangle_rec(play_btn, GRAY)
+             draw_rectangle_lines(play_btn[0], play_btn[1], play_btn[2], play_btn[3], BLACK)
+             
+             if (ui_font != -1) {
+                 draw_text(ui_font, "PLAY", WIDTH/2 - measure_text("PLAY", 30)/2, HEIGHT/2 - 35, 30, 2, WHITE)
+             } else {
+                 draw_text_default("PLAY", WIDTH/2 - measure_text("PLAY", 30)/2, HEIGHT/2 - 35, 30, WHITE)
+             }
+             
+             let settings_btn = [WIDTH/2 - 100, HEIGHT/2 + 50, 200, 60]
+             draw_rectangle_rec(settings_btn, GRAY)
+             draw_rectangle_lines(settings_btn[0], settings_btn[1], settings_btn[2], settings_btn[3], BLACK)
+             
+             if (ui_font != -1) {
+                 draw_text(ui_font, "SETTINGS", WIDTH/2 - measure_text("SETTINGS", 30)/2, HEIGHT/2 + 65, 30, 2, WHITE)
+             } else {
+                 draw_text_default("SETTINGS", WIDTH/2 - measure_text("SETTINGS", 30)/2, HEIGHT/2 + 65, 30, WHITE)
+             }
+
+             let exit_btn = [WIDTH/2 - 100, HEIGHT/2 + 150, 200, 60]
+             draw_rectangle_rec(exit_btn, GRAY)
+             draw_rectangle_lines(exit_btn[0], exit_btn[1], exit_btn[2], exit_btn[3], BLACK)
+             
+             if (ui_font != -1) {
+                 draw_text(ui_font, "EXIT", WIDTH/2 - measure_text("EXIT", 30)/2, HEIGHT/2 + 165, 30, 2, WHITE)
+             } else {
+                 draw_text_default("EXIT", WIDTH/2 - measure_text("EXIT", 30)/2, HEIGHT/2 + 165, 30, WHITE)
+             }
+
+        } else {
+            if (current_state == SETTINGS) {
+                if (menu_bg != -1) {
+                    draw_texture_pro(menu_bg, [0,0, get_texture_width(menu_bg), get_texture_height(menu_bg)], [0,0,WIDTH,HEIGHT], [0,0], 0, WHITE)
+                }
+                
+                if (title_font != -1) {
+                    draw_text(title_font, "Settings", WIDTH/2 - measure_text("Settings", 60)/2, HEIGHT/4, 60, 2, BLACK)
+                } else {
+                    draw_text_default("Settings", WIDTH/2 - measure_text("Settings", 60)/2, HEIGHT/4, 60, BLACK)
+                }
+                
+                let back_btn = [50, 50, 100, 40]
+                let back_col = GRAY
+                if (check_collision_point_rec(mouse, back_btn)) { back_col = DARKGRAY }
+                draw_rectangle_rec(back_btn, back_col)
+                draw_rectangle_lines(back_btn[0], back_btn[1], back_btn[2], back_btn[3], BLACK)
+                draw_text_default("BACK", 75, 65, 20, WHITE)
+                
+                draw_text_default("FPS:", WIDTH/2 - 150, HEIGHT/2 + 10, 30, BLACK)
+                
+                let fps_left = [WIDTH/2 - 80, HEIGHT/2 + 5, 30, 30]
+                let fps_right = [WIDTH/2 + 50, HEIGHT/2 + 5, 30, 30]
+                
+                if (arrow_left != -1) {
+                     draw_texture_pro(arrow_left, [0,0, get_texture_width(arrow_left), get_texture_height(arrow_left)], fps_left, [0,0], 0, WHITE)
+                }
+                if (arrow_right != -1) {
+                     draw_texture_pro(arrow_right, [0,0, get_texture_width(arrow_right), get_texture_height(arrow_right)], fps_right, [0,0], 0, WHITE)
+                }
+                
+                let fps_str = "60"
+                if (target_fps == 30) { fps_str = "30" }
+                
+                draw_text_default(fps_str, WIDTH/2 - measure_text(fps_str, 30)/2, HEIGHT/2 + 5, 30, BLACK)
+
+            } else {
+                if (current_state == GAME) {
+                begin_mode_2d(camera)
+                    let soil_w = get_texture_width(soil_tex)
+                    let soil_h = get_texture_height(soil_tex)
+
+                    if (soil_w == 0) { soil_w = 512 }
+                    if (soil_h == 0) { soil_h = 512 }
+
+                    let p_x = car_x
+                    let p_y = car_y
+                    
+                    let col_idx = floor(p_x / soil_w)
+                    let row_idx = floor(p_y / soil_h)
+                    
+                    let start_col = col_idx - 3
+                    let end_col = col_idx + 4
+                    let start_row = row_idx - 3
+                    let end_row = row_idx + 4
+                    
+                    let r = start_row
+                    while (r < end_row) {
+                        let c = start_col
+                        while (c < end_col) {
+                            if (soil_tex != -1) {
+                                draw_texture(soil_tex, c * soil_w, r * soil_h)
+                            }
+                            c = c + 1
+                        }
+                        r = r + 1
+                    }
+
+                    draw_rectangle_lines(0, 0, world_w, world_h, BLACK) # World Border
+                    
+                    let src_rec = [0, 0, tex_w, tex_h]
+                    let dest_rec = [car_x + car_w/2, car_y + car_h/2, car_w, car_h] # Center for rotation
+                    let origin = [car_w/2, car_h/2]
+                    
+                    if (car_tex != -1) {
+                        draw_texture_pro(car_tex, src_rec, dest_rec, origin, car_rotation, WHITE)
+                    } else {
+                        draw_rectangle_rec([car_x, car_y, car_w, car_h], BLACK)
+                    }
+                end_mode_2d()
+            }
+        }
+        }
+        end_drawing()
+    }
+    
+    close_audio_device()
+    close_window()
+}
+
+main()

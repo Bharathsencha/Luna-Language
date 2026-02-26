@@ -1,0 +1,253 @@
+# Soft-Body Physics Simulation (Themed)
+# Using the "Balls" Extension keywords for maximum flavor.
+
+init_window(1024, 768, "Squishy Soft-Body Simulator")
+set_fps(144)
+
+# Physics Constants
+balls gravity = 0.3
+balls damping = 0.985
+balls stiffness = 0.25
+balls shear_stiffness = 0.12
+balls num_points = 24  # More points = smoother skin
+
+# Create a Soft Body
+grab_balls create_body(cx, cy, radius, hue) {
+    balls body = []
+
+    # Index 0: center point [x, y, vx, vy]
+    append(body, [float(cx), float(cy), 0.0, 0.0])
+
+    # Indices 1..num_points: skin ring
+    loop_your_balls (balls i = 0; i < num_points; i++) {
+        balls angle = (i * 6.28318) / float(num_points)
+        balls px = cx + cos(angle) * radius
+        balls py = cy + sin(angle) * radius
+        append(body, [px, py, 0.0, 0.0])
+    }
+
+    # Last index: metadata [hue, radius, anchor_x, anchor_y]
+    append(body, [hue, radius, float(cx), float(cy)])
+    return body
+}
+
+# Bodies - side by side, different hues
+shared_balls body1 = create_body(312, 380, 110, 330.0)  # Pink/rose
+shared_balls body2 = create_body(712, 380, 110, 350.0)  # Hot pink
+
+balls time = 0.0
+
+grab_balls update_body(b) {
+    balls center = b[0]
+    balls meta = b[len(b)-1]
+    balls hue = meta[0]
+    balls base_radius = meta[1]
+    balls anchor_x = meta[2]
+    balls anchor_y = meta[3]
+
+    balls mpos = get_mouse_position()
+    balls mx = mpos[0]
+    balls my = mpos[1]
+    balls clicked = is_mouse_button_down(0)
+    balls right_clicked = is_mouse_button_down(1)
+
+    loop_your_balls (balls i = 0; i <= num_points; i++) {
+        balls p = b[i]
+
+        # Gravity
+        p[3] = p[3] + gravity
+
+        # Soft breathing animation - subtle radius pulse
+        balls breath = sin(time * 1.8 + anchor_x * 0.01) * 2.0
+
+        # Mouse repulsion (poke)
+        let dx = p[0] - mx
+        let dy = p[1] - my
+        let dist = sqrt(dx*dx + dy*dy)
+        if_balls (dist < 160 && dist > 0.1) {
+            balls force = (160 - dist) * 0.025
+            if_balls (clicked) { force = force + 20.0 }
+            if_balls (right_clicked) { force = force - 12.0 } # pull inward
+            p[2] = p[2] + (dx / dist) * force
+            p[3] = p[3] + (dy / dist) * force
+        }
+    }
+
+    loop_your_balls (balls i = 1; i <= num_points; i++) {
+        balls p = b[i]
+        balls dx = p[0] - center[0]
+        balls dy = p[1] - center[1]
+        balls dist = sqrt(dx*dx + dy*dy)
+        if_balls (dist > 0.01) {
+            balls breath_r = base_radius + sin(time * 1.8 + anchor_x * 0.01) * 3.0
+            balls diff = dist - breath_r
+
+            balls fx = (dx / dist) * diff * stiffness
+            balls fy = (dy / dist) * diff * stiffness
+
+            p[2] = p[2] - fx
+            p[3] = p[3] - fy
+            center[2] = center[2] + fx * 0.08
+            center[3] = center[3] + fy * 0.08
+        }
+    }
+
+    loop_your_balls (balls i = 1; i <= num_points; i++) {
+        balls next_idx = i + 1
+        if_balls (next_idx > num_points) { next_idx = 1 }
+
+        balls p1 = b[i]
+        balls p2 = b[next_idx]
+
+        balls dx = p1[0] - p2[0]
+        balls dy = p1[1] - p2[1]
+        balls dist = sqrt(dx*dx + dy*dy)
+        if_balls (dist > 0.01) {
+            balls rest = (base_radius * 6.28318) / float(num_points)
+            balls diff = dist - rest
+
+            balls fx = (dx / dist) * diff * shear_stiffness
+            balls fy = (dy / dist) * diff * shear_stiffness
+
+            p1[2] = p1[2] - fx
+            p1[3] = p1[3] - fy
+            p2[2] = p2[2] + fx
+            p2[3] = p2[3] + fy
+        }
+    }
+
+    loop_your_balls (balls i = 0; i <= num_points; i++) {
+        balls p = b[i]
+
+        p[2] = p[2] * damping
+        p[3] = p[3] * damping
+
+        p[0] = p[0] + p[2]
+        p[1] = p[1] + p[3]
+
+        # Floor
+        if_balls (p[1] > 680) {
+            p[1] = 680
+            p[3] = p[3] * -0.45
+            p[2] = p[2] * 0.85  # friction
+        }
+        # Walls
+        if_balls (p[0] < 30) {
+            p[0] = 30
+            p[2] = -p[2] * 0.45
+        }
+        if_balls (p[0] > 994) {
+            p[0] = 994
+            p[2] = -p[2] * 0.45
+        }
+        # Ceiling
+        if_balls (p[1] < 20) {
+            p[1] = 20
+            p[3] = -p[3] * 0.45
+        }
+    }
+
+    center[2] = center[2] + (anchor_x - center[0]) * 0.008
+    center[3] = center[3] + (anchor_y - center[1]) * 0.012
+}
+
+grab_balls collide_bodies(b1, b2) {
+    balls c1 = b1[0]
+    balls c2 = b2[0]
+    balls r1 = b1[len(b1)-1][1]
+    balls r2 = b2[len(b2)-1][1]
+
+    balls dx = c1[0] - c2[0]
+    balls dy = c1[1] - c2[1]
+    balls dist = sqrt(dx*dx + dy*dy)
+    balls min_dist = r1 + r2 - 20.0  # slight overlap allowed for squish
+
+    if_balls (dist < min_dist && dist > 0.1) {
+        balls push = ((min_dist - dist) / dist) * 0.3
+        balls fx = dx * push
+        balls fy = dy * push
+
+        # Push skin points of both bodies apart
+        loop_your_balls (balls i = 0; i <= num_points; i++) {
+            balls p1 = b1[i]
+            balls p2 = b2[i]
+            p1[2] = p1[2] + fx * 0.5
+            p1[3] = p1[3] + fy * 0.5
+            p2[2] = p2[2] - fx * 0.5
+            p2[3] = p2[3] - fy * 0.5
+        }
+    }
+}
+
+grab_balls draw_body(b, t) {
+    balls meta = b[len(b)-1]
+    balls hue = meta[0]
+    balls base_radius = meta[1]
+    balls center = b[0]
+    balls cx = to_int(center[0])
+    balls cy = to_int(center[1])
+
+    # This avoids the spoke/cone look from center-to-skin lines
+    # Draw from large to small so inner circles paint over outer ones
+    balls r = base_radius + 10.0
+    loop_your_balls (balls step = 0; step < 22; step++) {
+        balls pct = 1.0 - (step / 22.0)          # 1.0 at edge, 0.0 at center
+        balls lightness = 0.20 + pct * 0.18       # darker at edge, lighter inside
+        balls alpha = 255
+        balls col = hsl(hue, 0.85, lightness)
+        balls ring_r = to_int(r * pct)
+        if_balls (ring_r > 0) {
+            draw_circle(cx, cy, ring_r, [col[0], col[1], col[2], alpha])
+        }
+    }
+
+    # Bright center bloom (light source from upper left)
+    draw_circle(cx - 20, cy - 25, to_int(base_radius * 0.55), hsl(hue, 0.7, 0.42))
+    draw_circle(cx - 28, cy - 32, to_int(base_radius * 0.30), hsl(hue, 0.5, 0.58))
+
+
+
+    balls hx = cx - 28
+    balls hy = cy - 32
+    draw_circle(hx, hy, 20, [255, 255, 255, 15])
+    draw_circle(hx, hy, 12, [255, 255, 255, 30])
+    draw_circle(hx, hy, 6,  [255, 255, 255, 70])
+    draw_circle(hx, hy, 3,  [255, 255, 255, 140])
+
+    balls nip_x = cx + 8
+    balls nip_y = cy + 18
+    balls nip_r = 6.0 + sin(t * 2.5) * 1.2
+
+    draw_circle(nip_x, nip_y, to_int(nip_r + 5), hsl(hue - 10, 0.9, 0.22))
+    draw_circle(nip_x, nip_y, to_int(nip_r + 2), hsl(hue - 5, 1.0, 0.40))
+    draw_circle(nip_x, nip_y, to_int(nip_r), hsl(hue, 1.0, 0.60))
+    draw_circle(nip_x, nip_y, 3, [255, 230, 230, 180])
+}
+
+# Main Loop
+spin_balls (window_open()) {
+    time = time + 0.01
+
+    update_body(body1)
+    update_body(body2)
+    collide_bodies(body1, body2)
+
+    begin_drawing()
+
+    # Background: dark velvet with subtle gradient
+    clear_background(15, 10, 20, 255)
+    draw_gradient_ex(0, 0, 1024, 768, hsl(280.0, 0.4, 0.06), hsl(260.0, 0.5, 0.04), hsl(300.0, 0.3, 0.05), hsl(270.0, 0.4, 0.07))
+
+    # Floor line
+    draw_line(0, 680, 1024, 680, 1, [255, 255, 255, 20])
+
+    draw_body(body1, time)
+    draw_body(body2, time)
+
+    # UI
+    draw_text_default("Left Click: Poke   Right Click: Pull   Jiggle away", 290, 720, 18, [180, 150, 200, 180])
+
+    end_drawing()
+}
+
+close_window()

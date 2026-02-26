@@ -3,6 +3,7 @@
 
 #include "raylib.h"
 #include "gui_lib.h"
+#include "../include/intern.h"
 #include "../include/value.h"
 #include "../include/env.h"
 #include <stdio.h>
@@ -79,7 +80,7 @@ void register_color(Env *env, const char *name, Color c) {
     value_list_append(&list, value_int(c.g));
     value_list_append(&list, value_int(c.b));
     value_list_append(&list, value_int(c.a));
-    env_def(env, name, list);
+    env_def(env, intern_string(name), list);
 }
 
 // Lifecycle & System
@@ -134,70 +135,70 @@ Value lib_gui_init(int argc, Value *argv, Env *env) {
     register_color(env, "TRANSPARENT", (Color){0, 0, 0, 0});
     
     // Register Key Constants
-    env_def(env, "KEY_SPACE", value_int(KEY_SPACE));
-    env_def(env, "KEY_ESCAPE", value_int(KEY_ESCAPE));
-    env_def(env, "KEY_ENTER", value_int(KEY_ENTER));
-    env_def(env, "KEY_TAB", value_int(KEY_TAB));
-    env_def(env, "KEY_BACKSPACE", value_int(KEY_BACKSPACE));
+    env_def(env, intern_string("KEY_SPACE"), value_int(KEY_SPACE));
+    env_def(env, intern_string("KEY_ESCAPE"), value_int(KEY_ESCAPE));
+    env_def(env, intern_string("KEY_ENTER"), value_int(KEY_ENTER));
+    env_def(env, intern_string("KEY_TAB"), value_int(KEY_TAB));
+    env_def(env, intern_string("KEY_BACKSPACE"), value_int(KEY_BACKSPACE));
     
-    env_def(env, "KEY_RIGHT", value_int(KEY_RIGHT));
-    env_def(env, "KEY_LEFT", value_int(KEY_LEFT));
-    env_def(env, "KEY_DOWN", value_int(KEY_DOWN));
-    env_def(env, "KEY_UP", value_int(KEY_UP));
+    env_def(env, intern_string("KEY_RIGHT"), value_int(KEY_RIGHT));
+    env_def(env, intern_string("KEY_LEFT"), value_int(KEY_LEFT));
+    env_def(env, intern_string("KEY_DOWN"), value_int(KEY_DOWN));
+    env_def(env, intern_string("KEY_UP"), value_int(KEY_UP));
     
     // WASD + Common
-    env_def(env, "KEY_W", value_int(KEY_W));
-    env_def(env, "KEY_A", value_int(KEY_A));
-    env_def(env, "KEY_S", value_int(KEY_S));
-    env_def(env, "KEY_D", value_int(KEY_D));
-    env_def(env, "KEY_P", value_int(KEY_P));
-    env_def(env, "KEY_R", value_int(KEY_R));
-    env_def(env, "KEY_M", value_int(KEY_M));
+    env_def(env, intern_string("KEY_W"), value_int(KEY_W));
+    env_def(env, intern_string("KEY_A"), value_int(KEY_A));
+    env_def(env, intern_string("KEY_S"), value_int(KEY_S));
+    env_def(env, intern_string("KEY_D"), value_int(KEY_D));
+    env_def(env, intern_string("KEY_P"), value_int(KEY_P));
+    env_def(env, intern_string("KEY_R"), value_int(KEY_R));
+    env_def(env, intern_string("KEY_M"), value_int(KEY_M));
     
     // IJKL Navigation
-    env_def(env, "KEY_I", value_int(KEY_I));
-    env_def(env, "KEY_J", value_int(KEY_J));
-    env_def(env, "KEY_K", value_int(KEY_K));
-    env_def(env, "KEY_L", value_int(KEY_L));
+    env_def(env, intern_string("KEY_I"), value_int(KEY_I));
+    env_def(env, intern_string("KEY_J"), value_int(KEY_J));
+    env_def(env, intern_string("KEY_K"), value_int(KEY_K));
+    env_def(env, intern_string("KEY_L"), value_int(KEY_L));
     
     // Other Common Action Keys
-    env_def(env, "KEY_Q", value_int(KEY_Q));
-    env_def(env, "KEY_E", value_int(KEY_E));
-    env_def(env, "KEY_Z", value_int(KEY_Z));
-    env_def(env, "KEY_C", value_int(KEY_C));
-    env_def(env, "KEY_X", value_int(KEY_X));
-    env_def(env, "KEY_F", value_int(KEY_F));
-    env_def(env, "KEY_H", value_int(KEY_H));
+    env_def(env, intern_string("KEY_Q"), value_int(KEY_Q));
+    env_def(env, intern_string("KEY_E"), value_int(KEY_E));
+    env_def(env, intern_string("KEY_Z"), value_int(KEY_Z));
+    env_def(env, intern_string("KEY_C"), value_int(KEY_C));
+    env_def(env, intern_string("KEY_X"), value_int(KEY_X));
+    env_def(env, intern_string("KEY_F"), value_int(KEY_F));
+    env_def(env, intern_string("KEY_H"), value_int(KEY_H));
     
     // Remaining A-Z
-    env_def(env, "KEY_B", value_int(KEY_B));
-    env_def(env, "KEY_G", value_int(KEY_G));
-    env_def(env, "KEY_N", value_int(KEY_N));
-    env_def(env, "KEY_O", value_int(KEY_O));
-    env_def(env, "KEY_T", value_int(KEY_T));
-    env_def(env, "KEY_U", value_int(KEY_U));
-    env_def(env, "KEY_V", value_int(KEY_V));
-    env_def(env, "KEY_Y", value_int(KEY_Y));
+    env_def(env, intern_string("KEY_B"), value_int(KEY_B));
+    env_def(env, intern_string("KEY_G"), value_int(KEY_G));
+    env_def(env, intern_string("KEY_N"), value_int(KEY_N));
+    env_def(env, intern_string("KEY_O"), value_int(KEY_O));
+    env_def(env, intern_string("KEY_T"), value_int(KEY_T));
+    env_def(env, intern_string("KEY_U"), value_int(KEY_U));
+    env_def(env, intern_string("KEY_V"), value_int(KEY_V));
+    env_def(env, intern_string("KEY_Y"), value_int(KEY_Y));
     
     // Numbers 0-9
-    env_def(env, "KEY_0", value_int(KEY_ZERO));
-    env_def(env, "KEY_1", value_int(KEY_ONE));
-    env_def(env, "KEY_2", value_int(KEY_TWO));
-    env_def(env, "KEY_3", value_int(KEY_THREE));
-    env_def(env, "KEY_4", value_int(KEY_FOUR));
-    env_def(env, "KEY_5", value_int(KEY_FIVE));
-    env_def(env, "KEY_6", value_int(KEY_SIX));
-    env_def(env, "KEY_7", value_int(KEY_SEVEN));
-    env_def(env, "KEY_8", value_int(KEY_EIGHT));
-    env_def(env, "KEY_9", value_int(KEY_NINE));
+    env_def(env, intern_string("KEY_0"), value_int(KEY_ZERO));
+    env_def(env, intern_string("KEY_1"), value_int(KEY_ONE));
+    env_def(env, intern_string("KEY_2"), value_int(KEY_TWO));
+    env_def(env, intern_string("KEY_3"), value_int(KEY_THREE));
+    env_def(env, intern_string("KEY_4"), value_int(KEY_FOUR));
+    env_def(env, intern_string("KEY_5"), value_int(KEY_FIVE));
+    env_def(env, intern_string("KEY_6"), value_int(KEY_SIX));
+    env_def(env, intern_string("KEY_7"), value_int(KEY_SEVEN));
+    env_def(env, intern_string("KEY_8"), value_int(KEY_EIGHT));
+    env_def(env, intern_string("KEY_9"), value_int(KEY_NINE));
     
     // Mouse Buttons
-    env_def(env, "MOUSE_LEFT_BUTTON", value_int(MOUSE_LEFT_BUTTON));
-    env_def(env, "MOUSE_RIGHT_BUTTON", value_int(MOUSE_RIGHT_BUTTON));
-    env_def(env, "MOUSE_MIDDLE_BUTTON", value_int(MOUSE_MIDDLE_BUTTON));
+    env_def(env, intern_string("MOUSE_LEFT_BUTTON"), value_int(MOUSE_LEFT_BUTTON));
+    env_def(env, intern_string("MOUSE_RIGHT_BUTTON"), value_int(MOUSE_RIGHT_BUTTON));
+    env_def(env, intern_string("MOUSE_MIDDLE_BUTTON"), value_int(MOUSE_MIDDLE_BUTTON));
     
     // Register Particle Pool Helper
-    env_def(env, "create_particle_pool", value_native(lib_gui_create_particle_pool));
+    env_def(env, intern_string("create_particle_pool"), value_native(lib_gui_create_particle_pool));
 
     SetTargetFPS(60);
     return value_null();

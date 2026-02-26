@@ -1,0 +1,127 @@
+# Falling Sand Simulation (Native C Plugin Version)
+
+let SCREEN_WIDTH = 800
+let SCREEN_HEIGHT = 600
+let GRID_W = 200
+let GRID_H = 150
+let CELL_SIZE = 4
+
+# Types (Must match sand_lib.c)
+let TYPE_EMPTY = 0
+let TYPE_SAND = 1
+let TYPE_WATER = 2
+let TYPE_STONE = 3
+let TYPE_ACID = 4
+let TYPE_FIRE = 5
+
+# Colors
+let C_BG = [10, 10, 10, 255]
+let C_SAND = [235, 200, 100, 255]
+let C_WATER = [50, 100, 250, 200]
+let C_STONE = [120, 120, 120, 255]
+let C_ACID = [100, 255, 50, 220]
+let C_FIRE = [255, 80, 10, 255]
+
+let current_type = TYPE_SAND
+let brush_size = 2
+
+func main() {
+    init_window(SCREEN_WIDTH, SCREEN_HEIGHT, "Luna Falling Sand (Native C)")
+    set_fps(60)
+    
+    # Initialize Native Grid
+    sand_init()
+    
+    while (window_open()) {
+        # Input
+        if (is_key_pressed(KEY_1)) { current_type = TYPE_SAND }
+        if (is_key_pressed(KEY_2)) { current_type = TYPE_WATER }
+        if (is_key_pressed(KEY_3)) { current_type = TYPE_STONE }
+        if (is_key_pressed(KEY_4)) { current_type = TYPE_ACID }
+        if (is_key_pressed(KEY_5)) { current_type = TYPE_FIRE }
+        if (is_key_pressed(KEY_R)) { sand_init() }
+        
+        # Cycle with Tab
+        if (is_key_pressed(KEY_TAB)) {
+            current_type = current_type + 1
+            if (current_type > 5) { current_type = 1 }
+        }
+        
+        # Mouse Drawing (Continuous)
+        if (is_mouse_button_down(MOUSE_LEFT_BUTTON)) {
+            let m = get_mouse_position()
+            let gx = to_int(m[0] / CELL_SIZE)
+            let gy = to_int(m[1] / CELL_SIZE)
+            
+            let r = brush_size
+            let by = -r
+            while (by <= r) {
+                let bx = -r
+                while (bx <= r) {
+                    if (rand(100) < 50) { 
+                        sand_set(gx + bx, gy + by, current_type)
+                    }
+                    bx = bx + 1
+                }
+                by = by + 1
+            }
+        }
+        
+        if (is_mouse_button_down(MOUSE_RIGHT_BUTTON)) {
+            let m = get_mouse_position()
+            let gx = to_int(m[0] / CELL_SIZE)
+            let gy = to_int(m[1] / CELL_SIZE)
+            
+            let r = brush_size + 2
+            let by = -r
+            while (by <= r) {
+                let bx = -r
+                while (bx <= r) {
+                    sand_set(gx + bx, gy + by, TYPE_EMPTY)
+                    bx = bx + 1
+                }
+                by = by + 1
+            }
+        }
+        
+        # Update Logic 
+        sand_update()
+        
+        # Draw
+        begin_drawing()
+        clear_background(C_BG)
+        
+        let dy = 0
+        while (dy < GRID_H) {
+            let dx = 0
+            while (dx < GRID_W) {
+                let type = sand_get(dx, dy)
+                if (type != 0) {
+                    let col = C_STONE
+                    if (type == 1) { col = C_SAND }
+                    if (type == 2) { col = C_WATER }
+                    if (type == 4) { col = C_ACID }
+                    if (type == 5) { col = C_FIRE }
+                    
+                    draw_rectangle(dx * CELL_SIZE, dy * CELL_SIZE, CELL_SIZE, CELL_SIZE, col)
+                }
+                dx = dx + 1
+            }
+            dy = dy + 1
+        }
+        
+        # UI
+        draw_rectangle(0, 0, SCREEN_WIDTH, 40, [0, 0, 0, 200])
+        let tool = "SAND"
+        if (current_type == 2) { tool = "WATER" }
+        if (current_type == 3) { tool = "STONE" }
+        if (current_type == 4) { tool = "ACID" }
+        if (current_type == 5) { tool = "FIRE" }
+        
+        draw_text_default("Tool: " + tool + " (Tab)", 10, 10, 20, [255, 255, 255, 255])
+        draw_text_default("Left Click: Draw | Right Click: Erase | R: Reset", 300, 10, 20, [150, 150, 150, 255])
+        
+        end_drawing()
+    }
+    close_window()
+}

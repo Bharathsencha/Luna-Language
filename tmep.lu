@@ -1,23 +1,42 @@
-func get_user_items() {
-    print("How many items do you want to add?")
-    
-    let count = int(input("Enter count: "))
-     
-    let list = []
-    
-    print("Okay, please enter", count, "items below:")
 
-  
-    for (let i = 0; i < count; i++) {
-        let e = input("> ")
+Commit Message
 
-        append(list, e)
-    }
-    
-    return list
-}
+Subject: Refactor: Major structural upgrade for GUI support and Standard Library migration
 
-let my_items = get_user_items()
+Description:
+This commit implements a fundamental shift in the Luna language architecture to support high-level graphical features and an immediate-mode GUI system.
 
-print("You collected:", my_items)
-print("Total items:", len(my_items")
+Key Changes:
+
+    Language Core & Native Bridge:
+
+        Updated NativeFunc signature to include Env* for real-time environment variable binding.
+
+        Implemented "Auto-Main" execution logic in main.c to support event loops.
+
+    Standard Library Migration:
+
+        Systematically updated all built-in libraries (math, string, file, vec, list, time) to match the new 3-argument native signature.
+
+    GUI & Media Engine (gui/):
+
+        Introduced a dedicated gui/ directory for modular graphics logic.
+
+        Integrated Raylib for rendering, including support for windowing and transparency.
+
+        Added Resource Managers for Font and Texture caching using an ID-based handle system.
+
+        Implemented high-quality text rendering with Bilinear Filtering support for TTF fonts.
+
+    New Native Features:
+
+        Visuals: draw_rect, draw_circle, load_texture, draw_texture, load_font, draw_text.
+
+        Input: Added is_key_down and gui_get_mouse for interactive control.
+
+        Widgets: Added gui_slider with stateful variable binding and auto-layout buttons/labels.
+
+    Build System:
+
+        Updated Makefile to include the gui/ folder, manage Raylib dependencies, and support static linking.
+

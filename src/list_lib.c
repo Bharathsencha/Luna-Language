@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +8,10 @@
 #include "value.h"
 #include "math_lib.h" // For math_internal_next()
 #include "luna_error.h"
+#include "env.h"
+#include "arena.h"
+
+extern Arena *ast_arena;
 
 // Threshold for switching from Merge Sort to Insertion Sort
 #define SORT_THRESHOLD 16
@@ -18,7 +22,7 @@ static int value_less_than(Value a, Value b) {
     if (a.type == VAL_FLOAT && b.type == VAL_FLOAT) return a.f < b.f;
     if (a.type == VAL_INT && b.type == VAL_FLOAT) return (double)a.i < b.f;
     if (a.type == VAL_FLOAT && b.type == VAL_INT) return a.f < (double)b.i;
-    if (a.type == VAL_STRING && b.type == VAL_STRING) return strcmp(a.s, b.s) < 0;
+    if (a.type == VAL_STRING && b.type == VAL_STRING && a.string && b.string) return strcmp(a.string->chars, b.string->chars) < 0;
     return 0; 
 }
 
@@ -78,29 +82,40 @@ static void hybrid_sort(Value *items, int l, int r) {
     }
 }
 
-Value lib_list_sort(int argc, Value *argv) {
+Value lib_list_sort(int argc, Value *argv, Env *env) {
     if (argc != 1 || argv[0].type != VAL_LIST) {
         error_report(ERR_ARGUMENT, 0, 0, "sort() expects 1 list", "Usage: sort(myList)");
         return value_null();
     }
 
     Value list = argv[0];
-    if (list.list.count > 1) {
-        hybrid_sort(list.list.items, 0, list.list.count - 1);
+    if (list.list && list.list->count > 1) {
+        hybrid_sort(list.list->items, 0, list.list->count - 1);
     }
+    return value_null();
+}
+
+Value lib_list_append(int argc, Value *argv, Env *env) {
+    if (argc != 2 || argv[0].type != VAL_LIST) {
+        error_report(ERR_ARGUMENT, 0, 0, "list_append() expects a list and a value", "Usage: list_append(list, value)");
+        return value_null();
+    }
+    
+    value_list_append(&argv[0], argv[1]);
     return value_null();
 }
 
 // Fisher-Yates Shuffle Implementation
 //It should work now I suppose
-Value lib_list_shuffle(int argc, Value *argv) {
+Value lib_list_shuffle(int argc, Value *argv, Env *env) {
     if (argc != 1 || argv[0].type != VAL_LIST) {
         error_report(ERR_ARGUMENT, 0, 0, "shuffle() expects 1 list", "Usage: shuffle(myList)");
         return value_null();
     }
 
     Value list = argv[0];
-    int n = list.list.count;
+    if (!list.list) return value_null();
+    int n = list.list->count;
     if (n <= 1) return value_null();
 
     for (int i = n - 1; i > 0; i--) {
@@ -108,10 +123,34 @@ Value lib_list_shuffle(int argc, Value *argv) {
         int j = (int)(math_internal_next() % (i + 1));
         
         // Swap
-        Value temp = list.list.items[i];
-        list.list.items[i] = list.list.items[j];
-        list.list.items[j] = temp;
+        Value temp = list.list->items[i];
+        list.list->items[i] = list.list->items[j];
+        list.list->items[j] = temp;
     }
     
     return value_null();
+}
+
+// Generate a pre-flattened contiguous C-Array for Zero-Copy Math Operations
+Value lib_dense_list(int argc, Value *argv, Env *env) {
+    if (argc != 2 || argv[0].type != VAL_INT || argv[1].type != VAL_FLOAT) {
+        error_report(ERR_ARGUMENT, 0, 0, "dense_list() expects (size: int, fill: float)", "Usage: dense_list(100, 1.5)");
+        return value_null();
+    }
+
+    int size = argv[0].i;
+    double fill_value = argv[1].f;
+
+    if (size <= 0) return value_dense_list();
+
+    Value res = value_dense_list();
+    res.dlist->count = size;
+    res.dlist->capacity = size;
+    res.dlist->data = arena_alloc(ast_arena, sizeof(double) * size);
+
+    for (int i = 0; i < size; i++) {
+        res.dlist->data[i] = fill_value;
+    }
+
+    return res;
 }

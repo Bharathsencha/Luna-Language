@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +7,7 @@
 #include "file_lib.h"
 #include "value.h"
 #include "mystr.h"
+#include "env.h"
 
 // Helper: Safely extract the FILE pointer from a Luna Value
 static FILE *get_file_ptr(Value v) {
@@ -26,7 +27,7 @@ static int check_args(int argc, int expected, const char *name) {
 }
 
 // open(path, mode) -> returns VAL_FILE or VAL_NULL
-Value lib_file_open(int argc, Value *argv) {
+Value lib_file_open(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "open")) return value_null();
     
     if (argv[0].type != VAL_STRING || argv[1].type != VAL_STRING) {
@@ -34,8 +35,9 @@ Value lib_file_open(int argc, Value *argv) {
         return value_null();
     }
 
-    const char *path = argv[0].s;
-    const char *mode = argv[1].s;
+    if (!argv[0].string || !argv[1].string) return value_null();
+    const char *path = argv[0].string->chars;
+    const char *mode = argv[1].string->chars;
 
     FILE *f = fopen(path, mode);
     if (!f) return value_null();
@@ -44,7 +46,7 @@ Value lib_file_open(int argc, Value *argv) {
 }
 
 // close(file_handle) -> returns null
-Value lib_file_close(int argc, Value *argv) {
+Value lib_file_close(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "close")) return value_null();
 
     FILE *f = get_file_ptr(argv[0]);
@@ -57,7 +59,7 @@ Value lib_file_close(int argc, Value *argv) {
 }
 
 // read(file_handle) -> returns full content as a single string
-Value lib_file_read(int argc, Value *argv) {
+Value lib_file_read(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "read")) return value_null();
 
     FILE *f = get_file_ptr(argv[0]);
@@ -82,7 +84,7 @@ Value lib_file_read(int argc, Value *argv) {
 }
 
 // read_line(file_handle) -> returns a string with trailing newlines removed
-Value lib_file_read_line(int argc, Value *argv) {
+Value lib_file_read_line(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "read_line")) return value_null();
 
     FILE *f = get_file_ptr(argv[0]);
@@ -90,7 +92,7 @@ Value lib_file_read_line(int argc, Value *argv) {
 
     char buf[1024];
     if (fgets(buf, sizeof(buf), f)) {
-        // Strip trailing newline characters (\n or \r) to fix assertion failures in tests
+        // Strip trailing newline characters (\n or \r)
         size_t len = strlen(buf);
         while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) {
             buf[--len] = '\0';
@@ -101,7 +103,7 @@ Value lib_file_read_line(int argc, Value *argv) {
 }
 
 // write(file_handle, data) -> returns boolean success
-Value lib_file_write(int argc, Value *argv) {
+Value lib_file_write(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "write")) return value_null();
 
     FILE *f = get_file_ptr(argv[0]);
@@ -119,11 +121,11 @@ Value lib_file_write(int argc, Value *argv) {
 }
 
 // file_exists(path) -> returns boolean
-Value lib_file_exists(int argc, Value *argv) {
+Value lib_file_exists(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "file_exists")) return value_null();
-    if (argv[0].type != VAL_STRING) return value_bool(0);
+    if (argv[0].type != VAL_STRING || !argv[0].string) return value_bool(0);
 
-    FILE *f = fopen(argv[0].s, "r");
+    FILE *f = fopen(argv[0].string->chars, "r");
     if (f) {
         fclose(f);
         return value_bool(1);
@@ -132,16 +134,16 @@ Value lib_file_exists(int argc, Value *argv) {
 }
 
 // remove_file(path) -> returns boolean
-Value lib_file_remove(int argc, Value *argv) {
+Value lib_file_remove(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "remove_file")) return value_null();
-    if (argv[0].type != VAL_STRING) return value_bool(0);
+    if (argv[0].type != VAL_STRING || !argv[0].string) return value_bool(0);
     
-    int res = remove(argv[0].s);
+    int res = remove(argv[0].string->chars);
     return value_bool(res == 0);
 }
 
 // flush(file_handle) -> returns null
-Value lib_file_flush(int argc, Value *argv) {
+Value lib_file_flush(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 1, "flush")) return value_null();
 
     FILE *f = get_file_ptr(argv[0]);

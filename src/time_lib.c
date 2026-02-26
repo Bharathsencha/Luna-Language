@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <time.h> // We need the struct definition
 #include "time_lib.h"
+#include "env.h"
 
 // Declare the external assembly function
 extern void get_monotonic_time(struct timespec *ts);
 
-Value lib_time_clock(int argc, Value *argv) {
-    (void)argc; (void)argv; // No arguments needed
+Value lib_time_clock(int argc, Value *argv, Env *env) {
+    (void)argc; (void)argv; (void)env; // No arguments or environment needed here
 
     struct timespec ts;
     

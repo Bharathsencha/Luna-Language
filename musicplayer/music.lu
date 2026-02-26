@@ -1,0 +1,317 @@
+let WIDTH = 900
+let HEIGHT = 700
+let TITLE = "Luna Retro Player"
+
+init_window(WIDTH, HEIGHT, TITLE)
+init_audio_device()
+
+# Load Assets
+let FONT_L = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 60)
+let FONT_S = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 30)
+
+let IMG_PLAY = load_image("musicplayer/assets/icons8-play-64.png")
+let TEX_PLAY = load_texture_from_image(IMG_PLAY)
+unload_image(IMG_PLAY)
+
+let IMG_PAUSE = load_image("musicplayer/assets/icons8-pause-50.png")
+let TEX_PAUSE = load_texture_from_image(IMG_PAUSE)
+unload_image(IMG_PAUSE)
+
+let IMG_NEXT = load_image("musicplayer/assets/icons8-forward-50_arrow.png")
+let TEX_NEXT = load_texture_from_image(IMG_NEXT)
+unload_image(IMG_NEXT)
+
+# Playlist
+let songs = [
+    "musicplayer/songs/Virtual Love - Tanin Jazz ( English translation lyrics)-(130k).mp3",
+    "musicplayer/songs/TheFatRat - Jackpot (Jackpot EP Track 1)-(134k).mp3",
+    "musicplayer/songs/TheFatRat - Rise Up-(133k).mp3",
+    "musicplayer/songs/TheFatRat & Anjulie - Close To The Sun-(136k).mp3",
+    "musicplayer/songs/TheFatRat & Cecilia Gault - Escaping Gravity [Chapter 3]-(134k).mp3",
+    "musicplayer/songs/The Pointer Sisters - Hot Together (Official Audio)-(130k).mp3",
+    "musicplayer/songs/Hozier - Too Sweet (Official Video)-(131k).mp3",
+    "musicplayer/songs/Alphaville - Forever Young (Official Music Video)-(129k).mp3",
+    "musicplayer/songs/Max Raabe - We Will Rock You-(134k).mp3",
+    "musicplayer/songs/Sunflower - Spider-Man_ Into the Spider-Verse_spotdown.org.mp3",
+    "musicplayer/songs/Tears For Fears - Everybody Wants To Rule The World (Official Music Video)-(132k).mp3",
+    "musicplayer/songs/The Score - Unstoppable (Lyric Video)-(129k).mp3",
+    "musicplayer/songs/Tip Toe.mp3",
+    "musicplayer/songs/yung kai - blue (official audio)-(141k).mp3"
+]
+
+let song_names = [
+    "Virtual Love - Tanin Jazz",
+    "Jackpot - TheFatRat",
+    "Rise Up - TheFatRat",
+    "Close To The Sun - TheFatRat & Anjulie",
+    "Escaping Gravity - TheFatRat & Cecilia Gault",
+    "Hot Together - The Pointer Sisters",
+    "Too Sweet - Hozier",
+    "Forever Young - Alphaville",
+    "We Will Rock You - Max Raabe",
+    "Sunflower - Spider-Man",
+    "Everybody Wants To Rule The World - Tears For Fears",
+    "Unstoppable - The Score",
+    "Tip Toe",
+    "Blue - yung kai"
+]
+
+let current_song_index = 0
+let current_music = load_music_stream(songs[current_song_index])
+play_music_stream(current_music)
+let current_cover = load_music_cover(songs[current_song_index])
+
+let is_playing = 1
+let seek_drag = 0
+let time = 0.0
+
+while (window_open()) {
+    update_music_stream(current_music)
+    let dt = get_delta_time()
+
+    # Auto loop / Next
+    let length = get_music_time_length(current_music)
+    let played = get_music_time_played(current_music)
+
+    if (length > 0) {
+        if (played >= length - 0.1) {
+            stop_music_stream(current_music)
+            unload_music_stream(current_music)
+            if (current_cover >= 0) { unload_texture(current_cover) }
+            current_song_index = current_song_index + 1
+            if (current_song_index >= len(songs)) { current_song_index = 0 }
+            current_music = load_music_stream(songs[current_song_index])
+            play_music_stream(current_music)
+            is_playing = 1
+            current_cover = load_music_cover(songs[current_song_index])
+        }
+    }
+
+    begin_drawing()
+    clear_background(0)
+    time = time + 0.02
+
+    # BACKGROUND: Animated gradient
+    let h_bl = 270.0 + sin(time * 0.4) * 20.0
+    let h_tr = 200.0 + cos(time * 0.6) * 20.0
+    let h_mid = (h_bl + h_tr) / 2.0
+    let lp = 0.35 + sin(time * 0.8) * 0.05
+    let col_bl = hsl(h_bl, 0.8, lp)
+    let col_tr = hsl(h_tr, 0.8, lp)
+    let col_mid = hsl(h_mid, 0.7, lp - 0.05)
+    draw_gradient_ex(0, 0, WIDTH, HEIGHT, col_mid, col_bl, col_mid, col_tr)
+
+    # Dark overlay
+    draw_rectangle(0, 0, WIDTH, HEIGHT, [0, 0, 0, 120])
+
+    # TOP SECTION: Album art (left) + Info (right)
+    let art_size = 220
+    let art_x = 40
+    let art_y = 30
+
+
+
+    # Album Art
+    if (current_cover >= 0) {
+        let cov_w = get_texture_width(current_cover)
+        let cov_h = get_texture_height(current_cover)
+        let dest_w = art_size
+        let dest_h = art_size
+        if (cov_w > cov_h) {
+            dest_h = art_size * (cov_h / cov_w)
+        } else {
+            dest_w = art_size * (cov_w / cov_h)
+        }
+        let dx = art_x + (art_size - dest_w) / 2
+        let dy = art_y + (art_size - dest_h) / 2
+        draw_texture_pro(current_cover, [0, 0, cov_w, cov_h], [dx, dy, dest_w, dest_h], [0, 0], 0, [255, 255, 255, 255])
+        draw_rectangle_lines(dx, dy, dest_w, dest_h, [255, 255, 255, 40])
+    }
+
+    # Song Title (right of album art)
+    let info_x = art_x + art_size + 30
+    let info_y = art_y + 70
+    let raw_title = song_names[current_song_index]
+    let max_title_w = WIDTH - info_x - 40
+    let display_title = raw_title
+    if (measure_text(FONT_L, raw_title, 36, 2) > max_title_w) {
+        let trimmed = raw_title
+        while (measure_text(FONT_L, trimmed + "...", 36, 2) > max_title_w) {
+            trimmed = substring(trimmed, 0, len(trimmed) - 1)
+        }
+        display_title = trimmed + "..."
+    }
+    draw_text(FONT_L, display_title, info_x + 2, info_y + 2, 36, 2, [0, 0, 0, 200])
+    draw_text(FONT_L, display_title, info_x, info_y, 36, 2, [255, 255, 255, 255])
+
+    # Track number
+    let track_str = to_string(current_song_index + 1) + " / " + to_string(len(songs))
+    draw_text(FONT_S, track_str, info_x, info_y + 45, 25, 2, [180, 180, 220, 200])
+
+    # Status text
+    let status_txt = "NOW PLAYING"
+    if (is_playing == 0) { status_txt = "PAUSED" }
+    draw_text(FONT_S, status_txt, info_x, info_y + 85, 25, 2, [0, 230, 255, 200])
+
+    # VISUALIZER: Full-width bars (hero section)
+    let fft = get_music_fft(current_music)
+    let viz_top = 280
+    let viz_height = 220
+    let viz_bottom = viz_top + viz_height
+
+    # Subtle background panel for visualizer
+    draw_rectangle(20, viz_top - 5, WIDTH - 40, viz_height + 10, [0, 0, 0, 80])
+
+    if (fft != null) {
+        let num_bars = len(fft)
+        let viz_pad = 30
+        let gap = 3
+        let avail_w = WIDTH - viz_pad * 2
+        let vbar_w = to_int((avail_w - gap * (num_bars - 1)) / num_bars)
+
+        let b = 0
+        while (b < num_bars) {
+            let mag = fft[b]
+            let h = to_int(mag * viz_height * 0.9)
+            if (h < 4) { h = 4 }
+            let bx = viz_pad + b * (vbar_w + gap)
+            let by = viz_bottom - h
+
+            # Color gradient across bars: cyan -> blue -> purple -> magenta
+            let bar_hue = 180.0 + (b * 160.0 / num_bars)
+            let bar_col = hsl(bar_hue, 1.0, 0.55)
+
+            # Main bar
+            draw_rectangle(bx, by, vbar_w, h, [bar_col[0], bar_col[1], bar_col[2], 220])
+
+            # Glow cap (bright top pixel)
+            draw_rectangle(bx, by, vbar_w, 3, [bar_col[0], bar_col[1], bar_col[2], 255])
+
+            b = b + 1
+        }
+    }
+
+    # BOTTOM: Progress + Time + Controls
+    let bottom_panel_y = viz_bottom + 15
+
+    # Progress Bar
+    let bar_x = 30
+    let bar_y = bottom_panel_y + 5
+    let bar_w = WIDTH - 60
+    let bar_h = 8
+
+    # BG track
+    draw_rectangle(bar_x, bar_y, bar_w, bar_h, [255, 255, 255, 30])
+
+    let progress = 0.0
+    if (length > 0) { progress = played / length }
+
+    # Filled portion with gradient feel
+    draw_rectangle(bar_x, bar_y, to_int(bar_w * progress), bar_h, [0, 220, 255, 255])
+
+    # Knob
+    draw_circle(bar_x + to_int(bar_w * progress), bar_y + 4, 7, [255, 255, 255, 255])
+
+    # Time Display
+    if (length > 0) {
+        let cur_m = to_int(played / 60)
+        let cur_s = to_int(played - (cur_m * 60))
+        let tot_m = to_int(length / 60)
+        let tot_s = to_int(length - (tot_m * 60))
+        let s_cur = to_string(cur_m) + ":" + pad_left(to_string(cur_s), 2, "0")
+        let s_tot = to_string(tot_m) + ":" + pad_left(to_string(tot_s), 2, "0")
+
+        # Left-aligned current time
+        draw_text(FONT_S, s_cur, bar_x, bar_y + 15, 25, 2, [200, 200, 200, 220])
+        # Right-aligned total time
+        let tot_w = measure_text(FONT_S, s_tot, 25, 2)
+        draw_text(FONT_S, s_tot, bar_x + bar_w - tot_w, bar_y + 15, 25, 2, [200, 200, 200, 220])
+    }
+
+    # Seek Logic
+    let mouse = get_mouse_position()
+    let mouse_x = mouse[0]
+    let mouse_y = mouse[1]
+    let hit_bar = check_collision_point_rec([mouse_x, mouse_y], [bar_x - 10, bar_y - 10, bar_w + 20, bar_h + 20])
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+        if (hit_bar) { seek_drag = 1 }
+    }
+    if (hit_bar && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+        let pct = (mouse_x - bar_x) / bar_w
+        if (pct < 0) { pct = 0 }
+        if (pct > 1) { pct = 1 }
+        seek_music_stream(current_music, length * pct)
+    }
+
+    # Controls Row
+    let ctrl_y = bar_y + 50
+    let btn_size = 50
+
+    # Play/Pause (center)
+    let play_x = WIDTH / 2 - btn_size / 2
+    let play_y = ctrl_y
+    if (is_playing) {
+        let pw = get_texture_width(TEX_PAUSE)
+        let ph = get_texture_height(TEX_PAUSE)
+        draw_texture_pro(TEX_PAUSE, [0, 0, pw, ph], [play_x, play_y, btn_size, btn_size], [0, 0], 0, [255, 255, 255, 255])
+    } else {
+        let pw = get_texture_width(TEX_PLAY)
+        let ph = get_texture_height(TEX_PLAY)
+        draw_texture_pro(TEX_PLAY, [0, 0, pw, ph], [play_x, play_y, btn_size, btn_size], [0, 0], 0, [255, 255, 255, 255])
+    }
+    if (check_collision_point_rec(mouse, [play_x, play_y, btn_size, btn_size])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+            if (is_playing) {
+                is_playing = 0
+                pause_music_stream(current_music)
+            } else {
+                is_playing = 1
+                resume_music_stream(current_music)
+            }
+        }
+    }
+
+    # Next (right of play)
+    let next_sz = 40
+    let next_x = WIDTH / 2 + 50
+    let next_y = ctrl_y + (btn_size - next_sz) / 2
+    draw_texture_pro(TEX_NEXT, [0, 0, get_texture_width(TEX_NEXT), get_texture_height(TEX_NEXT)], [next_x, next_y, next_sz, next_sz], [0, 0], 0, [255, 255, 255, 255])
+    if (check_collision_point_rec(mouse, [next_x, next_y, next_sz, next_sz])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+            stop_music_stream(current_music)
+            unload_music_stream(current_music)
+            if (current_cover >= 0) { unload_texture(current_cover) }
+            current_song_index = current_song_index + 1
+            if (current_song_index >= len(songs)) { current_song_index = 0 }
+            current_music = load_music_stream(songs[current_song_index])
+            play_music_stream(current_music)
+            is_playing = 1
+            current_cover = load_music_cover(songs[current_song_index])
+        }
+    }
+
+    # Previous (left of play)
+    let prev_x = WIDTH / 2 - 50 - next_sz
+    let prev_y = next_y
+    let tnw = get_texture_width(TEX_NEXT)
+    let tnh = get_texture_height(TEX_NEXT)
+    draw_texture_pro(TEX_NEXT, [0, 0, -tnw, tnh], [prev_x, prev_y, next_sz, next_sz], [0, 0], 0, [255, 255, 255, 255])
+    if (check_collision_point_rec(mouse, [prev_x, prev_y, next_sz, next_sz])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+            stop_music_stream(current_music)
+            unload_music_stream(current_music)
+            if (current_cover >= 0) { unload_texture(current_cover) }
+            current_song_index = current_song_index - 1
+            if (current_song_index < 0) { current_song_index = len(songs) - 1 }
+            current_music = load_music_stream(songs[current_song_index])
+            play_music_stream(current_music)
+            is_playing = 1
+            current_cover = load_music_cover(songs[current_song_index])
+        }
+    }
+
+    end_drawing()
+}
+
+close_audio_device()
+close_window()

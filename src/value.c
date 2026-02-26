@@ -27,10 +27,12 @@ Value value_float(double x) {
 Value value_string(const char *s) {
     Value v;
     v.type = VAL_STRING;
+    v.string = malloc(sizeof(StringObj));
+    v.string->ref_count = 1;
     if (s) {
-        v.s = my_strdup(s);
+        v.string->chars = my_strdup(s);
     } else {
-        v.s = my_strdup("");
+        v.string->chars = my_strdup("");
     }
     return v;
 }
@@ -55,9 +57,11 @@ Value value_bool(int b) {
 Value value_list(void) {
     Value v;
     v.type = VAL_LIST;
-    v.list.items = NULL;
-    v.list.count = 0;
-    v.list.capacity = 0;
+    v.list = malloc(sizeof(ListObj));
+    v.list->ref_count = 1;
+    v.list->items = NULL;
+    v.list->count = 0;
+    v.list->capacity = 0;
     return v;
 }
 
@@ -65,9 +69,11 @@ Value value_list(void) {
 Value value_dense_list(void) {
     Value v;
     v.type = VAL_DENSE_LIST;
-    v.dlist.data = NULL;
-    v.dlist.count = 0;
-    v.dlist.capacity = 0;
+    v.dlist = malloc(sizeof(DenseListObj));
+    v.dlist->ref_count = 1;
+    v.dlist->data = NULL;
+    v.dlist->count = 0;
+    v.dlist->capacity = 0;
     return v;
 }
 
@@ -97,20 +103,29 @@ Value value_null(void) {
 
 // Frees memory associated with a Value (deep free for lists)
 void value_free(Value v) {
-    if (v.type == VAL_STRING && v.s) {
-        free(v.s);
-    }
-    if (v.type == VAL_LIST) {
-        for (int i = 0; i < v.list.count; i++) {
-            value_free(v.list.items[i]);
+    if (v.type == VAL_STRING && v.string) {
+        v.string->ref_count--;
+        if (v.string->ref_count == 0) {
+            free(v.string->chars);
+            free(v.string);
         }
-        free(v.list.items);
+    } else if (v.type == VAL_LIST && v.list) {
+        v.list->ref_count--;
+        if (v.list->ref_count == 0) {
+            for (int i = 0; i < v.list->count; i++) {
+                value_free(v.list->items[i]);
+            }
+            free(v.list->items);
+            free(v.list);
+        }
+    } else if (v.type == VAL_DENSE_LIST && v.dlist) {
+        v.dlist->ref_count--;
+        if (v.dlist->ref_count == 0) {
+            // Note: v.dlist->data is now allocated on the AST Arena which handles bulk cleanup.
+            // Do NOT call free() here, or it will segfault.
+            free(v.dlist);
+        }
     }
-    if (v.type == VAL_DENSE_LIST) {
-        free(v.dlist.data);
-    }
-    // VAL_NATIVE does not need freeing (function pointer is static/global)
-    // VAL_FILE does not need freeing here (files must be closed explicitly via close())
 }
 
 // Creates a deep copy of a Value
@@ -137,25 +152,16 @@ Value value_copy(Value v) {
             r.file = v.file;
             break;
         case VAL_STRING:
-            if (v.s) {
-                r.s = my_strdup(v.s);
-            } else {
-                r.s = my_strdup("");
-            }
+            r.string = v.string;
+            if (r.string) r.string->ref_count++;
             break;
         case VAL_LIST:
-            r.list.count = v.list.count;
-            r.list.capacity = v.list.count;
-            r.list.items = malloc(sizeof(Value) * r.list.count);
-            for (int i = 0; i < r.list.count; i++) {
-                r.list.items[i] = value_copy(v.list.items[i]);
-            }
+            r.list = v.list;
+            if (r.list) r.list->ref_count++;
             break;
         case VAL_DENSE_LIST:
-            r.dlist.count = v.dlist.count;
-            r.dlist.capacity = v.dlist.count;
-            r.dlist.data = malloc(sizeof(double) * r.dlist.count);
-            memcpy(r.dlist.data, v.dlist.data, sizeof(double) * r.dlist.count);
+            r.dlist = v.dlist;
+            if (r.dlist) r.dlist->ref_count++;
             break;
         default:
             r.i = 0;
@@ -185,22 +191,24 @@ char *value_to_string(Value v) {
             if (v.file) return my_strdup("<file handle>");
             else return my_strdup("<closed file>");
         case VAL_STRING:
-            if (v.s) {
-                return my_strdup(v.s);
+            if (v.string && v.string->chars) {
+                return my_strdup(v.string->chars);
             } else {
                 return my_strdup("");
             }
         case VAL_LIST: {
             char *res = my_strdup("[");
-            for (int i = 0; i < v.list.count; i++) {
-                char *vs = value_to_string(v.list.items[i]);
-                size_t new_len = strlen(res) + strlen(vs) + 3;
-                res = realloc(res, new_len);
-                strcat(res, vs);
-                if (i < v.list.count - 1) {
-                    strcat(res, ", ");
+            if (v.list) {
+                for (int i = 0; i < v.list->count; i++) {
+                    char *vs = value_to_string(v.list->items[i]);
+                    size_t new_len = strlen(res) + strlen(vs) + 3;
+                    res = realloc(res, new_len);
+                    strcat(res, vs);
+                    if (i < v.list->count - 1) {
+                        strcat(res, ", ");
+                    }
+                    free(vs);
                 }
-                free(vs);
             }
             res = realloc(res, strlen(res) + 2);
             strcat(res, "]");
@@ -208,14 +216,16 @@ char *value_to_string(Value v) {
         }
         case VAL_DENSE_LIST: {
             char *res = my_strdup("d[");
-            for (int i = 0; i < v.dlist.count; i++) {
-                char tbuf[64];
-                snprintf(tbuf, 64, "%.6g", v.dlist.data[i]);
-                size_t new_len = strlen(res) + strlen(tbuf) + 3;
-                res = realloc(res, new_len);
-                strcat(res, tbuf);
-                if (i < v.dlist.count - 1) {
-                    strcat(res, ", ");
+            if (v.dlist) {
+                for (int i = 0; i < v.dlist->count; i++) {
+                    char tbuf[64];
+                    snprintf(tbuf, 64, "%.6g", v.dlist->data[i]);
+                    size_t new_len = strlen(res) + strlen(tbuf) + 3;
+                    res = realloc(res, new_len);
+                    strcat(res, tbuf);
+                    if (i < v.dlist->count - 1) {
+                        strcat(res, ", ");
+                    }
                 }
             }
             res = realloc(res, strlen(res) + 2);
@@ -229,26 +239,26 @@ char *value_to_string(Value v) {
 
 // Appends a value to a list, resizing capacity if needed
 void value_list_append(Value *list, Value v) {
-    if (list->type != VAL_LIST) {
+    if (list->type != VAL_LIST || !list->list) {
         return;
     }
-    if (list->list.count >= list->list.capacity) {
-        int n = list->list.capacity == 0 ? 4 : list->list.capacity * 2;
-        list->list.items = realloc(list->list.items, sizeof(Value) * n);
-        list->list.capacity = n;
+    if (list->list->count >= list->list->capacity) {
+        int n = list->list->capacity == 0 ? 4 : list->list->capacity * 2;
+        list->list->items = realloc(list->list->items, sizeof(Value) * n);
+        list->list->capacity = n;
     }
-    list->list.items[list->list.count++] = value_copy(v);
+    list->list->items[list->list->count++] = value_copy(v);
 }
 
 // Appends a double directly to a dense list
 void value_dlist_append(Value *list, double v) {
-    if (list->type != VAL_DENSE_LIST) {
+    if (list->type != VAL_DENSE_LIST || !list->dlist) {
         return;
     }
-    if (list->dlist.count >= list->dlist.capacity) {
-        int n = list->dlist.capacity == 0 ? 4 : list->dlist.capacity * 2;
-        list->dlist.data = realloc(list->dlist.data, sizeof(double) * n);
-        list->dlist.capacity = n;
+    if (list->dlist->count >= list->dlist->capacity) {
+        int n = list->dlist->capacity == 0 ? 4 : list->dlist->capacity * 2;
+        list->dlist->data = realloc(list->dlist->data, sizeof(double) * n);
+        list->dlist->capacity = n;
     }
-    list->dlist.data[list->dlist.count++] = v;
+    list->dlist->data[list->dlist->count++] = v;
 }

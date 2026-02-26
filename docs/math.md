@@ -14,6 +14,19 @@ Common mathematical utilities for everyday calculations.
 | `clamp(x, min, max)` | Constrains x to be within the range [min, max]    | `clamp(15, 0, 10) → 10` |
 | `sign(x)`            | Returns -1 if negative, 1 if positive, 0 if zero  | `sign(-50) → -1`        |
 
+## High-Performance Vector Math (SIMD)
+
+Luna natively accelerates operations on massive arrays using GCC automatic vectorization and OpenMP multithreading behind the scenes. For maximum performance, construct your arrays using `dense_list()` rather than standard `[]`.
+
+| Function             | Description                                       | Example                 |
+| -------------------- | ------------------------------------------------- | ----------------------- |
+| `dense_list(size, fill)`| Creates a contiguous pre-flattened float array | `dense_list(5, 1.5) → [1.5, ...]`|
+| `vec_mul(a, b)`      | SIMD accelerated vector multiplication            | `vec_mul([1, 2], [3, 4]) → [3, 8]`|
+| `vec_mul_inline(a,b)`| Zero-allocation in-place vector multiplication    | `vec_mul_inline(A, B) -> mutates A`|
+| `mat_mul(a, b)`      | OpenMP threaded Matrix Multiplication             | `mat_mul(A, B) → Matrix`|
+
+*Note: You can perform operations like `A + B` on standard lists, but `dense_list()` is significantly faster because it operates without Memory Boxing.*
+
 ## Powers & Roots
 
 Exponential and logarithmic operations.

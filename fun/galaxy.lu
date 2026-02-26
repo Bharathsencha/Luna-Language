@@ -1,0 +1,409 @@
+func main() {
+    init_window(1024, 768, "Luna - Milky Way ")
+    set_fps(144)
+
+    let cx = 512.0
+    let cy = 384.0
+
+    # GALAXY PARAMS
+    let num_arms  = 2
+    let arm_twist = 3.4     # logarithmic winding tightness
+    let bar_len   = 90.0    # central bar half-length
+
+    # STAR SYSTEM (100,000 stars)
+    let s_r   = []
+    let s_a   = []
+    let s_spd = []
+    let s_cr  = []
+    let s_cg  = []
+    let s_cb  = []
+    let s_sz  = []
+    let s_al  = []
+
+    let num_stars = 100000
+
+    for (let i = 0; i < num_stars; i++) {
+        let roll   = rand()
+        let r_norm = pow(rand(), 2.0)
+        let r      = 10.0 + r_norm * 370.0
+
+        let angle = 0.0
+
+        if (r < 90.0) {
+            # Central bar: stars aligned at 20 degree tilt
+            let bar_a = 0.349   # ~20 degrees
+            let along = (rand() - 0.5) * bar_len * 2.0
+            let perp  = (rand() - 0.5) * 18.0
+            let bx    = cos(bar_a) * along - sin(bar_a) * perp
+            let by    = sin(bar_a) * along + cos(bar_a) * perp
+            # Store as angle+radius from these coords
+            angle = atan2(by, bx)
+            r     = sqrt(bx*bx + by*by) + 1.0
+        } else {
+            let arm     = rand(0, num_arms - 1)
+            let arm_a   = float(arm) * (6.28318 / float(num_arms))
+            let phi     = arm_twist * ln(r / 10.0)
+            let scatter = (rand() - 0.5) * (0.12 + r_norm * 1.1) * 2.0
+            # Inter-arm haze
+            if (rand() > 0.68) { scatter = scatter + (rand() - 0.5) * 1.8 }
+            angle = arm_a + phi + scatter
+        }
+
+        append(s_r, r)
+        append(s_a, angle)
+
+        # Differential rotation curve (flat like real galaxies beyond ~100pc)
+        let spd = 0.0
+        if (r < 60.0) {
+            spd = 0.0022          # solid body core
+        } else {
+            spd = 0.00008 + 0.11 / (r + 2.0)   # flat rotation curve
+        }
+        append(s_spd, spd)
+
+        # Stellar population by radius
+        let rr = 255
+        let gg = 245
+        let bb = 210
+        if (r < 90.0) {
+            # Bar/bulge: old yellow stars
+            rr = 255
+            gg = int(220.0 + rand() * 30.0)
+            bb = int(130.0 + rand() * 60.0)
+        } else {
+            if (roll > 0.975) {
+                # Blue-white OB supergiants in arms
+                rr = int(140.0 + rand() * 60.0)
+                gg = int(190.0 + rand() * 40.0)
+                bb = 255
+            } else {
+                if (roll > 0.95) {
+                    # Yellow-white A stars
+                    rr = 255
+                    gg = 255
+                    bb = int(190.0 + rand() * 40.0)
+                } else {
+                    if (roll > 0.93) {
+                        # Orange K giants
+                        rr = 255
+                        gg = int(120.0 + rand() * 60.0)
+                        bb = int(50.0 + rand() * 50.0)
+                    } else {
+                        if (roll > 0.91) {
+                            # Red M dwarfs
+                            rr = 255
+                            gg = int(60.0 + rand() * 60.0)
+                            bb = int(40.0 + rand() * 40.0)
+                        } else {
+                            # Common G dwarfs
+                            rr = 255
+                            gg = int(230.0 + rand() * 20.0)
+                            bb = int(180.0 + rand() * 40.0)
+                        }
+                    }
+                }
+            }
+        }
+        append(s_cr, rr)
+        append(s_cg, gg)
+        append(s_cb, bb)
+
+        let sz = 0.4 + rand() * 0.7
+        if (roll > 0.982) { sz = 1.6 + rand() * 1.5 }
+        append(s_sz, sz)
+
+        let base_a = 25.0 + (1.0 - r_norm) * 175.0
+        if (base_a > 255.0) { base_a = 255.0 }
+        append(s_al, int(base_a + rand() * 45.0))
+    }
+
+    # DUST LANES (dark absorbing bands between arms)
+    let dl_r   = []
+    let dl_a   = []
+    let dl_w   = []
+    let dl_spd = []
+    for (let i = 0; i < 600; i++) {
+        let r_norm = pow(rand(), 1.3)
+        let r      = 55.0 + r_norm * 310.0
+        let arm    = rand(0, 1)
+        let arm_a  = float(arm) * 3.14159 + 1.5708
+        let phi    = arm_twist * ln(r / 10.0)
+        let sc     = (rand() - 0.5) * 0.55
+        append(dl_r,   r)
+        append(dl_a,   arm_a + phi + sc)
+        append(dl_w,   10.0 + rand() * 30.0)
+        let spd = 0.00008 + 0.11 / (r + 2.0)
+        append(dl_spd, spd)
+    }
+
+    # NEBULAE
+    let nb_r   = []
+    let nb_a   = []
+    let nb_rad = []
+    let nb_hue = []
+    let nb_spd = []
+    for (let i = 0; i < 80; i++) {
+        let r_norm = pow(rand(), 1.4)
+        let r      = 30.0 + r_norm * 300.0
+        let arm    = rand(0, num_arms - 1)
+        let arm_a  = float(arm) * (6.28318 / float(num_arms))
+        let phi    = arm_twist * ln(r / 10.0 + 1.0)
+        let sc     = (rand() - 0.5) * 0.45
+        append(nb_r,   r)
+        append(nb_a,   arm_a + phi + sc)
+        append(nb_rad, 15.0 + rand() * 65.0)
+        let nh = 0.0
+        if (rand() > 0.55) { nh = 200.0 + rand() * 70.0 }
+        else               { nh = 10.0  + rand() * 30.0 }
+        append(nb_hue, nh)
+        let spd = 0.00008 + 0.11 / (r + 2.0)
+        append(nb_spd, spd)
+    }
+
+    # STELLAR NURSERIES (bright HII regions)
+    let hn_r    = []
+    let hn_a    = []
+    let hn_spd  = []
+    let hn_hue  = []
+    let hn_size = []
+    for (let i = 0; i < 30; i++) {
+        let r_norm = pow(rand(), 1.5)
+        let r      = 60.0 + r_norm * 280.0
+        let arm    = rand(0, num_arms - 1)
+        let arm_a  = float(arm) * (6.28318 / float(num_arms))
+        let phi    = arm_twist * ln(r / 10.0)
+        let sc     = (rand() - 0.5) * 0.3
+        append(hn_r,    r)
+        append(hn_a,    arm_a + phi + sc)
+        let spd = 0.00008 + 0.11 / (r + 2.0)
+        append(hn_spd,  spd)
+        # HII regions: pink/magenta (H-alpha emission)
+        append(hn_hue,  300.0 + rand() * 40.0)
+        append(hn_size, 8.0 + rand() * 18.0)
+    }
+
+    # SUPERNOVAE / TRANSIENT EVENTS
+    let sn_x      = []
+    let sn_y      = []
+    let sn_life   = []
+    let sn_maxl   = []
+    let sn_hue    = []
+    let sn_active = []
+    for (let i = 0; i < 12; i++) {
+        append(sn_x,      0.0)
+        append(sn_y,      0.0)
+        append(sn_life,   0.0)
+        append(sn_maxl,   1.0)
+        append(sn_hue,    0.0)
+        append(sn_active, 0)
+    }
+
+    # TIDAL STREAM (dwarf galaxy being eaten)
+    let ts_x   = []
+    let ts_y   = []
+    let ts_spd = []
+    let ts_a   = []
+    let ts_r   = []
+    for (let i = 0; i < 1200; i++) {
+        let ta   = rand() * 6.28318
+        let r    = 280.0 + (rand() - 0.5) * 60.0
+        let arc  = rand() * 2.4 - 1.2   # partial arc ~140 degrees
+        let fa   = ta + arc
+        append(ts_r,   r)
+        append(ts_a,   fa)
+        let spd = 0.000055 + rand() * 0.00002
+        append(ts_spd, spd)
+        append(ts_x,   cx + cos(fa) * r)
+        append(ts_y,   cy + sin(fa) * r * 0.96)
+    }
+
+    # GLOBULAR CLUSTERS
+    let gc_r   = []
+    let gc_a   = []
+    let gc_rad = []
+    let gc_spd = []
+    for (let i = 0; i < 14; i++) {
+        let r = 120.0 + rand() * 220.0
+        let a = rand() * 6.28318
+        append(gc_r,   r)
+        append(gc_a,   a)
+        append(gc_rad, 7.0 + rand() * 16.0)
+        append(gc_spd, 0.00004 + rand() * 0.00003)
+    }
+
+    # BACKGROUND
+    let bg_x = []
+    let bg_y = []
+    let bg_b = []
+    let bg_s = []
+    for (let i = 0; i < 600; i++) {
+        append(bg_x, rand() * 1024)
+        append(bg_y, rand() * 768)
+        append(bg_b, int(6.0 + rand() * 22.0))
+        append(bg_s, 0.4 + rand() * 0.7)
+    }
+
+    let time        = 0.0
+    let dt          = 0.0069   # 144fps
+    let sn_timer    = 0.0
+    let sn_interval = 1.8      # new supernova every ~2 seconds
+
+    while (window_open()) {
+        time     = time + dt
+        sn_timer = sn_timer + dt
+
+        # Spawn supernovae
+        if (sn_timer > sn_interval) {
+            sn_timer    = 0.0
+            sn_interval = 1.2 + rand() * 1.5
+            let slot = rand(0, 11)
+            if (sn_active[slot] == 0) {
+                let sn_r_norm = pow(rand(), 1.5)
+                let sn_r      = 50.0 + sn_r_norm * 310.0
+                let sn_arm    = rand(0, 1)
+                let sn_arm_a  = float(sn_arm) * 3.14159
+                let sn_phi    = arm_twist * ln(sn_r / 10.0)
+                let sn_sc     = (rand() - 0.5) * 0.4
+                let sn_angle  = sn_arm_a + sn_phi + sn_sc
+                let spd_sn    = 0.00008 + 0.11 / (sn_r + 2.0)
+                let sn_rot_a  = sn_angle + time * spd_sn * 144.0
+                sn_x[slot]      = cx + cos(sn_rot_a) * sn_r
+                sn_y[slot]      = cy + sin(sn_rot_a) * sn_r * 0.97
+                sn_life[slot]   = 2.5 + rand() * 1.5
+                sn_maxl[slot]   = sn_life[slot]
+                sn_hue[slot]    = rand() * 60.0
+                sn_active[slot] = 1
+            }
+        }
+
+        begin_drawing()
+        clear_background(0, 0, 3, 255)
+
+        # Background stars
+        for (let i = 0; i < 600; i++) {
+            let twinkle = int(float(bg_b[i]) * (0.85 + sin(time * 3.7 + float(i)) * 0.15))
+            draw_circle(bg_x[i], bg_y[i], bg_s[i], [255, 252, 240, twinkle])
+        }
+
+        # Outer stellar halo + disk
+        draw_circle(cx, cy, 440, [18,  12, 32, 16])
+        draw_circle(cx, cy, 380, [22,  15, 40, 22])
+        draw_circle(cx, cy, 310, [28,  20, 48, 28])
+        draw_circle(cx, cy, 240, [32,  22, 52, 25])
+        draw_circle(cx, cy, 170, [38,  26, 58, 20])
+
+        # Tidal stream
+        for (let i = 0; i < 1200; i++) {
+            let ta = ts_a[i] + time * ts_spd[i] * 144.0
+            let tx = cx + cos(ta) * ts_r[i]
+            let ty = cy + sin(ta) * ts_r[i] * 0.96
+            draw_circle(tx, ty, 0.8, [200, 180, 255, 30])
+        }
+
+        # Nebulae
+        for (let i = 0; i < 80; i++) {
+            let r   = nb_r[i]
+            let a   = nb_a[i] + time * nb_spd[i] * 144.0
+            let nx  = cx + cos(a) * r
+            let ny  = cy + sin(a) * r * 0.97
+            let rad = nb_rad[i]
+            let nc  = hsl(nb_hue[i], 0.55, 0.22)
+            draw_circle(nx, ny, rad,        [nc[0], nc[1], nc[2], 10])
+            draw_circle(nx, ny, rad * 0.5,  [nc[0], nc[1], nc[2], 16])
+            draw_circle(nx, ny, rad * 0.22, [nc[0], nc[1], nc[2], 26])
+        }
+
+        # Dust lanes
+        for (let i = 0; i < 600; i++) {
+            let r   = dl_r[i]
+            let a   = dl_a[i] + time * dl_spd[i] * 144.0
+            let dx  = cx + cos(a) * r
+            let dy  = cy + sin(a) * r * 0.97
+            draw_circle(dx, dy, dl_w[i], [0, 0, 3, 60])
+        }
+
+        # Stars (100k, differential rotation)
+        for (let i = 0; i < num_stars; i++) {
+            let r = s_r[i]
+            let a = s_a[i] + time * s_spd[i] * 144.0
+            let x = cx + cos(a) * r
+            let y = cy + sin(a) * r * 0.97
+            draw_circle(x, y, s_sz[i], [s_cr[i], s_cg[i], s_cb[i], s_al[i]])
+        }
+
+        # HII stellar nurseries (pulsing pink glow)
+        for (let i = 0; i < 30; i++) {
+            let r      = hn_r[i]
+            let a      = hn_a[i] + time * hn_spd[i] * 144.0
+            let nx     = cx + cos(a) * r
+            let ny     = cy + sin(a) * r * 0.97
+            let pulse  = 0.85 + sin(time * 4.0 + float(i) * 1.3) * 0.15
+            let sz     = hn_size[i] * pulse
+            let nc     = hsl(hn_hue[i], 0.9, 0.55)
+            draw_circle(nx, ny, sz * 2.2, [nc[0], nc[1], nc[2], 8])
+            draw_circle(nx, ny, sz * 1.2, [nc[0], nc[1], nc[2], 18])
+            draw_circle(nx, ny, sz,        [nc[0], nc[1], nc[2], 40])
+            draw_circle(nx, ny, sz * 0.4,  [255, 255, 255, 80])
+        }
+
+        # Globular clusters
+        for (let i = 0; i < 14; i++) {
+            let a   = gc_a[i] + time * gc_spd[i] * 144.0
+            let gx  = cx + cos(a) * gc_r[i]
+            let gy  = cy + sin(a) * gc_r[i] * 0.97
+            let gr  = gc_rad[i]
+            draw_circle(gx, gy, gr * 2.5, [255, 240, 190, 7])
+            draw_circle(gx, gy, gr * 1.5, [255, 245, 200, 16])
+            draw_circle(gx, gy, gr,        [255, 250, 215, 38])
+            draw_circle(gx, gy, gr * 0.4,  [255, 255, 235, 100])
+        }
+
+        # Supernovae
+        for (let i = 0; i < 12; i++) {
+            if (sn_active[i] == 1) {
+                sn_life[i] = sn_life[i] - dt
+                if (sn_life[i] <= 0.0) {
+                    sn_active[i] = 0
+                } else {
+                    let pct    = sn_life[i] / sn_maxl[i]   # 1.0 = fresh, 0.0 = dying
+                    let expand = (1.0 - pct) * 38.0
+                    let bright = int(pct * 255.0)
+                    let shc    = hsl(sn_hue[i], 1.0, 0.7)
+                    # Expanding shockwave ring
+                    draw_circle(sn_x[i], sn_y[i], expand + 12, [shc[0], shc[1], shc[2], int(bright * 0.25)])
+                    draw_circle(sn_x[i], sn_y[i], expand + 5,  [shc[0], shc[1], shc[2], int(bright * 0.5)])
+                    draw_circle(sn_x[i], sn_y[i], expand,      [255, 255, 255, bright])
+                    # Central remnant flash
+                    if (pct > 0.6) {
+                        draw_circle(sn_x[i], sn_y[i], 3, [255, 255, 255, 255])
+                    }
+                }
+            }
+        }
+
+        # Galactic bar glow
+        draw_circle(cx, cy, 100, [255, 210, 120,  9])
+        draw_circle(cx, cy,  75, [255, 220, 140, 16])
+        draw_circle(cx, cy,  50, [255, 232, 160, 30])
+
+        # Core bulge
+        draw_circle(cx, cy,  35, [255, 240, 175, 55])
+        draw_circle(cx, cy,  22, [255, 250, 200, 110])
+        draw_circle(cx, cy,  12, [255, 255, 228, 180])
+        draw_circle(cx, cy,   5, [255, 255, 255, 255])
+
+        # Sgr A* pulse (central SMBH)
+        let sgr_pulse = int(180.0 + sin(time * 6.5) * 75.0)
+        draw_circle(cx, cy, 2, [255, 255, 255, sgr_pulse])
+
+        # FPS/info overlay
+        draw_text_default("Milky Way  [MAXIMUM]", 20, 20, 20, [180, 160, 230, 160])
+        draw_text_default("100,000 stars  |  2 arms + bar  |  differential rotation  |  supernovae  |  tidal stream  |  HII regions", 20, 46, 11, [130, 110, 180, 110])
+
+        end_drawing()
+    }
+
+    close_window()
+}
+
+main()

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #ifndef ENV_H
 #define ENV_H
 
+#include <stdint.h>
 #include "value.h"
 #include "ast.h"
 
@@ -13,6 +14,8 @@ typedef struct Env Env;
 // Scope Management
 Env *env_create(Env *parent);
 void env_free(Env *e);
+void env_clear_locals(Env *e);
+uint64_t env_get_version(Env *e);
 
 // Global wrapper helpers (maintained for compatibility)
 Env *env_create_global(void);

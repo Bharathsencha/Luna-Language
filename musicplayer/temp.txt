@@ -1,0 +1,356 @@
+let WIDTH  = 900
+let HEIGHT = 700
+
+init_window(WIDTH, HEIGHT, "Luna Music")
+set_fps(60)
+init_audio_device()
+
+let FONT_L = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 60)
+let FONT_S = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 30)
+
+let IMG_PLAY  = load_image("musicplayer/assets/icons8-play-64.png")
+let TEX_PLAY  = load_texture_from_image(IMG_PLAY)
+unload_image(IMG_PLAY)
+let IMG_PAUSE = load_image("musicplayer/assets/icons8-pause-50.png")
+let TEX_PAUSE = load_texture_from_image(IMG_PAUSE)
+unload_image(IMG_PAUSE)
+let IMG_NEXT  = load_image("musicplayer/assets/icons8-forward-50_arrow.png")
+let TEX_NEXT  = load_texture_from_image(IMG_NEXT)
+unload_image(IMG_NEXT)
+
+let songs = [
+    "musicplayer/songs/Virtual Love - Tanin Jazz ( English translation lyrics)-(130k).mp3",
+    "musicplayer/songs/TheFatRat - Jackpot (Jackpot EP Track 1)-(134k).mp3",
+    "musicplayer/songs/TheFatRat - Rise Up-(133k).mp3",
+    "musicplayer/songs/TheFatRat & Anjulie - Close To The Sun-(136k).mp3",
+    "musicplayer/songs/TheFatRat & Cecilia Gault - Escaping Gravity [Chapter 3]-(134k).mp3",
+    "musicplayer/songs/The Pointer Sisters - Hot Together (Official Audio)-(130k).mp3",
+    "musicplayer/songs/Hozier - Too Sweet (Official Video)-(131k).mp3",
+    "musicplayer/songs/Alphaville - Forever Young (Official Music Video)-(129k).mp3",
+    "musicplayer/songs/Max Raabe - We Will Rock You-(134k).mp3",
+    "musicplayer/songs/Sunflower - Spider-Man_ Into the Spider-Verse_spotdown.org.mp3",
+    "musicplayer/songs/Tears For Fears - Everybody Wants To Rule The World (Official Music Video)-(132k).mp3",
+    "musicplayer/songs/The Score - Unstoppable (Lyric Video)-(129k).mp3",
+    "musicplayer/songs/Tip Toe.mp3",
+    "musicplayer/songs/yung kai - blue (official audio)-(141k).mp3"
+]
+let song_names = [
+    "Virtual Love", "Jackpot", "Rise Up", "Close To The Sun",
+    "Escaping Gravity", "Hot Together", "Too Sweet", "Forever Young",
+    "We Will Rock You", "Sunflower", "Everybody Wants To Rule The World",
+    "Unstoppable", "Tip Toe", "Blue"
+]
+let song_artists = [
+    "Tanin Jazz", "TheFatRat", "TheFatRat", "TheFatRat & Anjulie",
+    "TheFatRat & Cecilia Gault", "The Pointer Sisters", "Hozier", "Alphaville",
+    "Max Raabe", "Post Malone & Swae Lee", "Tears For Fears",
+    "The Score", "Shawn Mendes", "yung kai"
+]
+
+let idx        = 0
+let music      = load_music_stream(songs[idx])
+let cover      = load_music_cover(songs[idx])
+let is_playing = 1
+let time       = 0.0
+
+let fft_smooth = []
+let fft_peaks  = []
+let fft_ptimer = []
+let fi = 0
+while (fi < 32) {
+    append(fft_smooth, 0.0)
+    append(fft_peaks,  0.0)
+    append(fft_ptimer, 0.0)
+    fi = fi + 1
+}
+
+let bass_energy = 0.0
+
+play_music_stream(music)
+
+func load_song(new_idx) {
+    stop_music_stream(music)
+    unload_music_stream(music)
+    if (cover >= 0) { unload_texture(cover) }
+    idx = new_idx
+    if (idx >= len(songs)) { idx = 0 }
+    if (idx < 0)           { idx = len(songs) - 1 }
+    music = load_music_stream(songs[idx])
+    cover = load_music_cover(songs[idx])
+    play_music_stream(music)
+    is_playing = 1
+}
+
+while (window_open()) {
+    update_music_stream(music)
+    let dt     = get_delta_time()
+    time       = time + dt
+    let length = get_music_time_length(music)
+    let played = get_music_time_played(music)
+
+    if (length > 0 && played >= length - 0.1) { load_song(idx + 1) }
+
+    let fft = get_music_fft(music)
+    if (fft != null) {
+        let bi = 0
+        while (bi < 32) {
+            let raw = fft[bi]
+            fft_smooth[bi] = fft_smooth[bi] * 0.75 + raw * 0.25
+            if (fft_smooth[bi] > fft_peaks[bi]) {
+                fft_peaks[bi]  = fft_smooth[bi]
+                fft_ptimer[bi] = 1.0
+            } else {
+                fft_ptimer[bi] = fft_ptimer[bi] - dt
+                if (fft_ptimer[bi] <= 0.0) {
+                    fft_peaks[bi] = fft_peaks[bi] - dt * 0.5
+                    if (fft_peaks[bi] < 0.0) { fft_peaks[bi] = 0.0 }
+                }
+            }
+            bi = bi + 1
+        }
+        bass_energy = bass_energy * 0.82 + ((fft_smooth[0] + fft_smooth[1] + fft_smooth[2] + fft_smooth[3]) * 0.25) * 0.18
+    }
+
+    begin_drawing()
+    clear_background(4, 2, 12, 255)
+
+    let cx = WIDTH / 2
+    let cy = 265
+
+    # Dim art background fullscreen
+    if (cover >= 0) {
+        let cw = get_texture_width(cover)
+        let ch = get_texture_height(cover)
+        draw_texture_pro(cover, [0, 0, cw, ch], [0, 0, WIDTH, HEIGHT], [0, 0], 0, [255, 255, 255, 18])
+    }
+
+    # Dark overlay to keep background subdued
+    draw_rectangle(0, 0, WIDTH, HEIGHT, [4, 2, 12, 200])
+
+    # Neon palette: pink=320, violet=280, cyan=185
+    # Color shifts slowly between pink-violet-cyan
+    let neon_t  = time * 0.18
+    let neon_h1 = 310.0 + sin(neon_t) * 30.0          # pink to magenta
+    let neon_h2 = neon_h1 - 80.0                        # violet / purple
+    let neon_h3 = 185.0 + sin(neon_t * 0.7) * 15.0     # cyan
+
+    let c1 = hsl(neon_h1, 1.0, 0.55)   # hot pink/magenta
+    let c2 = hsl(neon_h2, 1.0, 0.55)   # violet
+    let c3 = hsl(neon_h3, 1.0, 0.55)   # cyan
+
+    # Big ambient glow bloom
+    draw_circle(cx, cy, 280, [c2[0], c2[1], c2[2], 18])
+    draw_circle(cx, cy, 220, [c1[0], c1[1], c1[2], 22])
+    draw_circle(cx, cy, 160, [c2[0], c2[1], c2[2], 30])
+
+    # Bass pulse rings
+    let pr = 192.0 + bass_energy * 50.0
+    let pa = to_int(50.0 + bass_energy * 140.0)
+    draw_circle(cx, cy, to_int(pr + 10), [c1[0], c1[1], c1[2], to_int(pa * 0.2)])
+    draw_circle(cx, cy, to_int(pr + 4),  [c1[0], c1[1], c1[2], to_int(pa * 0.5)])
+    draw_circle(cx, cy, to_int(pr),      [c1[0], c1[1], c1[2], pa])
+
+    # Radial visualizer — drawn BEFORE art so art sits on top
+    let viz_base = 188.0
+    let viz_max  = 90.0
+    let num_bars = 32
+    let bi = 0
+    while (bi < num_bars) {
+        let mag   = fft_smooth[bi]
+        let bar_h = mag * viz_max
+        let angle = (float(bi) / float(num_bars)) * 6.28318 - 1.5708
+
+        # Hue sweeps from cyan (bi=0) through violet to pink (bi=31)
+        # 185 -> 280 -> 320 across 32 bars
+        let t_bar  = float(bi) / float(num_bars)
+        let bar_h2 = 185.0 + t_bar * 135.0
+        let bar_c  = hsl(bar_h2, 1.0, 0.5 + mag * 0.2)
+
+        let ix = cx + to_int(cos(angle) * viz_base)
+        let iy = cy + to_int(sin(angle) * viz_base)
+        let ox = cx + to_int(cos(angle) * (viz_base + bar_h))
+        let oy = cy + to_int(sin(angle) * (viz_base + bar_h))
+
+        # Glow: draw thick then thin
+        draw_line(ix, iy, ox, oy, 6, [bar_c[0], bar_c[1], bar_c[2], to_int(60 + mag * 60)])
+        draw_line(ix, iy, ox, oy, 3, [bar_c[0], bar_c[1], bar_c[2], to_int(180 + mag * 75)])
+        draw_line(ix, iy, ox, oy, 1, [255, 255, 255, to_int(100 + mag * 100)])
+
+        # Peak dot
+        let pk   = fft_peaks[bi]
+        let pk_r = viz_base + pk * viz_max
+        let pkx  = cx + to_int(cos(angle) * pk_r)
+        let pky  = cy + to_int(sin(angle) * pk_r)
+        draw_circle(pkx, pky, 2, [255, 255, 255, 200])
+
+        bi = bi + 1
+    }
+
+    # Outer neon ring around visualizer
+    draw_circle(cx, cy, to_int(viz_base + viz_max + 8), [c3[0], c3[1], c3[2], 0])  # spacer
+
+    # Inner neon ring (art border) — drawn before art
+    let art_r = 160
+    draw_circle(cx, cy, art_r + 6, [c1[0], c1[1], c1[2], 80])
+    draw_circle(cx, cy, art_r + 3, [c2[0], c2[1], c2[2], 120])
+    draw_circle(cx, cy, art_r + 1, [255, 255, 255, 60])
+
+    # Album art drawn ON TOP of everything above
+    if (cover >= 0) {
+        let cw = get_texture_width(cover)
+        let ch = get_texture_height(cover)
+        draw_texture_pro(cover, [0, 0, cw, ch], [cx - art_r, cy - art_r, art_r*2, art_r*2], [0, 0], 0, [255, 255, 255, 255])
+    } else {
+        draw_circle(cx, cy, art_r, [20, 12, 40, 255])
+        draw_text_default("NO COVER", cx - 36, cy - 8, 16, [100, 80, 160, 200])
+    }
+
+    # Circular crop overdraw — blends art edges into background
+    let ov = art_r
+    while (ov < art_r + 22) {
+        let oa = to_int(255.0 * float(ov - art_r) / 22.0)
+        draw_circle(cx, cy, ov, [4, 2, 12, oa])
+        ov = ov + 1
+    }
+
+    # Re-draw neon ring ON TOP of crop so it glows over the art edge
+    draw_circle(cx, cy, art_r + 3, [c1[0], c1[1], c1[2], 160])
+    draw_circle(cx, cy, art_r + 1, [c2[0], c2[1], c2[2], 200])
+
+    # Center spindle dot
+    draw_circle(cx, cy, 4, [255, 255, 255, 50])
+    draw_circle(cx, cy, 2, [255, 255, 255, 120])
+
+    # Bottom panel
+    let panel_y = 495
+    draw_rectangle(0, panel_y, WIDTH, HEIGHT - panel_y, [6, 3, 16, 230])
+    draw_rectangle(0, panel_y, WIDTH, 1, [c1[0], c1[1], c1[2], 80])
+    draw_rectangle(0, panel_y + 1, WIDTH, 1, [c2[0], c2[1], c2[2], 50])
+    draw_rectangle(0, panel_y + 2, WIDTH, 6, [c2[0], c2[1], c2[2], 12])
+
+    # Artist (small, colored)
+    let artist   = song_artists[idx]
+    let artist_w = measure_text(FONT_S, artist, 18, 1)
+    draw_text(FONT_S, artist, cx - to_int(artist_w / 2), panel_y + 16, 18, 1, [c3[0], c3[1], c3[2], 200])
+
+    # Song title (big, white, centered)
+    let raw   = song_names[idx]
+    let max_w = WIDTH - 100
+    let disp  = raw
+    if (measure_text(FONT_L, raw, 40, 1) > max_w) {
+        let tr = raw
+        while (measure_text(FONT_L, tr + "...", 40, 1) > max_w) {
+            tr = substring(tr, 0, len(tr) - 1)
+        }
+        disp = tr + "..."
+    }
+    let title_w = measure_text(FONT_L, disp, 40, 1)
+    draw_text(FONT_L, disp, cx - to_int(title_w / 2) + 1, panel_y + 42, 40, 1, [0, 0, 0, 150])
+    draw_text(FONT_L, disp, cx - to_int(title_w / 2),     panel_y + 41, 40, 1, [255, 255, 255, 255])
+
+    # Track number — right aligned, separate line
+    let t_str = to_string(idx + 1) + " / " + to_string(len(songs))
+    let t_w   = measure_text(t_str, 13)
+    draw_text_default(t_str, cx - t_w / 2, panel_y + 90, 13, [140, 120, 200, 140])
+
+    # Progress bar
+    let pb_x = 55
+    let pb_y = panel_y + 112
+    let pb_w = WIDTH - 110
+
+    draw_rectangle(pb_x, pb_y, pb_w, 3, [255, 255, 255, 12])
+
+    let progress = 0.0
+    if (length > 0) { progress = played / length }
+    let pw = to_int(pb_w * progress)
+
+    # Neon gradient played bar
+    draw_rectangle(pb_x, pb_y, pw, 3, [c2[0], c2[1], c2[2], 200])
+    draw_rectangle(pb_x, pb_y, pw, 1, [c1[0], c1[1], c1[2], 180])
+
+    # Scrubber knob
+    draw_circle(pb_x + pw, pb_y + 1, 7, [c1[0], c1[1], c1[2], 200])
+    draw_circle(pb_x + pw, pb_y + 1, 5, [255, 255, 255, 240])
+    draw_circle(pb_x + pw, pb_y + 1, 2, [c2[0], c2[1], c2[2], 255])
+
+    # Timestamps — well separated left/right
+    if (length > 0) {
+        let cm = to_int(played / 60)
+        let cs = to_int(played - float(cm) * 60.0)
+        let tm = to_int(length / 60)
+        let ts = to_int(length - float(tm) * 60.0)
+        let sc = to_string(cm) + ":" + pad_left(to_string(cs), 2, "0")
+        let st = to_string(tm) + ":" + pad_left(to_string(ts), 2, "0")
+        draw_text_default(sc, pb_x, pb_y + 10, 14, [c3[0], c3[1], c3[2], 180])
+        let tw = measure_text(st, 14)
+        draw_text_default(st, pb_x + pb_w - tw, pb_y + 10, 14, [c3[0], c3[1], c3[2], 180])
+    }
+
+    # Seek
+    let mouse = get_mouse_position()
+    let mx = mouse[0]
+    let my = mouse[1]
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+        if (check_collision_point_rec([mx, my], [pb_x - 8, pb_y - 10, pb_w + 16, 24])) {
+            let pct = (mx - pb_x) / pb_w
+            if (pct < 0) { pct = 0 }
+            if (pct > 1) { pct = 1 }
+            seek_music_stream(music, length * pct)
+        }
+    }
+
+    # Controls
+    let ctrl_cy  = panel_y + 168
+    let btn_sz   = 48
+    let arrow_sz = 32
+    let tnw = get_texture_width(TEX_NEXT)
+    let tnh = get_texture_height(TEX_NEXT)
+
+    # Prev
+    let prev_x = cx - 90 - arrow_sz / 2
+    let prev_y = ctrl_cy - arrow_sz / 2
+    draw_texture_pro(TEX_NEXT, [0, 0, -tnw, tnh], [prev_x, prev_y, arrow_sz, arrow_sz], [0, 0], 0, [c3[0], c3[1], c3[2], 200])
+    if (check_collision_point_rec([mx, my], [prev_x - 8, prev_y - 8, arrow_sz + 16, arrow_sz + 16])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) { load_song(idx - 1) }
+    }
+
+    # Play/pause — neon glowing circle
+    let play_x = cx - btn_sz / 2
+    let play_y = ctrl_cy - btn_sz / 2
+    draw_circle(cx, ctrl_cy, 34, [c1[0], c1[1], c1[2], 30])
+    draw_circle(cx, ctrl_cy, 28, [c2[0], c2[1], c2[2], 50])
+    draw_circle(cx, ctrl_cy, 26, [255, 255, 255, 15])
+    if (is_playing == 1) {
+        let pw2 = get_texture_width(TEX_PAUSE)
+        let ph2 = get_texture_height(TEX_PAUSE)
+        draw_texture_pro(TEX_PAUSE, [0, 0, pw2, ph2], [play_x, play_y, btn_sz, btn_sz], [0, 0], 0, [255, 255, 255, 255])
+    } else {
+        let pw2 = get_texture_width(TEX_PLAY)
+        let ph2 = get_texture_height(TEX_PLAY)
+        draw_texture_pro(TEX_PLAY, [0, 0, pw2, ph2], [play_x, play_y, btn_sz, btn_sz], [0, 0], 0, [255, 255, 255, 255])
+    }
+    if (check_collision_point_rec([mx, my], [play_x - 6, play_y - 6, btn_sz + 12, btn_sz + 12])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+            if (is_playing == 1) {
+                is_playing = 0
+                pause_music_stream(music)
+            } else {
+                is_playing = 1
+                resume_music_stream(music)
+            }
+        }
+    }
+
+    # Next
+    let next_x = cx + 90 - arrow_sz / 2
+    let next_y = ctrl_cy - arrow_sz / 2
+    draw_texture_pro(TEX_NEXT, [0, 0, tnw, tnh], [next_x, next_y, arrow_sz, arrow_sz], [0, 0], 0, [c3[0], c3[1], c3[2], 200])
+    if (check_collision_point_rec([mx, my], [next_x - 8, next_y - 8, arrow_sz + 16, arrow_sz + 16])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) { load_song(idx + 1) }
+    }
+
+    end_drawing()
+}
+
+close_audio_device()
+close_window()

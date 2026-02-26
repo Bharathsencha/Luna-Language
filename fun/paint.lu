@@ -1,0 +1,302 @@
+let WIDTH  = 1280
+let HEIGHT = 720
+
+# Toolbar on the LEFT as a vertical sidebar
+let SB_W   = 72   # sidebar width
+let SB_PAD = 12
+
+# Color theme
+let C_BG      = [8,   8,  12, 255]
+let C_SIDEBAR = [14,  14, 20, 255]
+let C_BORDER  = [35,  35, 50, 255]
+let C_ACCENT  = [120, 80, 255, 255]
+let C_WHITE   = [255, 255, 255, 255]
+let C_GRAY    = [120, 120, 140, 255]
+let C_DIM     = [60,  60,  80, 255]
+
+let TOOL_BRUSH   = 0
+let TOOL_ERASER  = 1
+let TOOL_RAINBOW = 2
+let TOOL_FILL    = 3
+
+let palette = [
+    [10,  10,  14,  255],
+    [255, 255, 255, 255],
+    [239, 68,  68,  255],
+    [249, 115, 22,  255],
+    [234, 179, 8,   255],
+    [34,  197, 94,  255],
+    [6,   182, 212, 255],
+    [99,  102, 241, 255],
+    [168, 85,  247, 255],
+    [236, 72,  153, 255],
+    [20,  184, 166, 255],
+    [251, 191, 36,  255]
+]
+
+let canvas      = 0
+let brush_size  = 10
+let brush_col   = [10, 10, 14, 255]
+let current_tool = TOOL_BRUSH
+let last_x      = -1
+let last_y      = -1
+let rainbow_hue = 0.0
+let time        = 0.0
+
+let rainbow_msg_timer = 0.0
+
+func handle_input() {
+    rainbow_hue = rainbow_hue + 1.5
+    if (rainbow_hue > 360.0) { rainbow_hue = 0.0 }
+    if (rainbow_msg_timer > 0.0) { rainbow_msg_timer = rainbow_msg_timer - 0.016 }
+
+    if (is_key_pressed(KEY_S)) { take_screenshot("luna_art.png") }
+    if (is_key_pressed(KEY_C)) {
+        begin_texture_mode(canvas)
+        clear_background(252, 250, 247, 255)
+        end_texture_mode()
+    }
+    if (is_key_pressed(KEY_B)) { current_tool = TOOL_BRUSH }
+    if (is_key_pressed(KEY_E)) { current_tool = TOOL_ERASER }
+    if (is_key_pressed(KEY_R)) {
+        current_tool = TOOL_RAINBOW
+        rainbow_msg_timer = 2.5
+    }
+    if (is_key_pressed(KEY_UP)) {
+        brush_size = brush_size + 2
+        if (brush_size > 80) { brush_size = 80 }
+    }
+    if (is_key_pressed(KEY_DOWN)) {
+        brush_size = brush_size - 2
+        if (brush_size < 1) { brush_size = 1 }
+    }
+}
+
+func handle_brush(mx, my) {
+    if (is_mouse_button_down(MOUSE_LEFT_BUTTON) && mx > SB_W) {
+        begin_texture_mode(canvas)
+
+        let draw_col = brush_col
+        if (current_tool == TOOL_ERASER)  { draw_col = [252, 250, 247, 255] }
+        if (current_tool == TOOL_RAINBOW) { draw_col = hsl(rainbow_hue, 1.0, 0.55) }
+
+        let draw_x = mx - SB_W
+        let draw_y = my
+
+        if (last_x != -1) {
+            let dx = draw_x - last_x
+            let dy = draw_y - last_y
+            let dist = sqrt(dx*dx + dy*dy)
+            let step = brush_size * 0.4
+            if (step < 1.0) { step = 1.0 }
+            let steps = dist / step
+            let si = 0.0
+            while (si < steps) {
+                let t = si / steps
+                let ix = last_x + dx * t
+                let iy = last_y + dy * t
+                draw_circle(ix, iy, brush_size, draw_col)
+                si = si + 1.0
+            }
+        }
+        draw_circle(draw_x, draw_y, brush_size, draw_col)
+        end_texture_mode()
+        last_x = draw_x
+        last_y = draw_y
+    } else {
+        last_x = -1
+        last_y = -1
+    }
+}
+
+func draw_sidebar(mx, my) {
+    # Sidebar background
+    draw_rectangle(0, 0, SB_W, HEIGHT, C_SIDEBAR)
+    draw_line(SB_W, 0, SB_W, HEIGHT, 1, C_BORDER)
+
+    # Logo / app name at top
+    draw_text_default("L", 22, 12, 30, C_ACCENT)
+    draw_line(8, 50, SB_W - 8, 50, 1, C_BORDER)
+
+    let cy = 66
+
+    # Tool buttons (icon-style, square)
+    let tools     = [TOOL_BRUSH, TOOL_ERASER, TOOL_RAINBOW]
+    let t_labels  = ["B", "E", "R"]
+    let t_hints   = ["Brush", "Erase", "Rainbow"]
+    let ti = 0
+    while (ti < 3) {
+        let ty = cy + ti * 58
+        let is_active = 0
+        if (current_tool == tools[ti]) { is_active = 1 }
+
+        # Active highlight pill
+        if (is_active) {
+            draw_rectangle(4, ty - 2, SB_W - 8, 46, [120, 80, 255, 30])
+            draw_rectangle(0, ty + 4, 3, 34, C_ACCENT)
+        }
+
+        # Button box
+        let btn_col = C_DIM
+        if (is_active) { btn_col = C_ACCENT }
+        draw_rectangle(12, ty, SB_W - 24, 42, [btn_col[0], btn_col[1], btn_col[2], 40])
+        draw_text_default(t_labels[ti], 28, ty + 10, 22, btn_col)
+
+        # Click detection
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON) && mx >= 0 && mx <= SB_W && my >= ty && my <= ty + 42) {
+            current_tool = tools[ti]
+        }
+        ti = ti + 1
+    }
+
+    cy = cy + 3 * 58 + 10
+    draw_line(8, cy, SB_W - 8, cy, 1, C_BORDER)
+    cy = cy + 14
+
+    # Brush size display + [ ] controls
+    draw_text_default("SIZE", 10, cy, 11, C_DIM)
+    cy = cy + 16
+    draw_text_default(to_string(brush_size), 18, cy, 20, C_WHITE)
+    cy = cy + 28
+
+    # Minus button
+    draw_rectangle(10, cy, 22, 22, C_DIM)
+    draw_text_default("-", 17, cy + 2, 18, C_WHITE)
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON) && mx >= 10 && mx <= 32 && my >= cy && my <= cy + 22) {
+        brush_size = brush_size - 2
+        if (brush_size < 1) { brush_size = 1 }
+    }
+
+    # Plus button
+    draw_rectangle(38, cy, 22, 22, C_DIM)
+    draw_text_default("+", 43, cy + 2, 18, C_WHITE)
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON) && mx >= 38 && mx <= 60 && my >= cy && my <= cy + 22) {
+        brush_size = brush_size + 2
+        if (brush_size > 80) { brush_size = 80 }
+    }
+    cy = cy + 34
+
+    # Brush preview dot
+    let preview_r = brush_size
+    if (preview_r > 28) { preview_r = 28 }
+    let p_col = brush_col
+    if (current_tool == TOOL_RAINBOW) { p_col = hsl(rainbow_hue, 1.0, 0.55) }
+    if (current_tool == TOOL_ERASER)  { p_col = [252, 250, 247, 255] }
+    draw_circle(SB_W / 2, cy + 30, preview_r, p_col)
+    cy = cy + 68
+
+    draw_line(8, cy, SB_W - 8, cy, 1, C_BORDER)
+    cy = cy + 14
+
+    # Color palette (2 columns of swatches)
+    draw_text_default("COLOR", 8, cy, 11, C_DIM)
+    cy = cy + 16
+
+    let pi = 0
+    while (pi < len(palette)) {
+        let col = pi % 2
+        let row = pi / 2
+        let sx = 10 + col * 28
+        let sy = cy + row * 28
+        let pc = palette[pi]
+
+        draw_rectangle(sx, sy, 22, 22, pc)
+
+        # Selected indicator
+        let is_sel = 0
+        if (current_tool != TOOL_RAINBOW && brush_col[0] == pc[0] && brush_col[1] == pc[1] && brush_col[2] == pc[2]) {
+            is_sel = 1
+        }
+        if (is_sel) {
+            draw_rectangle_lines(sx - 2, sy - 2, 26, 26, C_WHITE)
+            draw_rectangle_lines(sx - 1, sy - 1, 24, 24, C_ACCENT)
+        }
+
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON) && mx >= sx && mx <= sx + 22 && my >= sy && my <= sy + 22) {
+            brush_col = pc
+            current_tool = TOOL_BRUSH
+        }
+        pi = pi + 1
+    }
+
+    cy = cy + (len(palette) / 2) * 28 + 10
+    draw_line(8, cy, SB_W - 8, cy, 1, C_BORDER)
+    cy = cy + 14
+
+    # Save and Clear pinned to bottom of sidebar
+    let save_y = HEIGHT - 90
+    draw_rectangle(8, save_y, SB_W - 16, 36, [30, 140, 80, 255])
+    draw_text_default("SAVE", 14, save_y + 10, 14, C_WHITE)
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON) && mx >= 8 && mx <= SB_W - 8 && my >= save_y && my <= save_y + 36) {
+        take_screenshot("luna_art.png")
+    }
+
+    let clr_y = HEIGHT - 46
+    draw_rectangle(8, clr_y, SB_W - 16, 36, [160, 40, 50, 255])
+    draw_text_default("CLEAR", 16, clr_y + 10, 14, C_WHITE)
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON) && mx >= 8 && mx <= SB_W - 8 && my >= clr_y && my <= clr_y + 36) {
+        begin_texture_mode(canvas)
+        clear_background(252, 250, 247, 255)
+        end_texture_mode()
+    }
+
+
+}
+
+func draw_cursor(mx, my) {
+    # Custom crosshair cursor when on canvas
+    if (mx > SB_W) {
+        let r = brush_size
+        if (r > 2) {
+            draw_circle(mx, my, r, [255, 255, 255, 18])
+            draw_circle(mx, my, r, [0, 0, 0, 0])
+        }
+        # Crosshair dot
+        draw_circle(mx, my, 2, [255, 255, 255, 200])
+        draw_line(mx - 8, my, mx - r - 4, my, 1, [255, 255, 255, 120])
+        draw_line(mx + 8, my, mx + r + 4, my, 1, [255, 255, 255, 120])
+        draw_line(mx, my - 8, mx, my - r - 4, 1, [255, 255, 255, 120])
+        draw_line(mx, my + 8, mx, my + r + 4, 1, [255, 255, 255, 120])
+    }
+}
+
+func main() {
+    init_window(WIDTH, HEIGHT, "Luna Paint")
+    set_fps(144)
+
+    canvas = load_render_texture(WIDTH - SB_W, HEIGHT)
+    begin_texture_mode(canvas)
+    clear_background(252, 250, 247, 255)
+    end_texture_mode()
+
+    while (window_open()) {
+        time = time + 0.016
+        let mx = get_mouse_position()[0]
+        let my = get_mouse_position()[1]
+
+        handle_input()
+        handle_brush(mx, my)
+
+        begin_drawing()
+        clear_background(8, 8, 12, 255)
+
+        draw_render_texture(canvas, SB_W, 0)
+        draw_sidebar(mx, my)
+        draw_cursor(mx, my)
+
+        # Rainbow mode announcement
+        if (rainbow_msg_timer > 0.0) {
+            let alpha = to_int(rainbow_msg_timer * 100)
+            if (alpha > 255) { alpha = 255 }
+            let msg_col = hsl(rainbow_hue, 1.0, 0.65)
+            draw_text_default("Yeahh itz Rainbow-timeeeee!!!!", SB_W + 40, HEIGHT / 2 - 20, 36, [msg_col[0], msg_col[1], msg_col[2], alpha])
+        }
+
+        end_drawing()
+    }
+
+    unload_render_texture(canvas)
+    close_window()
+}
+
+main()

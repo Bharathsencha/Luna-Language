@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +9,7 @@
 #include "token.h"
 #include "mystr.h"
 #include "luna_error.h"
+#include "intern.h"
 
 static void advance(Parser *p) {
     if (p->had_error) return; // Stop advancing if we have an error
@@ -84,11 +85,11 @@ static AstNode *primary(Parser *p) {
         return ast_float(v, line);
     }
     if (check(p, T_STRING)) {
-        char *s = my_strdup(p->cur.lexeme);
+        char *s = my_strdup(p->cur.lexeme); // Literal strings stay as strdup for now
         free_token(&p->cur);
         advance(p);
         AstNode *n = ast_string(s, line);
-        free(s);
+        free(s); // Free the temp copy since AST Arena copies it again
         return n;
     }
     if (check(p, T_CHAR)) {
@@ -106,12 +107,11 @@ static AstNode *primary(Parser *p) {
         return ast_bool(0, line);
     }
     if (check(p, T_IDENT)) {
-        char *name = my_strdup(p->cur.lexeme);
+        // Core Optimization: All variable identifiers are now Interned Pointers
+        const char *name = intern_string(p->cur.lexeme);
         free_token(&p->cur);
         advance(p);
-        AstNode *n = ast_ident(name, line);
-        free(name);
-        return n;
+        return ast_ident(name, line); // No need to free, managed by intern table
     }
     if (match(p, T_LPAREN)) {
         AstNode *expr = expression(p);
@@ -121,12 +121,22 @@ static AstNode *primary(Parser *p) {
     if (match(p, T_LBRACKET)) {
         NodeList items;
         nodelist_init(&items);
+
+        while (match(p, T_NEWLINE)); // Skip leading newlines
+
         if (!check(p, T_RBRACKET)) {
             do {
+                while (match(p, T_NEWLINE)); // Skip newlines before element
+                
                 AstNode *elem = expression(p);
                 if (elem) nodelist_push(&items, elem);
+
+                while (match(p, T_NEWLINE)); // Skip newlines after element
+
             } while (match(p, T_COMMA));
         }
+        
+        while (match(p, T_NEWLINE)); // Skip trailing newlines
         consume(p, T_RBRACKET, "Expected ']' at end of list");
         return ast_list(items, line);
     }
@@ -150,6 +160,14 @@ static AstNode *primary(Parser *p) {
         AstNode *n = ast_input(prompt, line);
         if (prompt) free(prompt);
         return n;
+    }
+
+    if (check(p, T_SEMICOLON)) {
+        error_report_with_context(ERR_SYNTAX, p->cur.line, p->cur.col,
+            "Unexpected semicolon ';'",
+            "fucking noob");
+        p->had_error = 1;
+        return NULL;
     }
 
     // Set error flag instead of exit(1)
@@ -180,10 +198,10 @@ static AstNode *call_or_index(Parser *p) {
             consume(p, T_RPAREN, "Expected ')' after arguments");
 
             if (expr && expr->kind == NODE_IDENT) {
-                char *name = my_strdup(expr->ident.name);
+                // Since expr->ident.name is already interned by ast_ident, we can just pass it
+                AstNode *call_n = ast_call(expr->ident.name, args, line);
                 ast_free(expr);
-                expr = ast_call(name, args, line);
-                free(name);
+                expr = call_n;
             } else {
                 // Handling Logic error in parser
                 error_report_with_context(ERR_SYNTAX, p->cur.line, p->cur.col,
@@ -201,10 +219,9 @@ static AstNode *call_or_index(Parser *p) {
         } else if (match(p, T_INC)) {
             // Handle ++
             if (expr && expr->kind == NODE_IDENT) {
-                char *name = my_strdup(expr->ident.name);
+                AstNode *inc_n = ast_inc(expr->ident.name, line);
                 ast_free(expr);
-                expr = ast_inc(name, line);
-                free(name);
+                expr = inc_n;
             } else {
                 error_report_with_context(ERR_SYNTAX, p->cur.line, p->cur.col,
                     "'++' can only be applied to variables",
@@ -215,10 +232,9 @@ static AstNode *call_or_index(Parser *p) {
         } else if (match(p, T_DEC)) {
             // Handle --
             if (expr && expr->kind == NODE_IDENT) {
-                char *name = my_strdup(expr->ident.name);
+                AstNode *dec_n = ast_dec(expr->ident.name, line);
                 ast_free(expr);
-                expr = ast_dec(name, line);
-                free(name);
+                expr = dec_n;
             } else {
                 error_report_with_context(ERR_SYNTAX, p->cur.line, p->cur.col,
                     "'--' can only be applied to variables",
@@ -350,8 +366,8 @@ static AstNode *statement(Parser *p) {
     }
 
     if (match(p, T_LET)) {
-        // 1. Collect all variable names
-        char **names = NULL;
+        // 1. Collect all variable names (interned)
+        const char **names = NULL;
         int name_count = 0;
 
         do {
@@ -361,13 +377,12 @@ static AstNode *statement(Parser *p) {
                     "Variables must be identifiers (e.g., let a, b, c)");
                 p->had_error = 1;
                 // Cleanup names if error
-                for(int i=0; i<name_count; i++) free(names[i]);
                 free(names);
                 return NULL;
             }
             
-            names = realloc(names, sizeof(char*) * (name_count + 1));
-            names[name_count++] = my_strdup(p->cur.lexeme);
+            names = realloc(names, sizeof(const char*) * (name_count + 1));
+            names[name_count++] = intern_string(p->cur.lexeme);
             advance(p);
             
         } while (match(p, T_COMMA));
@@ -393,8 +408,7 @@ static AstNode *statement(Parser *p) {
             p->had_error = 1;
             
             // Cleanup
-            for(int i=0; i<name_count; i++) free(names[i]);
-            free(names);
+            free((void*)names); // Pointers themselves are managed by intern table
             for(int i=0; i<val_count; i++) ast_free(values[i]);
             free(values);
             return NULL;
@@ -410,17 +424,16 @@ static AstNode *statement(Parser *p) {
             
             AstNode *node = ast_let(names[i], val, line);
             nodelist_push(&lets, node);
-            
-            free(names[i]); 
+            // No free required, strings are interned
         }
 
-        free(names);
+        free((void*)names);
         if (values) free(values); 
 
         // Return single node or GROUP
         if (lets.count == 1) {
             AstNode *single = lets.items[0];
-            free(lets.items); // Free the list array only
+            // No-op: lets.items is managed by the arena
             return single;
         } else {
             // This ensures variables are defined in the CURRENT scope
@@ -475,21 +488,10 @@ static AstNode *statement(Parser *p) {
             // Allow newline after 'else' (before '{' or 'if')
             match(p, T_NEWLINE);
 
-            if (match(p, T_IF)) {
-                consume(p, T_LPAREN, "Expected '('");
-                AstNode *econd = expression(p);
-                consume(p, T_RPAREN, "Expected ')'");
-
-                // Allow newline before '{' in else-if
-                match(p, T_NEWLINE);
-
-                consume(p, T_LBRACE, "Expected '{'");
-                NodeList e_then;
-                nodelist_init(&e_then);
-                block(p, &e_then);
-                NodeList e_else;
-                nodelist_init(&e_else);
-                if (econd) nodelist_push(&else_b, ast_if(econd, e_then, e_else, line));
+            if (check(p, T_IF)) {
+                // Properly handle 'else if' by parsing it as a statement
+                AstNode *elif = statement(p);
+                if (elif) nodelist_push(&else_b, elif);
             } else {
                 consume(p, T_LBRACE, "Expected '{'");
                 block(p, &else_b);
@@ -592,17 +594,14 @@ static AstNode *statement(Parser *p) {
         return NULL;
     }
 
-    // Assignment Handling
     AstNode *expr = expression(p);
     if (match(p, T_EQ)) {
         // Case 1: Variable Assignment (x = 5)
         if (expr && expr->kind == NODE_IDENT) {
-            char *name = my_strdup(expr->ident.name);
-            ast_free(expr);
             AstNode *val = expression(p);
             AstNode *n = NULL;
-            if (val && !p->had_error) n = ast_assign(name, val, line);
-            free(name);
+            if (val && !p->had_error) n = ast_assign(expr->ident.name, val, line);
+            ast_free(expr); // Free after creating assign node to preserve interned name pointer
             return n;
         }
         // Case 2: List Index Assignment (x[0] = 5)
@@ -658,11 +657,11 @@ static AstNode *function_def(Parser *p) {
         p->had_error = 1;
         return NULL;
     }
-    char *name = my_strdup(p->cur.lexeme);
+    const char *name = intern_string(p->cur.lexeme);
     advance(p);
 
     consume(p, T_LPAREN, "Expected '('");
-    char **params = NULL;
+    const char **params = NULL;
     int count = 0;
     if (!check(p, T_RPAREN)) {
         do {
@@ -671,12 +670,11 @@ static AstNode *function_def(Parser *p) {
                     "Expected parameter name",
                     "Function parameters must be valid identifiers, e.g., 'func add(a, b)'");
                 p->had_error = 1;
-                free(name);
-                if(params) free(params); // Better than crashing
+                if(params) free(params); // Pointers managed by intern table
                 return NULL;
             }
-            params = realloc(params, sizeof(char*) * (count + 1));
-            params[count++] = my_strdup(p->cur.lexeme);
+            params = realloc(params, sizeof(const char*) * (count + 1));
+            params[count++] = intern_string(p->cur.lexeme);
             advance(p);
         } while (match(p, T_COMMA));
     }
@@ -692,8 +690,7 @@ static AstNode *function_def(Parser *p) {
     AstNode *n = NULL;
     if (!p->had_error) n = ast_funcdef(name, params, count, body, line);
     
-    free(name);
-    for (int i = 0; i < count; i++) free(params[i]);
+    // No need to free name or params[i], they are managed by the intern table
     free(params);
     return n;
 }

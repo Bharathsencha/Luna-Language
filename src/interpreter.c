@@ -39,7 +39,7 @@ static int is_truthy(Value v) {
         case VAL_BOOL: return v.b;
         case VAL_INT: return v.i != 0;
         case VAL_FLOAT: return v.f != 0.0;
-        case VAL_STRING: return v.s && v.s[0] != '\0'; // Empty strings are false
+        case VAL_STRING: return v.string && v.string->chars && v.string->chars[0] != '\0'; // Empty strings are false
         case VAL_NULL: return 0;
         case VAL_LIST: 
         case VAL_DENSE_LIST: return 1; // Lists are always true (even empty ones, usually) brrrrrrrrrrrrrrrr
@@ -75,18 +75,18 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
         }
         
         // Check bounds
-        if (idx.i < 0 || idx.i >= list->list.count) {
+        if (idx.i < 0 || idx.i >= list->list->count) {
             char msg[128];
-            snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d", idx.i, list->list.count);
+            snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d", idx.i, list->list->count);
             // Updated to use n->line from the AST node
-            error_report(ERR_INDEX, n->line, 0, msg,
+            error_report_with_context(ERR_INDEX, n->line, 0, msg,
                 "Check that your index is between 0 and len(list)-1");
             value_free(idx);
             return NULL;
         }
         
         // Return pointer to the specific item slot
-        Value *item_ptr = &list->list.items[idx.i];
+        Value *item_ptr = &list->list->items[idx.i];
         value_free(idx);
         return item_ptr;
     }
@@ -94,7 +94,7 @@ static Value *get_mutable_value(Env *e, AstNode *n) {
 }
 
 // Handles binary operations like +, -, *, /, comparison
-static Value eval_binop(BinOpKind op, Value l, Value r) {
+static Value eval_binop(BinOpKind op, Value l, Value r, int line) {
     // 1. Handle Pure Integer Operations separately to preserve precision/types
     if (l.type == VAL_INT && r.type == VAL_INT) {
         switch (op) {
@@ -149,9 +149,9 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
     }
     
     // Handle String Equality
-    if (l.type == VAL_STRING && r.type == VAL_STRING) {
-        if (op == OP_EQ) return value_bool(strcmp(l.s, r.s) == 0);
-        if (op == OP_NEQ) return value_bool(strcmp(l.s, r.s) != 0);
+    if (l.type == VAL_STRING && r.type == VAL_STRING && l.string && r.string) {
+        if (op == OP_EQ) return value_bool(strcmp(l.string->chars, r.string->chars) == 0);
+        if (op == OP_NEQ) return value_bool(strcmp(l.string->chars, r.string->chars) != 0);
     }
 
     // Handle Boolean and Null Equality
@@ -195,11 +195,16 @@ static Value eval_binop(BinOpKind op, Value l, Value r) {
             default: break; // Fall through for other ops (like ==)
         }
     }
+    
+    error_report_with_context(ERR_TYPE, line, 0,
+        "Invalid binary operation for these types",
+        "Check that you are using compatible types (e.g. not adding a string and a number)");
     return value_null();
 }
 
 // Evaluates an expression node and returns a Value
 static Value eval_expr(Env *e, AstNode *n) {
+    if (luna_had_error) return value_null();
     if (!n) {
         return value_null();
     }
@@ -222,14 +227,28 @@ static Value eval_expr(Env *e, AstNode *n) {
             return v;
         }
         
-        // Variable lookup
+        // Variable lookup (O(0) Fast Local Cache)
         case NODE_IDENT: {
+            if (n->ident.cached_val && n->ident.cached_env_version == env_get_version(e)) {
+                return value_copy(*(n->ident.cached_val));
+            }
+
             Value *v = env_get(e, n->ident.name);
-            return v ? value_copy(*v) : value_null();
+            if (!v) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Variable '%s' is not defined", n->ident.name);
+                error_report_with_context(ERR_NAME, n->line, 0, msg,
+                    "Declare variables with 'let' before using them");
+                return value_null();
+            }
+            // Bind the cache pointer
+            n->ident.cached_val = v;
+            n->ident.cached_env_version = env_get_version(e);
+            return value_copy(*v);
         }
         
         case NODE_BINOP: {
-            // ADDED: Logic Short-circuiting 
+            // Logic Short-circuiting 
             if (n->binop.op == OP_AND) {
                 Value l = eval_expr(e, n->binop.left);
                 if (!is_truthy(l)) {
@@ -249,13 +268,13 @@ static Value eval_expr(Env *e, AstNode *n) {
 
             Value l = eval_expr(e, n->binop.left);
             Value r = eval_expr(e, n->binop.right);
-            Value res = eval_binop(n->binop.op, l, r);
+            Value res = eval_binop(n->binop.op, l, r, n->line);
             value_free(l);
             value_free(r);
             return res;
         }
         
-        // Unary NOT ---
+        // Unary NOT
         case NODE_NOT: {
             Value v = eval_expr(e, n->logic_not.expr);
             Value res = value_bool(!is_truthy(v));
@@ -267,16 +286,16 @@ static Value eval_expr(Env *e, AstNode *n) {
             Value target = eval_expr(e, n->index.target);
             Value idx = eval_expr(e, n->index.index);
             if (idx.type == VAL_INT) {
-                if (target.type == VAL_LIST) {
-                    if (idx.i >= 0 && idx.i < target.list.count) {
-                        Value res = value_copy(target.list.items[idx.i]);
+                if (target.type == VAL_LIST && target.list) {
+                    if (idx.i >= 0 && idx.i < target.list->count) {
+                        Value res = value_copy(target.list->items[idx.i]);
                         value_free(target);
                         value_free(idx);
                         return res;
                     }
-                } else if (target.type == VAL_DENSE_LIST) {
-                    if (idx.i >= 0 && idx.i < target.dlist.count) {
-                        Value res = value_float(target.dlist.data[idx.i]);
+                } else if (target.type == VAL_DENSE_LIST && target.dlist) {
+                    if (idx.i >= 0 && idx.i < target.dlist->count) {
+                        Value res = value_float(target.dlist->data[idx.i]);
                         value_free(target);
                         value_free(idx);
                         return res;
@@ -290,13 +309,22 @@ static Value eval_expr(Env *e, AstNode *n) {
 
         //  Increment Operator (++)
         case NODE_INC: {
-            Value *v = env_get(e, n->inc.name);
+            Value *v = NULL;
+            if (n->inc.cached_val && n->inc.cached_env_version == env_get_version(e)) {
+                v = n->inc.cached_val;
+            } else {
+                v = env_get(e, n->inc.name);
+                if (v) {
+                    n->inc.cached_val = v;
+                    n->inc.cached_env_version = env_get_version(e);
+                }
+            }
+            
             if (v && v->type == VAL_INT) {
                 Value old = value_copy(*v);
                 v->i++;
-                return old; // Post-increment returns old value
-            }
-            if (v && v->type == VAL_FLOAT) {
+                return old;
+            } else if (v && v->type == VAL_FLOAT) {
                 Value old = value_copy(*v);
                 v->f++;
                 return old;
@@ -306,13 +334,22 @@ static Value eval_expr(Env *e, AstNode *n) {
         
         // Decrement Operator (--)
         case NODE_DEC: {
-            Value *v = env_get(e, n->dec.name);
+            Value *v = NULL;
+            if (n->dec.cached_val && n->dec.cached_env_version == env_get_version(e)) {
+                v = n->dec.cached_val;
+            } else {
+                v = env_get(e, n->dec.name);
+                if (v) {
+                    n->dec.cached_val = v;
+                    n->dec.cached_env_version = env_get_version(e);
+                }
+            }
+            
             if (v && v->type == VAL_INT) {
                 Value old = value_copy(*v);
                 v->i--;
-                return old; // Post-decrement returns old value
-            }
-            if (v && v->type == VAL_FLOAT) {
+                return old;
+            } else if (v && v->type == VAL_FLOAT) {
                 Value old = value_copy(*v);
                 v->f--;
                 return old;
@@ -327,9 +364,9 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (n->call.args.count == 1) {
                     Value v = eval_expr(e, n->call.args.items[0]);
                     int len = 0;
-                    if (v.type == VAL_STRING) len = strlen(v.s);
-                    if (v.type == VAL_LIST) len = v.list.count;
-                    if (v.type == VAL_DENSE_LIST) len = v.dlist.count;
+                    if (v.type == VAL_STRING && v.string) len = strlen(v.string->chars);
+                    if (v.type == VAL_LIST && v.list) len = v.list->count;
+                    if (v.type == VAL_DENSE_LIST && v.dlist) len = v.dlist->count;
                     value_free(v);
                     return value_int(len);
                 }
@@ -353,7 +390,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                     value_dlist_append(list_ptr, dv);
                 } else {
                     // Use node line number
-                    error_report(ERR_ARGUMENT, n->line, 0,
+                    error_report_with_context(ERR_ARGUMENT, n->line, 0,
                         "append() expects a list variable as the first argument",
                         "Use append(myList, value) where myList is a list variable");
                 }
@@ -385,6 +422,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                         case VAL_DENSE_LIST: tname = "list"; break;
                         case VAL_NATIVE: tname = "native_function"; break;
                         case VAL_NULL: tname = "null"; break;
+                        case VAL_FILE: tname = "file"; break;
                     }
                     value_free(v);
                     return value_string(tname);
@@ -396,7 +434,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (n->call.args.count == 1) {
                     Value v = eval_expr(e, n->call.args.items[0]);
                     long long res = 0;
-                    if (v.type == VAL_STRING) res = atoll(v.s);
+                    if (v.type == VAL_STRING && v.string) res = atoll(v.string->chars);
                     else if (v.type == VAL_FLOAT) res = (long long)v.f;
                     else if (v.type == VAL_INT) res = v.i;
                     else if (v.type == VAL_BOOL) res = v.b;
@@ -410,7 +448,7 @@ static Value eval_expr(Env *e, AstNode *n) {
                 if (n->call.args.count == 1) {
                     Value v = eval_expr(e, n->call.args.items[0]);
                     double res = 0.0;
-                    if (v.type == VAL_STRING) res = atof(v.s);
+                    if (v.type == VAL_STRING && v.string) res = atof(v.string->chars);
                     else if (v.type == VAL_INT) res = (double)v.i;
                     else if (v.type == VAL_FLOAT) res = v.f;
                     else if (v.type == VAL_BOOL) res = v.b ? 1.0 : 0.0;
@@ -422,6 +460,16 @@ static Value eval_expr(Env *e, AstNode *n) {
             // 1. Check for User defined function
             AstNode *fn = env_get_func(e, n->call.name);
             if (fn) {
+                // Arity Check
+                if (n->call.args.count != fn->funcdef.param_count) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "Function '%s' expects %d argument(s), but got %d",
+                             fn->funcdef.name, fn->funcdef.param_count, n->call.args.count);
+                    error_report_with_context(ERR_ARGUMENT, n->line, 0, msg,
+                        "Adjust the number of arguments to match the function definition");
+                    return value_null();
+                }
+
                 // Create new scope for function execution
                 Env *scope = env_create(e);
                 
@@ -468,8 +516,8 @@ static Value eval_expr(Env *e, AstNode *n) {
                     }
                 }
 
-                // Call the C Function Pointer
-                Value res = native_val->native(argc, argv);
+                // Call the C Function Pointer - Updated to pass environment 'e' for variable binding
+                Value res = native_val->native(argc, argv, e);
 
                 // Clean up arguments
                 for (int i = 0; i < argc; i++) {
@@ -481,6 +529,12 @@ static Value eval_expr(Env *e, AstNode *n) {
                 free(argv);
                 return res;
             }
+
+            // 3. Fallback: Identifier is neither a user-defined function nor a native function
+            char err_msg[128];
+            snprintf(err_msg, sizeof(err_msg), "'%s' is not a function", n->call.name);
+            error_report_with_context(ERR_TYPE, n->line, 0, err_msg,
+                "Make sure you are calling a function (defined with 'func') and not a regular variable");
 
             return value_null();
         }
@@ -503,6 +557,7 @@ static Value eval_expr(Env *e, AstNode *n) {
 
 // Executes a statement node (side effects, control flow)
 static Value exec_stmt(Env *e, AstNode *n) {
+    if (luna_had_error) return value_null();
     if (!n) {
         return value_null();
     }
@@ -518,7 +573,21 @@ static Value exec_stmt(Env *e, AstNode *n) {
         }
         case NODE_ASSIGN: {
             Value v = eval_expr(e, n->assign.expr);
-            env_assign(e, n->assign.name, v);
+            if (n->assign.cached_val && n->assign.cached_env_version == env_get_version(e)) {
+                // O(0) cache hit update
+                value_free(*(n->assign.cached_val));
+                *(n->assign.cached_val) = value_copy(v);
+            } else {
+                Value *target = env_get(e, n->assign.name);
+                if (target) {
+                    n->assign.cached_val = target;
+                    n->assign.cached_env_version = env_get_version(e);
+                    value_free(*target);
+                    *target = value_copy(v);
+                } else {
+                    env_assign(e, n->assign.name, v); // Will throw the expected not-found error
+                }
+            }
             value_free(v);
             return value_null();
         }
@@ -531,7 +600,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
             // Verify target is actually a list
             if (!target || (target->type != VAL_LIST && target->type != VAL_DENSE_LIST)) {
                 // Use node line number
-                error_report(ERR_TYPE, n->line, 0,
+                error_report_with_context(ERR_TYPE, n->line, 0,
                     "Cannot assign to non-list target - target must be a list",
                     "Use list indices only on list variables, e.g., myList[0] = value");
                 value_free(val);
@@ -542,7 +611,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
             Value idx = eval_expr(e, n->assign_index.index);
             if (idx.type != VAL_INT) {
                 // Use node line number
-                error_report(ERR_TYPE, n->line, 0,
+                error_report_with_context(ERR_TYPE, n->line, 0,
                     "List index must be an integer",
                     "Use integer values for list indices, e.g., myList[0] or myList[i]");
                 value_free(val);
@@ -550,14 +619,14 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 return value_null();
             }
 
-            if (target->type == VAL_LIST) {
+            if (target->type == VAL_LIST && target->list) {
                 // Bounds Check
-                if (idx.i < 0 || idx.i >= target->list.count) {
+                if (idx.i < 0 || idx.i >= target->list->count) {
                     char msg[128];
                     snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d",
-                            idx.i, target->list.count);
+                            idx.i, target->list->count);
                     // Use node line number
-                    error_report(ERR_INDEX, n->line, 0, msg,
+                    error_report_with_context(ERR_INDEX, n->line, 0, msg,
                         "Ensure your index is between 0 and len(list)-1");
                     value_free(val);
                     value_free(idx);
@@ -565,13 +634,13 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 }
 
                 // Assign to the specific slot
-                Value *slot = &target->list.items[idx.i];
+                Value *slot = &target->list->items[idx.i];
                 value_free(*slot);      // Free the old value in this slot
                 *slot = value_copy(val); // Assign the new value
-            } else {
+            } else if (target->type == VAL_DENSE_LIST && target->dlist) {
                 // Direct high-performance assignment for dense lists
-                if (idx.i >= 0 && idx.i < target->dlist.count) {
-                    target->dlist.data[idx.i] = (val.type == VAL_INT) ? (double)val.i : val.f;
+                if (idx.i >= 0 && idx.i < target->dlist->count) {
+                    target->dlist->data[idx.i] = (val.type == VAL_INT) ? (double)val.i : val.f;
                 }
             }
             
@@ -608,15 +677,15 @@ static Value exec_stmt(Env *e, AstNode *n) {
             return value_null();
         }
         case NODE_WHILE: {
+            Env *scope = env_create(e); // Create scope ONCE outside the loop
             while (1) {
-                Value v = eval_expr(e, n->whilestmt.cond);
+                Value v = eval_expr(scope, n->whilestmt.cond);
                 int t = is_truthy(v);
                 value_free(v);
                 if (!t) {
                     break;
                 }
 
-                Env *scope = env_create(e);
                 for (int i = 0; i < n->whilestmt.body.count; i++) {
                     exec_stmt(scope, n->whilestmt.body.items[i]);
                     if (return_exception.active || loop_exception.break_active) {
@@ -626,7 +695,10 @@ static Value exec_stmt(Env *e, AstNode *n) {
                         break;
                     }
                 }
-                env_free(scope);
+                
+                // Clear all variables bounded during this iteration, 
+                // keeping the same Scope memory block for cache hits
+                env_clear_locals(scope);
 
                 if (return_exception.active) {
                     break;
@@ -648,6 +720,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
             // 1. Run Initializer (once)
             exec_stmt(scope, n->forstmt.init);
 
+            Env *inner_scope = env_create(scope); // Create inner scope ONCE
             while (1) {
                 // 2. Check Condition
                 Value c = eval_expr(scope, n->forstmt.cond);
@@ -657,13 +730,12 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 if (!truthy) break; // Exit loop
 
                 // 3. Execute Body
-                // We create a generic inner scope for the body to protect the iterator
-                Env *inner_scope = env_create(scope); 
                 for (int i = 0; i < n->forstmt.body.count; i++) {
                     exec_stmt(inner_scope, n->forstmt.body.items[i]);
                     if (return_exception.active || loop_exception.break_active || loop_exception.continue_active) break;
                 }
-                env_free(inner_scope);
+
+                env_clear_locals(inner_scope);
 
                 if (return_exception.active) break;
                 if (loop_exception.break_active) {
@@ -679,6 +751,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 exec_stmt(scope, n->forstmt.incr);
             }
             
+            env_free(inner_scope); // Cleanup loop body scope
             env_free(scope); // Cleanup loop variable 'i'
             return value_null();
         }
@@ -696,7 +769,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 if (val.type == cval.type) {
                     if (val.type == VAL_INT) eq = (val.i == cval.i);
                     else if (val.type == VAL_FLOAT) eq = (val.f == cval.f);
-                    else if (val.type == VAL_STRING) eq = !strcmp(val.s, cval.s);
+                    else if (val.type == VAL_STRING && val.string && cval.string) eq = !strcmp(val.string->chars, cval.string->chars);
                     else if (val.type == VAL_BOOL) eq = (val.b == cval.b);
                     else if (val.type == VAL_CHAR) eq = (val.c == cval.c);
                 } else if (val.type == VAL_INT && cval.type == VAL_FLOAT) eq = (val.i == cval.f);

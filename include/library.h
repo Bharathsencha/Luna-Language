@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2025 Bharath
+// Copyright (c) 2026 Bharath
 
 // This header acts as the configuration center for the Luna runtime.
 // It declares the registration function responsible for wiring up all 

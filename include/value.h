@@ -7,8 +7,11 @@
 
 typedef struct Value Value; // Forward decl
 
-// Typedef for Native Functions
-typedef Value (*NativeFunc)(int argc, Value *argv);
+// Forward declaration for Environment to avoid circular dependencies
+struct Env;
+
+// Typedef for Native Functions - Updated to support Environment access for Variable Binding
+typedef Value (*NativeFunc)(int argc, Value *argv, struct Env *env);
 
 typedef enum {
     VAL_INT,
@@ -23,27 +26,38 @@ typedef enum {
     VAL_NULL
 } ValueType;
 
+typedef struct {
+    int ref_count;
+    char *chars;
+} StringObj;
+
+typedef struct {
+    int ref_count;
+    struct Value *items;
+    int count;
+    int capacity;
+} ListObj;
+
+typedef struct {
+    int ref_count;
+    double *data;
+    int count;
+    int capacity;
+} DenseListObj;
+
 // Represents a runtime value in the language
 struct Value {
     ValueType type;
     union {
         long long i;   
         double f;       
-        char *s;
         char c;         
         int b;
         NativeFunc native; 
         FILE *file; // Standard C File Pointer
-        struct {        
-            struct Value *items;
-            int count;
-            int capacity;
-        } list;
-        struct {        // Raw contiguous double buffer
-            double *data; // Speed goes brrrrrrr
-            int count;
-            int capacity;
-        } dlist;
+        StringObj *string;
+        ListObj *list;
+        DenseListObj *dlist;
     };
 };
 
@@ -54,9 +68,9 @@ Value value_string(const char *s);
 Value value_char(char c); 
 Value value_bool(int b);
 Value value_list(void);
-Value value_dense_list(void); // New constructor for dense arrays
+Value value_dense_list(void); // Constructor for dense arrays
 Value value_native(NativeFunc fn); 
-Value value_file(FILE *f); // For file_lib
+Value value_file(FILE *f);
 Value value_null(void);
 
 // Utils for memory management

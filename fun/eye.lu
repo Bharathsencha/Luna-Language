@@ -1,0 +1,192 @@
+# The All-Seeing Eye of Luna
+# A psychedelic eyeball that follows your mouse,
+# surrounded by orbiting geometry. Click to go haywire.
+
+init_window(1024, 768, "Luna - The All-Seeing Eye")
+set_fps(60)
+init_audio_device()
+
+let music = load_music_stream("fun/music/Pogo - Forget [Slowed down]-(129k).mp3")
+play_music_stream(music)
+
+let time = 0.0
+let chaos = 0.0
+let pupil_shake_x = 0.0
+let pupil_shake_y = 0.0
+let bg_flash = 0
+let click_ring = 0.0
+
+while (window_open()) {
+    time = time + 0.03
+    update_music_stream(music)
+    let dt = get_delta_time()
+    let m = get_mouse_position()
+    let mx = m[0]
+    let my = m[1]
+
+    # Chaos decays over time
+    if (chaos > 0) { chaos = chaos - dt * 2.0 }
+    if (chaos < 0) { chaos = 0 }
+
+    # Click triggers chaos burst
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+        chaos = 3.0
+        bg_flash = 10
+        click_ring = 1.0
+    }
+
+    # Click ring expands and fades
+    if (click_ring > 0.01) { click_ring = click_ring - dt * 0.8 }
+    if (click_ring < 0) { click_ring = 0 }
+
+    begin_drawing()
+
+    # Background: dark with chaos flash
+    if (bg_flash > 0) {
+        let flash_v = to_int(bg_flash * 25)
+        clear_background([flash_v, flash_v, flash_v + 30, 255])
+        bg_flash = bg_flash - 1
+    } else {
+        let bg_hue = 260.0 + sin(time * 0.3) * 20.0
+        let bg_col = hsl(bg_hue, 0.6, 0.05)
+        clear_background([bg_col[0], bg_col[1], bg_col[2], 255])
+    }
+
+    # Concentric pulsating rings (background texture)
+    let ring = 0
+    while (ring < 12) {
+        let r_radius = 80 + ring * 60 + sin(time * 1.5 + ring * 0.8) * 20
+        let r_hue = 270.0 + ring * 15.0 + time * 20.0
+        let r_col = hsl(r_hue, 0.5, 0.15)
+        let r_alpha = 30 + to_int(sin(time + ring) * 15)
+        draw_circle(512, 384, r_radius, [r_col[0], r_col[1], r_col[2], r_alpha])
+        ring = ring + 1
+    }
+
+    # Click shockwave ring
+    if (click_ring > 0.05) {
+        let ring_r = (1.0 - click_ring) * 400
+        let ring_alpha = to_int(click_ring * 200)
+        let ring_col = hsl(time * 60, 1.0, 0.7)
+        draw_circle(mx, my, ring_r + 5, [ring_col[0], ring_col[1], ring_col[2], ring_alpha])
+        draw_circle(mx, my, ring_r, [0, 0, 0, 0])
+    }
+
+    # Orbiting geometry
+    let orb = 0
+    while (orb < 8) {
+        let orb_angle = time * (0.5 + orb * 0.15) + orb * 0.785
+        let orb_dist = 250 + sin(time * 2 + orb) * 40 + chaos * 80
+        let ox = 512 + cos(orb_angle) * orb_dist
+        let oy = 384 + sin(orb_angle) * orb_dist
+        let o_size = 15 + sin(time * 3 + orb * 2) * 8 + chaos * 10
+        let o_hue = time * 40 + orb * 45
+        let o_col = hsl(o_hue, 1.0, 0.6)
+
+        # Rotating square (2 overlapping rects for a star effect)
+        let rot_off = sin(time * 4 + orb) * 5
+        draw_rectangle(to_int(ox - o_size/2 + rot_off), to_int(oy - o_size/2), to_int(o_size), to_int(o_size), [o_col[0], o_col[1], o_col[2], 180])
+        draw_rectangle(to_int(ox - o_size/2), to_int(oy - o_size/2 + rot_off), to_int(o_size * 0.7), to_int(o_size * 0.7), [o_col[0], o_col[1], o_col[2], 120])
+        orb = orb + 1
+    }
+
+    # THE EYE
+    let eye_cx = 512
+    let eye_cy = 384
+
+    # Sclera (white of the eye) with breathing
+    let eye_w = 220 + sin(time * 1.2) * 10 + chaos * 30
+    let eye_h = 160 + sin(time * 0.8) * 8 + chaos * 20
+
+    # Draw sclera as horizontal strips approximating an ellipse
+    let sy = -1.0
+    while (sy <= 1.0) {
+        let ew = eye_w * sqrt(1.0 - sy * sy)
+        let draw_y = eye_cy + sy * eye_h / 2
+        let s_bright = 0.95 - abs(sy) * 0.15
+        draw_rectangle(to_int(eye_cx - ew/2), to_int(draw_y) - 2, to_int(ew), 4, [to_int(s_bright * 255), to_int(s_bright * 240), to_int(s_bright * 230), 255])
+        sy = sy + 0.05
+    }
+
+    # Iris follows mouse with clamped offset
+    let look_dx = mx - eye_cx
+    let look_dy = my - eye_cy
+    let look_dist = sqrt(look_dx * look_dx + look_dy * look_dy)
+    let max_offset = 50
+    if (look_dist > max_offset) {
+        look_dx = look_dx * max_offset / look_dist
+        look_dy = look_dy * max_offset / look_dist
+    }
+
+    # Add shake during chaos
+    if (chaos > 0.5) {
+        pupil_shake_x = sin(time * 47) * chaos * 15
+        pupil_shake_y = cos(time * 53) * chaos * 15
+    } else {
+        pupil_shake_x = 0
+        pupil_shake_y = 0
+    }
+
+    let iris_x = eye_cx + look_dx + pupil_shake_x
+    let iris_y = eye_cy + look_dy + pupil_shake_y
+    let iris_r = 65 + sin(time * 2) * 5
+
+    # Iris rings (multicolor)
+    let ir = 0
+    while (ir < 8) {
+        let i_radius = iris_r - ir * 7
+        if (i_radius < 3) { i_radius = 3 }
+        let i_hue = 120.0 + ir * 20.0 + sin(time * 3) * 40 + chaos * 100
+        let i_col = hsl(i_hue, 0.9, 0.3 + ir * 0.05)
+        draw_circle(iris_x, iris_y, i_radius, [i_col[0], i_col[1], i_col[2], 220])
+        ir = ir + 1
+    }
+
+    # Pupil (black void)
+    let pupil_r = 22 + sin(time * 4) * 4
+    draw_circle(iris_x, iris_y, pupil_r, [5, 5, 5, 255])
+
+    # Pupil highlights (reflections)
+    draw_circle(iris_x - 10, iris_y - 12, 6, [255, 255, 255, 200])
+    draw_circle(iris_x + 5, iris_y - 8, 3, [255, 255, 255, 140])
+
+    # Eyelids (top and bottom)
+    let lid_close = sin(time * 0.4) * 0.1 + chaos * 0.3
+    let lid_top_h = to_int(40 + lid_close * 100)
+    let lid_bot_h = to_int(30 + lid_close * 80)
+    let lid_col = hsl(270.0, 0.5, 0.08)
+    draw_rectangle(to_int(eye_cx - eye_w/2) - 20, to_int(eye_cy - eye_h/2) - 60, to_int(eye_w) + 40, lid_top_h, [lid_col[0], lid_col[1], lid_col[2], 240])
+    draw_rectangle(to_int(eye_cx - eye_w/2) - 20, to_int(eye_cy + eye_h/2) + 60 - lid_bot_h, to_int(eye_w) + 40, lid_bot_h, [lid_col[0], lid_col[1], lid_col[2], 240])
+
+    # Veins (red lines radiating from eye)
+    let v = 0
+    while (v < 6) {
+        let v_angle = v * 1.047 + sin(time * 0.7 + v) * 0.3
+        let v_len = 90 + sin(time * 2 + v * 3) * 30
+        let vx1 = eye_cx + cos(v_angle) * (eye_w / 2 - 10)
+        let vy1 = eye_cy + sin(v_angle) * (eye_h / 2 - 10)
+        let vx2 = eye_cx + cos(v_angle) * (eye_w / 2 + v_len)
+        let vy2 = eye_cy + sin(v_angle) * (eye_h / 2 + v_len * 0.4)
+        let v_alpha = to_int(80 + sin(time + v) * 40)
+        draw_line(vx1, vy1, vx2, vy2, 2, [200, 40, 40, v_alpha])
+        v = v + 1
+    }
+
+    # Creepy cycling text
+    let txt_alpha = to_int(150 + sin(time * 2) * 100)
+    let msg_idx = to_int(time * 0.3) % 5
+    if (msg_idx < 0) { msg_idx = 0 }
+    if (msg_idx > 4) { msg_idx = 4 }
+    let msg = "I SEE YOU"
+    if (msg_idx == 1) { msg = "CLICK ME" }
+    if (msg_idx == 2) { msg = "DON'T BLINK" }
+    if (msg_idx == 3) { msg = "LUNA WATCHES" }
+    if (msg_idx == 4) { msg = "LOOK AWAY" }
+    let msg_col = hsl(time * 30, 0.8, 0.6)
+    draw_text_default(msg, 20, 730, 25, [msg_col[0], msg_col[1], msg_col[2], txt_alpha])
+
+    end_drawing()
+}
+
+close_audio_device()
+close_window()

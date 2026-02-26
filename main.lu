@@ -1,29 +1,364 @@
-<<<<<<< HEAD
-let size = 50
-=======
-let size = 200
->>>>>>> 5b4b1cf (Added make native make native-run and make native-clean. The code ran ~15% faster.)
-let A = []
-let B = []
+let WIDTH = 800
+let HEIGHT = 600
+let TITLE = "Luna Retro Player"
 
-print("Initializing", size, "x", size, "matrices...")
-for (let i = 0; i < size; i++) {
-    let rowA = []
-    let rowB = []
-    for (let j = 0; j < size; j++) {
-        append(rowA, 1.0) 
-        append(rowB, 2.0)
+init_window(WIDTH, HEIGHT, TITLE)
+init_audio_device()
+
+# Load Assets
+# Note: Paths are relative to where you run the binary from (project root)
+let FONT_L = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 60)
+let FONT_S = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 30)
+
+
+
+let IMG_PLAY = load_image("musicplayer/assets/icons8-play-64.png")
+let TEX_PLAY = load_texture_from_image(IMG_PLAY)
+unload_image(IMG_PLAY)
+
+let IMG_PAUSE = load_image("musicplayer/assets/icons8-pause-50.png")
+let TEX_PAUSE = load_texture_from_image(IMG_PAUSE)
+unload_image(IMG_PAUSE)
+
+let IMG_NEXT = load_image("musicplayer/assets/icons8-forward-50_arrow.png")
+let TEX_NEXT = load_texture_from_image(IMG_NEXT)
+unload_image(IMG_NEXT)
+
+# let TEX_BG = load_texture("musicplayer/assets/neon.jpg")
+
+# Playlist
+let songs = ["musicplayer/songs/TheFatRat - Jackpot (Jackpot EP Track 1)-(134k).mp3", "musicplayer/songs/TheFatRat - Rise Up-(133k).mp3", "musicplayer/songs/TheFatRat & Anjulie - Close To The Sun-(136k).mp3", "musicplayer/songs/TheFatRat & Cecilia Gault - Escaping Gravity [Chapter 3]-(134k).mp3", "musicplayer/songs/The Pointer Sisters - Hot Together (Official Audio)-(130k).mp3", "musicplayer/songs/Hozier - Too Sweet (Official Video)-(131k).mp3", "musicplayer/songs/Alphaville - Forever Young (Official Music Video)-(129k).mp3", "musicplayer/songs/Max Raabe - We Will Rock You-(134k).mp3", "musicplayer/songs/Sunflower - Spider-Man_ Into the Spider-Verse_spotdown.org.mp3", "musicplayer/songs/Tears For Fears - Everybody Wants To Rule The World (Official Music Video)-(132k).mp3", "musicplayer/songs/The Score - Unstoppable (Lyric Video)-(129k).mp3", "musicplayer/songs/Tip Toe.mp3", "musicplayer/songs/yung kai - blue (official audio)-(141k).mp3"]
+let song_names = ["Jackpot - TheFatRat", "Rise Up - TheFatRat", "Close To The Sun - TheFatRat & Anjulie", "Escaping Gravity - TheFatRat & Cecilia Gault", "Hot Together - The Pointer Sisters", "Too Sweet - Hozier", "Forever Young - Alphaville", "We Will Rock You - Max Raabe", "Sunflower - Spider-Man", "Everybody Wants To Rule The World - Tears For Fears", "Unstoppable - The Score", "Tip Toe", "Blue - yung kai"]
+
+let current_song_index = 0
+let current_music = load_music_stream(songs[current_song_index])
+play_music_stream(current_music)
+let current_cover = load_music_cover(songs[current_song_index])
+
+let is_playing = 1
+
+
+# UI State
+let seek_drag = 0
+
+# Animation State for Retro BG
+let time = 0.0
+
+while (window_open()) {
+    update_music_stream(current_music)
+    let dt = get_delta_time()
+    
+    # Auto loop / Next
+    let length = get_music_time_length(current_music)
+    let played = get_music_time_played(current_music)
+    
+    if (length > 0) {
+        if (played >= length - 0.1) {
+            # Next song
+            stop_music_stream(current_music)
+            unload_music_stream(current_music)
+            if (current_cover >= 0) { unload_texture(current_cover) }
+            
+            current_song_index = current_song_index + 1
+            if (current_song_index >= len(songs)) {
+                current_song_index = 0
+            }
+            current_music = load_music_stream(songs[current_song_index])
+            play_music_stream(current_music)
+            is_playing = 1
+            current_cover = load_music_cover(songs[current_song_index])
+        }
     }
-    append(A, rowA)
-    append(B, rowB)
+
+    
+
+    begin_drawing()
+    clear_background(0)
+    
+    # Retro Neon Background
+    time = time + 0.02
+    
+    # Aesthetic: Cool Spectrum (No Red/Yellow/Green)
+    # Independent ranges for each corner to prevent wrapping into warm colors
+    
+    # Bottom-Left (Pink/Purple Side): Range [260, 320]
+    let h_bl = 290.0 + sin(time * 0.5) * 30.0 
+    
+    # Top-Right (Cyan/Blue Side): Range [180, 240]
+    let h_tr = 210.0 + cos(time * 0.7) * 30.0 
+    
+    # Mid (Bridge): Average of the two
+    let h_mid = (h_bl + h_tr) / 2.0
+    
+    # Lightness Pulse
+    let light_pulse = 0.5 + sin(time * 1.0) * 0.1
+    
+    let pink_col = hsl(h_bl, 1.0, light_pulse)          # Bottom-Left
+    let purple_col = hsl(h_mid, 1.0, light_pulse - 0.1) # Mid (Darker)
+    let green_col = hsl(h_tr, 1.0, light_pulse)         # Top-Right (Cyan/Blue)
+    
+    # 1. Full Screen Gradient (Pink/Purple/Green)
+    # x, y, w, h, tl, bl, br, tr
+    # TL=Purple, BL=Pink, BR=Purple, TR=Green
+    draw_gradient_ex(0, 0, WIDTH, HEIGHT, purple_col, pink_col, purple_col, green_col)
+    
+    # 2. Sun (Outrun Style - Cool Palette)
+    let sun_y = HEIGHT/2 - 50
+    draw_circle(WIDTH/2, sun_y, 80, [255, 20, 147, 255]) # Deep Pink Sun
+    draw_circle(WIDTH/2, sun_y, 70, [255, 192, 203, 255]) # Light Pink Core (No Orange)
+    
+    # 3. Grid Floor (Perspective)
+    
+    # Vertical Lines (Perspective Fan) - Cyan for contrast
+    let cx = WIDTH / 2
+    let horizon_y = HEIGHT / 2
+    
+    # Pulsing Grid
+    let grid_alpha = to_int(100 + sin(time * 1.0) * 80)
+    let grid_color = [0, 255, 255, grid_alpha] # Cyan Grid
+    
+    let i = -10
+    while (i <= 10) {
+        let x_off = i * 150
+        # Line from center vanishing point to bottom
+        draw_line(cx, horizon_y, cx + x_off * 4, HEIGHT, 2, grid_color)
+        i = i + 1
+    }
+    
+    # Horizontal Lines (Moving forward)
+    # Standard Perspective Projection: Y = Horizon + (Scale / Z)
+    # We move Z towards the camera (decreasing Z) to simulate forward motion.
+    
+    let speed = 4.0
+    # Use fract() for reliable 0.0-1.0 wrapping
+    let scroll_offset = fract(time * speed)
+    
+    let k = 0.0
+    let max_lines = 20.0
+    while (k < max_lines) {
+        # z moves from Far (large) to Near (small)
+        # distance Z = index + (1.0 - scroll_offset)
+        # So as scroll_offset goes 0->1, Z goes index+1 -> index. (Getting closer)
+        
+        let z_depth = (k + 1.0) - scroll_offset
+        
+        # Avoid division by zero close to camera
+        if (z_depth < 0.1) { z_depth = 0.1 }
+        
+        # Project to Screen Y offset
+        # Scale factor determines field of view / density
+        let projection_scale = 300.0
+        let y_off = projection_scale / z_depth
+        
+        let line_y = horizon_y + y_off
+        
+        # Only draw if on screen
+        if (line_y < HEIGHT) {
+             draw_line(0, line_y, WIDTH, line_y, 2, grid_color)
+        }
+        
+        k = k + 1.0
+    }
+    
+    # Horizon Line
+    draw_line(0, horizon_y, WIDTH, horizon_y, 3, [0, 255, 255, 255]) # Cyan Horizon
+    
+    # Draw overlay to darken bg
+    draw_rectangle(0, 0, WIDTH, HEIGHT, 0, 0, 0, 150)
+
+    # Title
+    # measure_text(fontID, text, fontSize, spacing)
+    # FONT_L is our large font ID. Spacing = 2.
+    # Title (Moved Up)
+    let title_y = 40
+    let raw_title = song_names[current_song_index]
+    let max_title_w = WIDTH - 40
+    let display_title = raw_title
+    if (measure_text(FONT_L, raw_title, 60, 2) > max_title_w) {
+        let trimmed = raw_title
+        while (measure_text(FONT_L, trimmed + "...", 60, 2) > max_title_w) {
+            trimmed = substring(trimmed, 0, len(trimmed) - 1)
+        }
+        display_title = trimmed + "..."
+    }
+    let title_w = measure_text(FONT_L, display_title, 60, 2)
+    # Draw Shadow
+    draw_text(FONT_L, display_title, WIDTH/2 - title_w/2 + 2, title_y + 2, 60, 2, [0, 0, 0, 255])
+    # Draw Text
+    draw_text(FONT_L, display_title, WIDTH/2 - title_w/2, title_y, 60, 2, [255, 255, 255, 255])
+
+    # Album Art
+    if (current_cover >= 0) {
+        # Draw Cover Centered (Fit within 300x300, preserve aspect ratio)
+        let cov_w = get_texture_width(current_cover)
+        let cov_h = get_texture_height(current_cover)
+        let max_size = 300
+        
+        let dest_w = max_size
+        let dest_h = max_size
+        
+        # Calculate Aspect Ratio
+        if (cov_w > cov_h) {
+             # Landscape
+             dest_h = max_size * (cov_h / cov_w)
+        } else {
+             # Portrait or Square
+             dest_w = max_size * (cov_w / cov_h)
+        }
+        
+        # Center in the 300x300 box at (WIDTH/2, 250)
+        let box_cx = WIDTH/2
+        let box_cy = 250
+        
+        let draw_x = box_cx - dest_w/2
+        let draw_y = box_cy - dest_h/2
+        
+        # Draw with texture pro
+        draw_texture_pro(current_cover, [0, 0, cov_w, cov_h], [draw_x, draw_y, dest_w, dest_h], [0, 0], 0, [255, 255, 255, 255])
+        
+        # Border
+        draw_rectangle_lines(draw_x, draw_y, dest_w, dest_h, [200, 200, 200, 255])
+    }
+    # Progress Bar
+    let bar_x = 100
+    let bar_y = 450
+    let bar_w = 600
+    let bar_h = 10
+    
+    draw_rectangle(bar_x, bar_y, bar_w, bar_h, 255, 255, 255, 50) # BG
+    
+    let progress = 0.0
+    if (length > 0) {
+        progress = played / length
+    }
+    draw_rectangle(bar_x, bar_y, bar_w * progress, bar_h, 255, 0, 100, 255) # Fill
+    draw_circle(bar_x + bar_w * progress, bar_y + 5, 8, [255, 255, 255, 255]) # Knob
+
+    # Time Display (Manual MM:SS formatting since we lack string format)
+    if (length > 0) {
+        let cur_m = to_int(played / 60)
+        let cur_s = to_int(played - (cur_m * 60))
+        let tot_m = to_int(length / 60)
+        let tot_s = to_int(length - (tot_m * 60))
+        
+        # Build string manually
+        let s_cur = to_string(cur_m) + ":" + pad_left(to_string(cur_s), 2, "0")
+        let s_tot = to_string(tot_m) + ":" + pad_left(to_string(tot_s), 2, "0")
+        let time_str = s_cur + " / " + s_tot
+        
+        # Center the time string relative to the bar? 
+        # Or just center it on screen below the bar? 
+        # let's center it below the bar.
+        # measure_text(fontID, text, fontSize, spacing)
+        let time_w = measure_text(FONT_S, time_str, 30, 2)
+        draw_text(FONT_S, time_str, WIDTH/2 - time_w/2, bar_y + 20, 30, 2, [200, 200, 200, 255])
+    }
+
+    # Seek Logic
+    let mouse = get_mouse_position()
+    let mouse_x = mouse[0]
+    let mouse_y = mouse[1]
+    
+    let hit_bar = check_collision_point_rec([mouse_x, mouse_y], [bar_x - 10, bar_y - 10, bar_w + 20, bar_h + 20])
+    
+    if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+        if (hit_bar) {
+            seek_drag = 1
+        }
+    }
+    
+    if (hit_bar && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+         let pct = (mouse_x - bar_x) / bar_w
+         if (pct < 0) { pct = 0 }
+         if (pct > 1) { pct = 1 }
+         seek_music_stream(current_music, length * pct)
+    }
+
+    # Controls
+    let btn_y = 500
+    
+    # Play/Pause
+    let btn_center_x = WIDTH/2
+    let btn_center_y = 532 
+    let target_size = 60
+    
+    if (is_playing) {
+        let pw = get_texture_width(TEX_PAUSE)
+        let ph = get_texture_height(TEX_PAUSE)
+        draw_texture_pro(TEX_PAUSE, [0, 0, pw, ph], [btn_center_x - target_size/2, btn_center_y - target_size/2, target_size, target_size], [0, 0], 0, [255, 255, 255, 255])
+    } else {
+        let pl_w = get_texture_width(TEX_PLAY)
+        let pl_h = get_texture_height(TEX_PLAY)
+        draw_texture_pro(TEX_PLAY, [0, 0, pl_w, pl_h], [btn_center_x - target_size/2, btn_center_y - target_size/2, target_size, target_size], [0, 0], 0, [255, 255, 255, 255])
+    }
+    
+    let play_btn_x = btn_center_x - target_size/2
+    let play_btn_y = btn_center_y - target_size/2
+    
+    if (check_collision_point_rec(mouse, [play_btn_x, play_btn_y, target_size, target_size])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+            if (is_playing) {
+                is_playing = 0
+                stop_music_stream(current_music) 
+            } else {
+                is_playing = 1
+                play_music_stream(current_music)
+            }
+        }
+    }
+
+    # Next
+    let next_x = WIDTH/2 + 60
+    draw_texture(TEX_NEXT, next_x, btn_y + 5)
+    
+    if (check_collision_point_rec(mouse, [next_x, btn_y, 50, 50])) {
+        if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+             stop_music_stream(current_music)
+             unload_music_stream(current_music)
+             if (current_cover >= 0) { unload_texture(current_cover) }
+             
+             current_song_index = current_song_index + 1
+             if (current_song_index >= len(songs)) {
+                 current_song_index = 0
+             }
+             current_music = load_music_stream(songs[current_song_index])
+             play_music_stream(current_music)
+             is_playing = 1
+             current_cover = load_music_cover(songs[current_song_index])
+        }
+    }
+    
+    # Previous (Reuse Next texture flipped via negative width)
+    let prev_x = WIDTH/2 - 110
+    # draw_texture_pro: id, src_rect, dest_rect, origin, rotation, tint
+    # Source Rect: x=0, y=0, w=-tex_w (FLIP), h=tex_h
+    let tex_next_w = get_texture_width(TEX_NEXT)
+    let tex_next_h = get_texture_height(TEX_NEXT)
+    
+    draw_texture_pro(TEX_NEXT, [0, 0, -tex_next_w, tex_next_h], [prev_x, btn_y + 5, 50, 50], [0, 0], 0, [255, 255, 255, 255])
+    
+    if (check_collision_point_rec(mouse, [prev_x, btn_y, 50, 50])) {
+         if (is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+             stop_music_stream(current_music)
+             unload_music_stream(current_music)
+             if (current_cover >= 0) { unload_texture(current_cover) }
+             
+             current_song_index = current_song_index - 1
+             if (current_song_index < 0) {
+                 current_song_index = len(songs) - 1
+             }
+             current_music = load_music_stream(songs[current_song_index])
+             play_music_stream(current_music)
+             is_playing = 1
+             current_cover = load_music_cover(songs[current_song_index])
+        }
+    }
+
+
+
+    end_drawing()
 }
 
-
-let start = clock()
-let C = mat_mul(A, B)
-let end = clock()
-
-print("Matrix Multiplication took:", end - start, "seconds")
-
-print("Verification - Result[0][0]:", C[0][0])
+close_audio_device()
+close_window()
 
