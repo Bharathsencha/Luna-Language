@@ -15,7 +15,8 @@ SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
        src/interpreter.c src/value.c src/main.c src/math_lib.c \
        src/string_lib.c src/error.c src/time_lib.c src/vec_lib.c \
        src/env.c src/library.c src/file_lib.c src/list_lib.c \
-       src/sand_lib.c src/arena.c src/intern.c gui/gui_lib.c
+       src/sand_lib.c src/arena.c src/intern.c gui/gui_lib.c \
+       gui/gl_backend.c gui/audio_backend.c
 
 # Object files
 OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
@@ -25,7 +26,8 @@ OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
        $(OBJDIR)/time.o $(OBJDIR)/vec_lib.o \
        $(OBJDIR)/env.o $(OBJDIR)/library.o $(OBJDIR)/file_lib.o \
        $(OBJDIR)/list_lib.o $(OBJDIR)/sand_lib.o $(OBJDIR)/arena.o \
-       $(OBJDIR)/intern.o $(OBJDIR)/gui_lib.o
+       $(OBJDIR)/intern.o $(OBJDIR)/gui_lib.o \
+       $(OBJDIR)/gl_backend.o $(OBJDIR)/audio_backend.o
 
 all: $(BINDIR)/$(TARGET)
 
@@ -37,16 +39,22 @@ $(BINDIR):
 	mkdir -p $(BINDIR)
 
 # Link the main interpreter
-# Added -Llib to look for libraylib.a and system graphics dependencies
+# Uses GLFW (static) + OpenGL + miniaudio
 $(BINDIR)/$(TARGET): $(OBJS) | $(BINDIR)
-	$(CC) $(CFLAGS) -o $@ $^ -Llib -lraylib -lGL -lm -lpthread -ldl -lrt -lX11 -z noexecstack -fopenmp
+	$(CC) $(CFLAGS) -o $@ $^ -Llib -lglfw3 -lGL -lm -lpthread -ldl -lrt -lX11 -z noexecstack -fopenmp
 
 # Compile source files from src/
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Rule to compile source files from gui/
+# Rules to compile source files from gui/
 $(OBJDIR)/gui_lib.o: gui/gui_lib.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/gl_backend.o: gui/gl_backend.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/audio_backend.o: gui/audio_backend.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Compile assembly files
@@ -64,8 +72,8 @@ check-deps:
 	@echo "Checking dependencies for Luna..."
 	@command -v gcc >/dev/null 2>&1 || echo "[ERROR] gcc not found"
 	@command -v nasm >/dev/null 2>&1 || echo "[ERROR] nasm not found"
-	@if [ -f "lib/libraylib.a" ]; then echo "[OK] libraylib.a found"; else echo "[ERROR] libraylib.a missing in lib/"; fi
-	@if [ -f "include/raylib.h" ]; then echo "[OK] raylib.h found"; else echo "[ERROR] raylib.h missing in include/"; fi
+	@if [ -f "lib/libglfw3.a" ]; then echo "[OK] libglfw3.a found"; else echo "[ERROR] libglfw3.a missing in lib/"; fi
+	@if [ -f "include/glfw3.h" ]; then echo "[OK] glfw3.h found"; else echo "[ERROR] glfw3.h missing in include/"; fi
 
 # Helper for Linux Mint/Ubuntu to install system graphics libs
 setup-ubuntu:

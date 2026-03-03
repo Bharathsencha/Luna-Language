@@ -57,10 +57,37 @@ Luna exposes powerful C-implemented functionality to scripts through a standardi
 
 ## 3. Graphics & Multimedia (The GUI Layer)
 
-The `gui/` directory integrates the **Raylib** library directly into Luna, transforming it into a creative coding platform.
+The `gui/` directory implements Luna's own rendering and audio backends, transforming it into a creative coding platform. Luna originally used **Raylib** for graphics but has since replaced it with a custom OpenGL 3.3 + GLFW backend and a miniaudio-based audio backend, removing the Raylib dependency entirely.
 
-- **gui/gui_lib.c / gui_lib.h**: Implements a vast array of graphics functions (rectangles, circles, textures, custom shaders), audio management (music streams, sound effects, real-time FFT frequency analysis), and hardware input (mouse, keyboard, gamepads).
-- **include/raylib.h, include/raymath.h, include/rlgl.h**: The standard Raylib headers provided as the foundation for the graphics backend.
+### Rendering Backend
+
+- **gui/gl_backend.h / gl_backend.c**: Luna's custom OpenGL 3.3 Core Profile renderer built on top of **GLFW** for window/input management. It implements:
+  - A high-throughput **batch quad renderer** (VBO + VAO, up to 65,536 vertices per batch) with automatic flushing.
+  - Embedded GLSL 330 vertex and fragment shaders compiled at runtime.
+  - Shape drawing: filled/outlined rectangles (with optional corner rounding via triangle fans), circles, lines, and 4-corner gradient rectangles.
+  - Texture loading via [stb_image](https://github.com/nothings/stb/blob/master/stb_image.h) (single-header, public domain).
+  - Font rendering via [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h) (single-header, public domain) with a baked font atlas and GL_TEXTURE_SWIZZLE for alpha-only rendering. Falls back to a system default font if none is specified.
+  - Off-screen rendering via OpenGL Framebuffer Objects (FBOs) for render-to-texture workflows.
+  - Screenshot capture via [stb_image_write](https://github.com/nothings/stb/blob/master/stb_image_write.h) (single-header, public domain) with `glReadPixels`.
+  - 2D camera transforms (offset, target, rotation, zoom) applied as a model-view matrix.
+  - Keyboard and mouse input mapped through GLFW callbacks with key-repeat and scroll support.
+
+- **include/glfw3.h / lib/libglfw3.a**: [GLFW 3.3.10](https://github.com/glfw/glfw/releases/tag/3.3.10) built from source as a **static library**, so users have zero runtime dependencies beyond system OpenGL and X11.
+- **gui/stb_image.h, gui/stb_truetype.h, gui/stb_image_write.h**: Single-header libraries from the [stb collection](https://github.com/nothings/stb) by Sean Barrett. Vendored directly into the repository — no install step needed.
+
+### Audio Backend
+
+- **gui/audio_backend.h / audio_backend.c**: Luna's audio system built on [miniaudio](https://github.com/mackron/miniaudio) (single-header, public domain). It provides:
+  - Music streaming (`MA_SOUND_FLAG_STREAM`) with play, pause, resume, seek, and duration queries.
+  - One-shot sound effects (`MA_SOUND_FLAG_DECODE`) loaded entirely into memory.
+  - A PCM ring-buffer capture node for real-time FFT frequency analysis, used by Luna's `get_music_fft()` visualizer function.
+  - Decoder-based time length queries for formats supported by miniaudio (MP3, WAV, FLAC, etc.).
+
+- **gui/miniaudio.h**: [miniaudio v0.11](https://github.com/mackron/miniaudio) by David Reid. Single-header audio library vendored directly into the repository.
+
+### GUI Bridge
+
+- **gui/gui_lib.c / gui_lib.h**: The bridge between Luna scripts and the C backends. Every Luna GUI function (e.g., `init_window`, `draw_rectangle`, `load_texture`, `play_music_stream`) is implemented here by converting Luna `Value` types into native calls to `gl_*` and `audio_*` functions. It also manages ID-based pools for textures, fonts, music streams, sounds, images, and render textures.
 
 ---
 

@@ -1,97 +1,66 @@
 # Luna Installation & Setup Guide 
 
-This document provides step-by-step instructions for setting up the Luna development environment, including its core dependencies and the graphics backend.
+This document provides step-by-step instructions for setting up the Luna development environment.
 
 ---
 
 ## 1. Core Build Tools
 
-Luna requires a standard C/C++ build stack:
+Luna requires a standard C build stack:
 
 ```bash
 sudo apt update
-sudo apt install gcc build-essential git cmake pkg-config
+sudo apt install gcc build-essential git cmake nasm
 ```
 
+## 2. Graphics Dependencies
 
-
-## 3. Raylib Setup Guide
-
-The `fun/` demos and GUI features require **Raylib**. Follow these steps to build and install it from source.
-
-### A. Install Graphics Dependencies
+Luna uses its own OpenGL 3.3 rendering backend with a **statically linked** GLFW library (already vendored in `lib/libglfw3.a`). You only need the system-level graphics headers and X11 development libraries:
 
 ```bash
-sudo apt install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev
-sudo apt install libgl1-mesa-dev libglu1-mesa-dev
+sudo apt install libx11-dev libgl1-mesa-dev
 ```
 
-### B. Download Raylib
+> **Note:** Luna previously used Raylib as its graphics backend. That dependency has been fully removed and replaced with a custom OpenGL + GLFW backend. You do **not** need to install Raylib.
 
-```bash
-git clone https://github.com/raysan5/raylib.git
-cd raylib
-```
+### Vendored Libraries 
 
-### C. Build and Install
+The following single-header libraries are already included in the `gui/` directory — no download or install is required:
 
-```bash
-mkdir build && cd build
-cmake .. -DBUILD_SHARED_LIBS=ON
-make -j$(nproc)
-sudo make install
-```
-
-This installs raylib into `/usr/local/lib`.
-
-### D. Configure Library Path
-
-```bash
-echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/raylib.conf
-sudo ldconfig
-```
-
-> [!NOTE]
-> It is recommended to restart your system or log out/in to ensure the library path changes take effect.
+| Library | File | Source | Purpose |
+| :--- | :--- | :--- | :--- |
+| **GLFW 3.3.10** | `lib/libglfw3.a`, `include/glfw3.h` | [github.com/glfw/glfw](https://github.com/glfw/glfw/releases/tag/3.3.10) | Window creation, OpenGL context, input handling |
+| **stb_image** | `gui/stb_image.h` | [github.com/nothings/stb](https://github.com/nothings/stb/blob/master/stb_image.h) | Image loading (PNG, JPG, BMP, etc.) |
+| **stb_truetype** | `gui/stb_truetype.h` | [github.com/nothings/stb](https://github.com/nothings/stb/blob/master/stb_truetype.h) | TrueType font rasterization |
+| **stb_image_write** | `gui/stb_image_write.h` | [github.com/nothings/stb](https://github.com/nothings/stb/blob/master/stb_image_write.h) | Screenshot saving (PNG) |
+| **miniaudio** | `gui/miniaudio.h` | [github.com/mackron/miniaudio](https://github.com/mackron/miniaudio) | Audio playback, streaming, PCM capture |
 
 ---
 
-## 4. Building Luna
+## 3. Building Luna
 
-Once all dependencies are installed, clone the Luna repository and run:
+Once the core build tools and graphics dependencies are installed, clone the Luna repository and run:
 
 ```bash
 make
 ```
 
+The Makefile automatically uses parallel compilation (`-j$(nproc)`) and links against the vendored static GLFW library plus system OpenGL, X11, pthreads, and libdl.
+
 ---
 
-## 5. Verification: Test Raylib
+## 4. Verification
 
-To verify that Raylib is correctly installed and linkable, you can compile this minimal C program:
+Run the core test suite to verify the interpreter works:
 
-**main.c**
-```c
-#include "raylib.h"
-
-int main(void) {
-    InitWindow(800, 450, "Hello Raylib!");
-    SetTargetFPS(60);
-
-    while (!WindowShouldClose()) {
-        BeginDrawing();
-        ClearBackground(RAYWHITE);
-        DrawText("Raylib is working!", 190, 200, 20, LIGHTGRAY);
-        EndDrawing();
-    }
-
-    CloseWindow();
-    return 0;
-}
-```
-
-**Compile & Run:**
 ```bash
-gcc main.c -o main -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
-./main
+bin/luna test/test_core.lu
 ```
+
+To verify that the graphics backend works, run one of the demo scripts:
+
+```bash
+bin/luna fun/meadow.lu
+```
+
+A window should open with an animated scene. Press Escape or close the window to exit.
