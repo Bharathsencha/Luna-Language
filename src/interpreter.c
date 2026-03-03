@@ -880,5 +880,21 @@ Value interpret(AstNode *prog, Env *env) {
     } else {
         exec_stmt(env, prog);
     }
+
+    // Auto-call main() if defined and takes no arguments
+    AstNode *main_fn = env_get_func(env, "main");
+    if (main_fn && main_fn->funcdef.param_count == 0) {
+        Env *scope = env_create(env);
+        for (int i = 0; i < main_fn->funcdef.body.count; i++) {
+            exec_stmt(scope, main_fn->funcdef.body.items[i]);
+            if (return_exception.active) break;
+        }
+        if (return_exception.active) {
+            value_free(return_exception.value);
+            return_exception.active = 0;
+        }
+        env_free(scope);
+    }
+
     return value_null();
 }
