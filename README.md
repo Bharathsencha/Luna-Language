@@ -14,8 +14,7 @@ The project explores the boundary between high-level scripting ease (JavaScript-
 
 - **High-Performance Runtime**: SIMD-accelerated math, constant-time environment lookups, and O(1) string interning.
 - **Modern Syntax**: JavaScript-inspired syntax for ease of use.
-- **Creative Coding**: Direct bindings for Raylib for 2D/3D graphics, audio, and UI development.
-- **Self-Hosting**: Includes a bootstrap interpreter and transpiler written in Luna itself.(Removed).
+- **Creative Coding**:New GUI based on OpenGL, [Mini Audio](https://github.com/mackron/miniaudio) and [STB](https://github.com/nothings/stb).
 
 ---
 
