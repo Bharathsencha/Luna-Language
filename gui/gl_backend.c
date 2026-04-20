@@ -9,6 +9,7 @@
 #include <GLFW/glfw3.h>
 
 #include "gl_backend.h"
+#include "gl_backend_3d.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -28,7 +29,7 @@
 // INTERNAL STATE
 
 static GLFWwindow *g_window = NULL;
-static int g_win_w = 800, g_win_h = 600;
+int g_win_w = 800, g_win_h = 600;
 static int g_target_fps = 60;
 static double g_frame_time = 0.0;
 static double g_last_time = 0.0;
@@ -597,6 +598,9 @@ int gl_init_window(int w, int h, const char *title) {
     // Load default font
     load_default_font();
 
+    // Initialize 3D backend
+    gl3d_init();
+
     return 0;
 }
 
@@ -645,6 +649,9 @@ void gl_close_window(void) {
     g_image_count = 0;
     g_default_font_loaded = 0;
     g_default_font.active = 0;
+
+    // Shutdown 3D backend
+    gl3d_shutdown();
 }
 
 void gl_set_target_fps(int fps) {

@@ -66,16 +66,9 @@ Value lib_str_concat(int argc, Value *argv, Env *env) {
     
     size_t len1 = strlen(s1);
     size_t len2 = strlen(s2);
-    
-    char *res = malloc(len1 + len2 + 1);
-    strcpy(res, s1);
-    strcat(res, s2);
-    
+    Value v = value_string_concat_raw(s1, len1, s2, len2);
     free(s1);
     free(s2);
-    
-    Value v = value_string(res);
-    free(res); // value_string makes a copy
     return v;
 }
 
@@ -380,15 +373,7 @@ Value lib_str_repeat(int argc, Value *argv, Env *env) {
     if (!s || count <= 0) return value_string("");
 
     size_t len = strlen(s);
-    char *res = malloc(len * count + 1);
-    res[0] = '\0';
-
-    for (int i = 0; i < count; i++) {
-        strcat(res, s); // Slightly inefficient but safe.
-    }
-    Value v = value_string(res);
-    free(res);
-    return v;
+    return value_string_repeat_raw(s, len, (size_t)count);
 }
 
 Value lib_str_pad_left(int argc, Value *argv, Env *env) {
@@ -436,6 +421,58 @@ Value lib_str_pad_right(int argc, Value *argv, Env *env) {
 
     Value v = value_string(res);
     free(res);
+    return v;
+}
+
+Value lib_str_format(int argc, Value *argv, Env *env) {
+    if (argc < 1 || argv[0].type != VAL_STRING || !argv[0].string) {
+        error_report(ERR_ARGUMENT, 0, 0, "format() expects a template string", "Usage: format(\"Hello {}\", name)");
+        return value_null();
+    }
+
+    const char *tmpl = argv[0].string->chars;
+    size_t total_len = 0;
+    int arg_index = 1;
+
+    for (const char *p = tmpl; *p; p++) {
+        if (p[0] == '{' && p[1] == '}') {
+            if (arg_index < argc) {
+                char *tmp = value_to_string(argv[arg_index++]);
+                total_len += strlen(tmp);
+                free(tmp);
+            } else {
+                total_len += 2;
+            }
+            p++;
+        } else {
+            total_len++;
+        }
+    }
+
+    char *out = malloc(total_len + 1);
+    char *dst = out;
+    arg_index = 1;
+    for (const char *p = tmpl; *p; p++) {
+        if (p[0] == '{' && p[1] == '}') {
+            if (arg_index < argc) {
+                char *tmp = value_to_string(argv[arg_index++]);
+                size_t len = strlen(tmp);
+                memcpy(dst, tmp, len);
+                dst += len;
+                free(tmp);
+            } else {
+                *dst++ = '{';
+                *dst++ = '}';
+            }
+            p++;
+        } else {
+            *dst++ = *p;
+        }
+    }
+    *dst = '\0';
+
+    Value v = value_string(out);
+    free(out);
     return v;
 }
 

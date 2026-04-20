@@ -10,8 +10,14 @@
 struct Env;
 
 Value lib_list_sort(int argc, Value *argv, struct Env *env);
+Value lib_list_ssort(int argc, Value *argv, struct Env *env);
 Value lib_list_shuffle(int argc, Value *argv, struct Env *env);
 Value lib_list_append(int argc, Value *argv, struct Env *env);
+Value lib_list_remove(int argc, Value *argv, struct Env *env);
+Value lib_list_find(int argc, Value *argv, struct Env *env);
+Value lib_list_map(int argc, Value *argv, struct Env *env);
+Value lib_list_filter(int argc, Value *argv, struct Env *env);
+Value lib_list_reduce(int argc, Value *argv, struct Env *env);
 Value lib_dense_list(int argc, Value *argv, struct Env *env);
 
 #endif

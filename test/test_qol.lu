@@ -1,0 +1,178 @@
+print("=== Running QoL Tests ===")
+
+import "test/util.lu"
+assert(util_ping() == "util-ok")
+assert(util_module_loaded == "module-loaded")
+
+use {util_greet, util_answer} from "test/util.lu"
+assert(util_answer == 42)
+assert(util_greet("Luna") == "Hello Luna from util")
+
+let l = [1, 2, 3]
+l[-1] = 99
+l[-2] = 88
+assert(l[2] == 99)
+assert(l[1] == 88)
+assert(l[-1] == 99)
+assert(l[-2] == 88)
+
+let x = 10
+x += 5
+x -= 3
+x *= 2
+x /= 4
+assert(x == 6)
+
+let arr = [10, 20, 30]
+arr[0] += 5
+arr[-1] *= 2
+assert(arr[0] == 15)
+assert(arr[2] == 60)
+
+let dl = dense_list(5, 1.0)
+dl[-1] = 5.5
+dl[0] += 10
+assert(dl[-1] == 5.5)
+assert(dl[0] == 11.0)
+
+let branch = 0
+if (false) {
+    branch = -1
+} else if (true) {
+    branch = 42
+} else {
+    branch = -2
+}
+assert(branch == 42)
+
+assert(l[-1] == 99)
+
+func greet(name, greeting = "Hello") {
+    return greeting + ", " + name
+}
+assert(greet("Luna") == "Hello, Luna")
+assert(greet("Luna", "Hi") == "Hi, Luna")
+
+let sum = 0
+for (let item in [1, 2, 3, 4]) {
+    sum += item
+}
+assert(sum == 10)
+
+let steps = range(0, 6, 2)
+assert(len(steps) == 3)
+assert(steps[0] == 0)
+assert(steps[1] == 2)
+assert(steps[2] == 4)
+
+let back = range(5, -1, -2)
+assert(len(back) == 3)
+assert(back[0] == 5)
+assert(back[1] == 3)
+assert(back[2] == 1)
+
+let word = "Luna"
+assert(word[0] == 'L')
+assert(word[-1] == 'a')
+
+const version = "0.1"
+assert(version == "0.1")
+
+let nums = [4, 8, 15, 16]
+assert(find(nums, 15) == 2)
+assert(find(nums, 99) == -1)
+assert(slice(nums, 1, 3)[0] == 8)
+assert(remove(nums, -1) == 16)
+assert(len(nums) == 3)
+
+let seen = debug(version)
+assert(seen == "0.1")
+
+// fixed it now it will work.
+assert(format("Hello {}, you are {}", "Luna", 2) == "Hello Luna, you are 2")
+
+let player = {"name": "Astra", "hp": 100, "zone": "forest"}
+assert(type(player) == "map")
+assert(len(player) == 3)
+assert(map_get(player, "name") == "Astra")
+assert(map_has(player, "hp") == true)
+map_set(player, "hp", 125)
+map_set(player, "mana", 40)
+assert(map_get(player, "hp") == 125)
+assert(map_get(player, "mana") == 40)
+assert(len(player) == 4)
+let player_keys = map_keys(player)
+assert(find(player_keys, "name") >= 0)
+assert(find(player_keys, "mana") >= 0)
+let player_values = map_values(player)
+assert(find(player_values, "Astra") >= 0)
+assert(find(player_values, 125) >= 0)
+let player_items = map_items(player)
+assert(len(player_items) == 4)
+let item_names = []
+for (let pair in player_items) {
+    append(item_names, pair[0])
+}
+assert(find(item_names, "name") >= 0)
+assert(find(item_names, "mana") >= 0)
+assert(map_delete(player, "zone") == true)
+assert(map_has(player, "zone") == false)
+assert(len(player) == 3)
+
+func make_counter() {
+    let count = 0
+    return func() {
+        count += 1
+        return count
+    }
+}
+
+let counter = make_counter()
+assert(counter() == 1)
+assert(counter() == 2)
+assert(counter() == 3)
+
+func apply_twice(fn, value) {
+    return fn(fn(value))
+}
+
+let inc = func(x) {
+    return x + 1
+}
+
+assert(apply_twice(inc, 5) == 7)
+
+let numbers2 = [1, 2, 3, 4, 5]
+let doubled = map(numbers2, func(x) {
+    return x * 2
+})
+assert(doubled[0] == 2)
+assert(doubled[4] == 10)
+
+let evens = filter(numbers2, func(x) {
+    return x % 2 == 0
+})
+assert(len(evens) == 2)
+assert(evens[0] == 2)
+assert(evens[1] == 4)
+
+let total2 = reduce(numbers2, func(acc, x) {
+    return acc + x
+}, 0)
+assert(total2 == 15)
+
+let who = "Astra"
+let hp = 125
+let slots = [3, 7, 9]
+assert("pilot {who}" == "pilot Astra")
+assert("next hp = {hp + 1}" == "next hp = 126")
+assert("slot = {slots[1]}" == "slot = 7")
+assert("call = {greet(\"Luna\", \"Hi\")}" == "call = Hi, Luna")
+
+data Vec2 { x, y }
+let point = Vec2(3, 4)
+assert(shape(point) == "Vec2")
+assert(point["x"] == 3)
+assert(point["y"] == 4)
+
+print("All QoL tests passed!")

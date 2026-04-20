@@ -1,0 +1,68 @@
+print("=== Running Data Type Integration Tests ===")
+
+# Data type (map-backed)
+data Vec2 { x, y }
+data Result { ok, value }
+
+let p = Vec2(3, 4)
+assert(shape(p) == "Vec2")
+assert(p["x"] == 3)
+assert(p["y"] == 4)
+
+let r = Result(true, 99)
+assert(shape(r) == "Result")
+assert(r["ok"] == true)
+assert(r["value"] == 99)
+
+# String interpolation with data types
+let label = "point = ({p[\"x\"]}, {p[\"y\"]})"
+assert(contains(label, "3"))
+assert(contains(label, "4"))
+
+# Bloc tests
+bloc Color { r, g, b, a }
+let white = Color{255, 255, 255, 255}
+assert(type(white) == "bloc")
+assert(shape(white) == "Color")
+assert(white.r == 255)
+assert(white.a == 255)
+
+bloc Pair { a, b }
+let pair = Pair{10, 20}
+assert(pair.a == 10)
+assert(pair.b == 20)
+
+let same = Pair{10, 20}
+assert(pair == same)
+assert(pair != Pair{10, 21})
+
+# Box tests
+let buf = box[32]
+assert(type(buf) == "box")
+assert(buf.len == 32)
+assert(buf.cap >= 32)
+free(buf)
+assert(buf.len == 0)
+
+# Template tests
+template Entity { name, hp, tag }
+let e = Entity("Shade", 50, "enemy")
+assert(type(e) == "template")
+assert(shape(e) == "Entity")
+assert(e.name == "Shade")
+assert(e.hp == 50)
+assert(e.tag == "enemy")
+assert(len(e) == 3)
+
+e.hp = 40
+assert(e.hp == 40)
+
+e.hp -= 10
+assert(e.hp == 30)
+
+# String interpolation with template fields
+let status = "Entity {e.name} has {e.hp} hp"
+assert(contains(status, "Shade"))
+assert(contains(status, "30"))
+
+print("All Data Type Integration Tests Passed!")

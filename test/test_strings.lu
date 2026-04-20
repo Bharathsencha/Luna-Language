@@ -34,8 +34,8 @@ assert(starts_with("file.txt", "file") == true)
 assert(ends_with("file.txt", ".txt") == true)
 
 print("Testing split/join...")
-let data = "apple,banana,cherry"
-let list = split(data, ",")
+let csv = "apple,banana,cherry"
+let list = split(csv, ",")
 assert(len(list) == 3)
 assert(list[0] == "apple")
 
@@ -46,5 +46,19 @@ print("Testing conversions...")
 assert(to_int("123") == 123)
 assert(is_digit("123") == true)
 assert(is_alpha("abc") == true)
+assert(format("Hi {}", "Luna") == "Hi Luna")
+
+print("Testing interpolation...")
+let pilot = "Luna"
+let hp = 42
+let items = [7, 11]
+func plus(a, b) {
+    return a + b
+}
+assert("Hello {pilot}" == "Hello Luna")
+assert("hp={hp}" == "hp=42")
+assert("sum={1 + 2}" == "sum=3")
+assert("slot={items[0]}" == "slot=7")
+assert("call={plus(3, 4)}" == "call=7")
 
 print("String Tests Passed!")

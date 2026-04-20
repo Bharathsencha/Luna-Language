@@ -1,0 +1,47 @@
+print("=== Running GC Safety Tests ===")
+
+func make_keeper(base) {
+    let items = []
+    let meta = {"tag": base, "items": items}
+    for (let i = 0; i < 32; i++) {
+        append(items, base + "-" + to_string(i))
+    }
+
+    return func(idx) {
+        return map_get(meta, "tag") + ":" + map_get(meta, "items")[idx]
+    }
+}
+
+let keepers = []
+for (let i = 0; i < 32; i++) {
+    append(keepers, make_keeper("k" + to_string(i)))
+}
+
+let roots = []
+for (let i = 0; i < 16; i++) {
+    let row = []
+    for (let j = 0; j < 8; j++) {
+        append(row, "r" + to_string(i) + "-" + to_string(j))
+    }
+    append(roots, row)
+}
+
+for (let round = 0; round < 80; round++) {
+    let junk = []
+    for (let i = 0; i < 24; i++) {
+        append(junk, repeat("noise", 8) + "-" + to_string(round) + "-" + to_string(i))
+    }
+
+    if (round % 20 == 0) {
+        assert(keepers[0](1) == "k0:k0-1")
+        assert(keepers[16](2) == "k16:k16-2")
+        assert(keepers[31](31) == "k31:k31-31")
+        assert(roots[10][3] == "r10-3")
+        assert(roots[15][7] == "r15-7")
+    }
+}
+
+assert(keepers[5](4) == "k5:k5-4")
+assert(roots[1][1] == "r1-1")
+
+print("GC safety tests passed!")

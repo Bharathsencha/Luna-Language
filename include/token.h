@@ -21,11 +21,15 @@ typedef enum {
 
     // Operators
     T_PLUS,
+    T_PLUS_EQ,
     T_INC,      // ++ 
     T_DEC,      // --
     T_MINUS, 
+    T_MINUS_EQ,
     T_MUL, 
+    T_MUL_EQ,
     T_DIV, 
+    T_DIV_EQ,
     T_MOD,
     T_EQ,       // = (Assignment)
     T_EQEQ,     // ==
@@ -43,6 +47,7 @@ typedef enum {
     T_LBRACKET, 
     T_RBRACKET, //[ ]
     T_COMMA,
+    T_DOT,
     T_SEMICOLON,
     T_NEWLINE,
 
@@ -63,18 +68,36 @@ typedef enum {
     T_COLON,
     T_FOR, 
     T_IN,
+    T_CONST,
+    T_DATA,
+    T_TEMPLATE,
+    T_BLOC,
+    T_BOX,
+    T_USE,
+    T_FROM,
+    T_EXPORT,
+    T_IMPORT,
+    T_UNSAFE,
 
     T_INVALID
 } TokenType;
 
+#define TOKEN_INLINE_MAX 24
+
 typedef struct {
     TokenType type;
-    char *lexeme;
+    char *lexeme;                  // heap-allocated, or NULL if inline
+    char ibuf[TOKEN_INLINE_MAX];   // inline buffer for short lexemes
     long long number;
     double fnumber;
     int line;
     int col;
 } Token;
+
+// Get the lexeme string — works for both inline and heap tokens
+static inline const char *token_str(const Token *t) {
+    return t->lexeme ? t->lexeme : t->ibuf;
+}
 
 // Returns the string representation of a token type
 const char *token_name(TokenType t);

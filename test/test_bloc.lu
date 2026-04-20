@@ -1,0 +1,30 @@
+bloc Vec2 { x, y }
+bloc Rect { min, max }
+bloc Color { r, g, b, a }
+
+let p = Vec2{3, 4}
+let q = Vec2{3, 4}
+let r = Vec2{5, 6}
+
+assert(type(p) == "bloc")
+assert(shape(p) == "Vec2")
+assert(p.x == 3)
+assert(p.y == 4)
+assert(p == q)
+assert(p != r)
+
+let white = Color{255, 255, 255, 255}
+assert(white.r == 255)
+assert(white.g == 255)
+assert(white.b == 255)
+assert(white.a == 255)
+
+let rect = Rect{Vec2{0, 0}, Vec2{10, 20}}
+assert(shape(rect) == "Rect")
+assert(shape(rect.min) == "Vec2")
+assert(rect.min.x == 0)
+assert(rect.min.y == 0)
+assert(rect.max.x == 10)
+assert(rect.max.y == 20)
+
+print("bloc ok")

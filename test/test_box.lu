@@ -1,0 +1,30 @@
+print("=== Running Box Tests ===")
+
+let buf = box[16]
+assert(type(buf) == "box")
+assert(shape(buf) == "box")
+assert(buf.len == 16)
+assert(buf.cap >= 16)
+
+let alias = buf
+assert(alias.len == 16)
+
+free(buf)
+
+assert(alias.len == 0)
+assert(alias.cap == 0)
+
+let tiny = box[1]
+assert(tiny.len == 1)
+free(tiny)
+
+let escaped = null
+if (true) {
+    let scoped = box[8]
+    escaped = scoped
+    assert(escaped.len == 8)
+}
+assert(escaped.len == 0)
+assert(escaped.cap == 0)
+
+print("Box tests passed!")

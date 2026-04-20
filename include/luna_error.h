@@ -11,6 +11,7 @@ extern int luna_had_error;
 // Error types for better categorization
 typedef enum {
     ERR_SYNTAX,
+    ERR_STATIC,
     ERR_RUNTIME,
     ERR_TYPE,
     ERR_NAME,
@@ -25,8 +26,21 @@ typedef struct {
     const char *filename;
 } SourceInfo;
 
+typedef struct {
+    int had_error;
+    ErrorType type;
+    int line;
+    int col;
+    char filename[256];
+    char message[256];
+    char suggestion[256];
+} LunaErrorInfo;
+
 // Initialize the error reporting system with source code
 void error_init(const char *source, const char *filename);
+void error_clear_last(void);
+int error_get_last(LunaErrorInfo *out);
+void error_set_quiet(int quiet);
 
 // Report an error with line/column info and suggestions
 void error_report(ErrorType type, int line, int col, const char *message, const char *suggestion);

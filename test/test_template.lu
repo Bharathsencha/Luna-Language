@@ -1,0 +1,36 @@
+print("=== Running Template Tests ===")
+
+template Person { name, hp, pos }
+template Vec2 { x, y }
+
+let startPos = Vec2(0, 0)
+let p = Person("Hero", 100, startPos)
+
+assert(p.name == "Hero")
+assert(p.hp == 100)
+assert(p.pos.x == 0)
+assert(p.pos.y == 0)
+
+p.hp = 85
+assert(p.hp == 85)
+
+p["name"] = "Champion"
+assert(p.name == "Champion")
+
+p.hp -= 20
+assert(p.hp == 65)
+
+let kept = null
+if (true) {
+    let localBuf = box[8]
+    kept = Person("Carrier", 1, localBuf)
+    assert(kept.pos.len == 8)
+}
+assert(kept.pos.len == 8)
+assert(kept.pos.cap >= 8)
+
+assert(type(p) == "template")
+assert(shape(p) == "Person")
+assert(len(p) == 3)
+
+print("Template tests passed!")

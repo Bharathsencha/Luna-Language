@@ -1,0 +1,11 @@
+export let util_answer = 42
+
+let util_module_loaded = "module-loaded"
+
+func util_ping() {
+    return "util-ok"
+}
+
+export func util_greet(name) {
+    return "Hello {name} from util"
+}

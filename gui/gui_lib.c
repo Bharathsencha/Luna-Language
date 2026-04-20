@@ -56,6 +56,7 @@ static double val_to_double(Value v) {
     return 0.0;
 }
 
+
 // Extract GColor from Luna List [r, g, b, a]
 static GColor val_to_color(Value v) {
     if (v.type != VAL_LIST || v.list->count < 3) return GCOLOR_WHITE;

@@ -4,6 +4,7 @@
 BIN="./bin/luna"
 TEST_DIR="test"
 TEMP_OUT="/tmp/luna_test.out"
+TEMP_CASE="/tmp/luna_test_case.lu"
 
 # Colors for pretty output
 GREEN='\033[0;32m'
@@ -25,6 +26,60 @@ echo "========================================"
 FAILED=0
 PASSED=0
 
+run_luna() {
+    local src="$1"
+    if [[ "$(basename "$src")" == test_gc_* ]]; then
+        env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 "$BIN" "$src"
+    else
+        "$BIN" "$src"
+    fi
+}
+
+run_split_golden_test() {
+    local src="$1"
+    local expect_file="$2"
+    local base_name
+    base_name=$(basename "$src")
+
+    local failed=0
+    local case_name
+    mapfile -t case_names < <(grep '^# CASE ' "$src" | sed 's/^# CASE //')
+
+    for case_name in "${case_names[@]}"; do
+        awk -v case_name="$case_name" '
+            $0 == "# CASE " case_name { capture=1; next }
+            /^# CASE / && capture { exit }
+            capture { print }
+        ' "$src" > "$TEMP_CASE"
+
+        run_luna "$TEMP_CASE" > "$TEMP_OUT" 2>&1
+
+        awk -v case_name="$case_name" '
+            $0 == "# CASE " case_name { capture=1; next }
+            /^# CASE / && capture { exit }
+            capture { print }
+        ' "$expect_file" > "${TEMP_OUT}.expect"
+
+        diff -q --strip-trailing-cr "$TEMP_OUT" "${TEMP_OUT}.expect" > /dev/null
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}[FAIL] ${base_name}:${case_name} (Output Mismatch)${NC}"
+            echo -e "${YELLOW}Expected:${NC}"
+            cat "${TEMP_OUT}.expect"
+            echo -e "${YELLOW}Actual:${NC}"
+            cat "$TEMP_OUT"
+            ((FAILED++))
+            failed=1
+        fi
+    done
+
+    rm -f "${TEMP_OUT}.expect" "$TEMP_CASE"
+
+    if [ $failed -eq 0 ]; then
+        echo -e "${GREEN}[PASS] $base_name (Split Golden)${NC}"
+        ((PASSED++))
+    fi
+}
+
 # Loop through all .lu files
 for src in "$TEST_DIR"/*.lu; do
     # Check if glob found nothing
@@ -33,10 +88,15 @@ for src in "$TEST_DIR"/*.lu; do
     base_name=$(basename "$src")
     expect_file="${src%.lu}.expect"
 
+    if [ "$base_name" = "test_unsafe_errors.lu" ]; then
+        run_split_golden_test "$src" "$expect_file"
+        continue
+    fi
+
     # --- CASE 1: Golden File Test (Compare Output) ---
     if [ -f "$expect_file" ]; then
         # Run and save output to temp file
-        $BIN "$src" > "$TEMP_OUT" 2>&1
+        run_luna "$src" > "$TEMP_OUT" 2>&1
         
         # Compare output (ignoring trailing whitespace issues)
         diff -q --strip-trailing-cr "$TEMP_OUT" "$expect_file" > /dev/null
@@ -56,7 +116,7 @@ for src in "$TEST_DIR"/*.lu; do
     # --- CASE 2: Assertion Test (Check Exit Code) ---
     else
         # Run and capture stderr just in case it fails
-        $BIN "$src" > /dev/null 2> "$TEMP_OUT"
+        run_luna "$src" > /dev/null 2> "$TEMP_OUT"
         EXIT_CODE=$?
 
         if [ $EXIT_CODE -eq 0 ]; then
@@ -72,6 +132,7 @@ done
 
 # Cleanup
 rm -f "$TEMP_OUT"
+rm -f "$TEMP_CASE" "${TEMP_OUT}.expect"
 
 echo "========================================"
 echo "Summary: $PASSED Passed, $FAILED Failed"

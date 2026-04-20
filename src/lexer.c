@@ -77,17 +77,24 @@ static Token make_token(TokenType ttype, const char *start, size_t length) {
     t.line = 0; 
     t.col = 0;
     
-    if (length > 0) {
+    if (length > 0 && length < TOKEN_INLINE_MAX) {
+        // Short lexeme — store in inline buffer, zero mallocs
+        memcpy(t.ibuf, start, length);
+        t.ibuf[length] = '\0';
+        t.lexeme = NULL;
+    } else if (length >= TOKEN_INLINE_MAX) {
+        // Long lexeme — heap allocate
         char *buf = malloc(length + 1);
         if (buf) {
             memcpy(buf, start, length);
             buf[length] = '\0';
-            t.lexeme = buf;
-        } else {
-            t.lexeme = NULL;
         }
+        t.lexeme = buf;
+        t.ibuf[0] = '\0';
     } else {
-        t.lexeme = my_strdup("");
+        // Empty string — inline
+        t.ibuf[0] = '\0';
+        t.lexeme = NULL;
     }
     return t;
 }
@@ -168,11 +175,20 @@ Token lexer_next(Lexer *L) {
         
         Token t;
         t.type = T_STRING;
-        t.lexeme = buf;
         t.number = 0;
         t.fnumber = 0.0;
         t.line = token_line;
         t.col = token_col;
+
+        // Short strings use inline buffer, long ones keep the heap buffer
+        if (i < TOKEN_INLINE_MAX) {
+            memcpy(t.ibuf, buf, i + 1);
+            t.lexeme = NULL;
+            free(buf);
+        } else {
+            t.lexeme = buf;
+            t.ibuf[0] = '\0';
+        }
         return t;
     }
 
@@ -199,9 +215,11 @@ Token lexer_next(Lexer *L) {
 
         Token t;
         t.type = T_CHAR;
-        t.lexeme = malloc(2);
-        t.lexeme[0] = (char)char_val;
-        t.lexeme[1] = '\0';
+        t.lexeme = NULL;
+        t.ibuf[0] = (char)char_val;
+        t.ibuf[1] = '\0';
+        t.number = 0;
+        t.fnumber = 0.0;
         t.line = token_line;
         t.col = token_col;
         return t;
@@ -251,11 +269,47 @@ Token lexer_next(Lexer *L) {
         return t;
     }
 
+    if (c == '+' && lx_peek(L, 1) == '=') {
+        lx_advance(L);
+        lx_advance(L);
+        Token t = make_token(T_PLUS_EQ, "+=", 2);
+        t.line = token_line;
+        t.col = token_col;
+        return t;
+    }
+
     // Handle --
     if (c == '-' && lx_peek(L, 1) == '-') {
         lx_advance(L);
         lx_advance(L);
         Token t = make_token(T_DEC, "--", 2);
+        t.line = token_line;
+        t.col = token_col;
+        return t;
+    }
+
+    if (c == '-' && lx_peek(L, 1) == '=') {
+        lx_advance(L);
+        lx_advance(L);
+        Token t = make_token(T_MINUS_EQ, "-=", 2);
+        t.line = token_line;
+        t.col = token_col;
+        return t;
+    }
+
+    if (c == '*' && lx_peek(L, 1) == '=') {
+        lx_advance(L);
+        lx_advance(L);
+        Token t = make_token(T_MUL_EQ, "*=", 2);
+        t.line = token_line;
+        t.col = token_col;
+        return t;
+    }
+
+    if (c == '/' && lx_peek(L, 1) == '=') {
+        lx_advance(L);
+        lx_advance(L);
+        Token t = make_token(T_DIV_EQ, "/=", 2);
         t.line = token_line;
         t.col = token_col;
         return t;
@@ -299,6 +353,7 @@ Token lexer_next(Lexer *L) {
     else if (c == '[') single_op = T_LBRACKET;
     else if (c == ']') single_op = T_RBRACKET;
     else if (c == ',') single_op = T_COMMA;
+    else if (c == '.') single_op = T_DOT;
     else if (c == ':') single_op = T_COLON;
     else if (c == ';') single_op = T_SEMICOLON;
     else if (c == '!') single_op = T_NOT; 
@@ -329,11 +384,12 @@ Token lexer_next(Lexer *L) {
 
         size_t len = L->pos - start;
         Token t = make_token(is_float ? T_FLOAT : T_NUMBER, L->src + start, len);
+        const char *numstr = token_str(&t);
         if (is_float) {
-            t.fnumber = atof(t.lexeme);
+            t.fnumber = atof(numstr);
         } else {
             // Use strtoll for long long
-            t.number = strtoll(t.lexeme, NULL, 10);
+            t.number = strtoll(numstr, NULL, 10);
         }
         t.line = token_line;
         t.col = token_col;
@@ -347,53 +403,109 @@ Token lexer_next(Lexer *L) {
             lx_advance(L);
         }
         size_t len = L->pos - start;
-        char *buf = malloc(len + 1);
-        memcpy(buf, L->src + start, len);
-        buf[len] = '\0';
-
-        TokenType tt = T_IDENT;
-        // Standard Keywords
-        if (!strcmp(buf, "let")) tt = T_LET;
-        else if (!strcmp(buf, "if")) tt = T_IF;
-        else if (!strcmp(buf, "else")) tt = T_ELSE;
-        else if (!strcmp(buf, "func")) tt = T_FUNC;
-        else if (!strcmp(buf, "return")) tt = T_RETURN;
-        else if (!strcmp(buf, "print")) tt = T_PRINT;
-        else if (!strcmp(buf, "input")) tt = T_INPUT;
-        else if (!strcmp(buf, "true")) tt = T_TRUE;   
-        else if (!strcmp(buf, "false")) tt = T_FALSE; 
-        else if (!strcmp(buf, "while")) tt = T_WHILE;
-        else if (!strcmp(buf, "for")) tt = T_FOR;
-        else if (!strcmp(buf, "in")) tt = T_IN;
-        else if (!strcmp(buf, "break")) tt = T_BREAK;
-        else if (!strcmp(buf, "continue")) tt = T_CONTINUE;
-        else if (!strcmp(buf, "switch")) tt = T_SWITCH;
-        else if (!strcmp(buf, "case")) tt = T_CASE;
-        else if (!strcmp(buf, "default")) tt = T_DEFAULT;
-
-        else if (!strcmp(buf, "and")) tt = T_AND;
-        else if (!strcmp(buf, "or"))  tt = T_OR;
-        else if (!strcmp(buf, "not")) tt = T_NOT;
-        // THE BALLS EXTENSION
-        else if (!strcmp(buf, "balls")) tt = T_LET;
-        else if (!strcmp(buf, "big_balls")) tt = T_LET;
-        else if (!strcmp(buf, "shared_balls")) tt = T_LET;
-        else if (!strcmp(buf, "loop_your_balls")) tt = T_FOR;
-        else if (!strcmp(buf, "spin_balls")) tt = T_WHILE;
-        else if (!strcmp(buf, "if_balls")) tt = T_IF;
-        else if (!strcmp(buf, "else_balls")) tt = T_ELSE;
-        else if (!strcmp(buf, "switch_balls")) tt = T_SWITCH;
-        else if (!strcmp(buf, "drop_balls")) tt = T_BREAK;
-        else if (!strcmp(buf, "jiggle_balls")) tt = T_CONTINUE;
-        else if (!strcmp(buf, "grab_balls")) tt = T_FUNC;
 
         Token t;
-        t.type = tt;
-        t.lexeme = buf;
         t.number = 0;
         t.fnumber = 0.0;
         t.line = token_line;
         t.col = token_col;
+
+        const char *buf;
+        if (len < TOKEN_INLINE_MAX) {
+            memcpy(t.ibuf, L->src + start, len);
+            t.ibuf[len] = '\0';
+            t.lexeme = NULL;
+            buf = t.ibuf;
+        } else {
+            char *heap = malloc(len + 1);
+            memcpy(heap, L->src + start, len);
+            heap[len] = '\0';
+            t.lexeme = heap;
+            buf = heap;
+        }
+
+        TokenType tt = T_IDENT;
+        // First-char dispatch to avoid 30+ strcmp per identifier token
+        switch (buf[0]) {
+            case 'a': if (!strcmp(buf, "and")) tt = T_AND; break;
+            case 'b':
+                if (!strcmp(buf, "break")) tt = T_BREAK;
+                else if (!strcmp(buf, "bloc")) tt = T_BLOC;
+                else if (!strcmp(buf, "box")) tt = T_BOX;
+                else if (!strcmp(buf, "balls")) tt = T_LET;
+                else if (!strcmp(buf, "big_balls")) tt = T_LET;
+                break;
+            case 'c':
+                if (!strcmp(buf, "case")) tt = T_CASE;
+                else if (!strcmp(buf, "const")) tt = T_CONST;
+                else if (!strcmp(buf, "continue")) tt = T_CONTINUE;
+                break;
+            case 'd':
+                if (!strcmp(buf, "data")) tt = T_DATA;
+                if (!strcmp(buf, "default")) tt = T_DEFAULT;
+                else if (!strcmp(buf, "drop_balls")) tt = T_BREAK;
+                break;
+            case 'e':
+                if (!strcmp(buf, "else")) tt = T_ELSE;
+                else if (!strcmp(buf, "else_balls")) tt = T_ELSE;
+                else if (!strcmp(buf, "export")) tt = T_EXPORT;
+                break;
+            case 'f':
+                if (!strcmp(buf, "func")) tt = T_FUNC;
+                else if (!strcmp(buf, "for")) tt = T_FOR;
+                else if (!strcmp(buf, "false")) tt = T_FALSE;
+                else if (!strcmp(buf, "from")) tt = T_FROM;
+                break;
+            case 'g':
+                if (!strcmp(buf, "grab_balls")) tt = T_FUNC;
+                break;
+            case 'i':
+                if (!strcmp(buf, "if")) tt = T_IF;
+                else if (!strcmp(buf, "import")) tt = T_IMPORT;
+                else if (!strcmp(buf, "in")) tt = T_IN;
+                else if (!strcmp(buf, "input")) tt = T_INPUT;
+                else if (!strcmp(buf, "if_balls")) tt = T_IF;
+                break;
+            case 'j':
+                if (!strcmp(buf, "jiggle_balls")) tt = T_CONTINUE;
+                break;
+            case 'l':
+                if (!strcmp(buf, "let")) tt = T_LET;
+                else if (!strcmp(buf, "loop_your_balls")) tt = T_FOR;
+                break;
+            case 'n':
+                if (!strcmp(buf, "not")) tt = T_NOT;
+                break;
+            case 'o':
+                if (!strcmp(buf, "or")) tt = T_OR;
+                break;
+            case 'p':
+                if (!strcmp(buf, "print")) tt = T_PRINT;
+                break;
+            case 'r':
+                if (!strcmp(buf, "return")) tt = T_RETURN;
+                break;
+            case 's':
+                if (!strcmp(buf, "switch")) tt = T_SWITCH;
+                else if (!strcmp(buf, "shared_balls")) tt = T_LET;
+                else if (!strcmp(buf, "switch_balls")) tt = T_SWITCH;
+                else if (!strcmp(buf, "spin_balls")) tt = T_WHILE;
+                break;
+            case 't':
+                if (!strcmp(buf, "true")) tt = T_TRUE;
+                else if (!strcmp(buf, "template")) tt = T_TEMPLATE;
+                break;
+            case 'u':
+                if (!strcmp(buf, "unsafe")) tt = T_UNSAFE;
+                else if (!strcmp(buf, "use")) tt = T_USE;
+                break;
+            case 'w':
+                if (!strcmp(buf, "while")) tt = T_WHILE;
+                break;
+            default: break;
+        }
+
+        t.type = tt;
         return t;
     }
 

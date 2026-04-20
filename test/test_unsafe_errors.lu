@@ -1,0 +1,68 @@
+# CASE R1
+unsafe {
+    let buf = alloc(1)
+    let bad = addr(buf)
+}
+# CASE R2
+let escaped = null
+
+unsafe {
+    let buf = alloc(1)
+    escaped = buf
+}
+# CASE R3
+unsafe {
+    let buf = alloc(1)
+    let bad = ptr_add(buf, 1)
+}
+# CASE R4
+unsafe {
+    let buf = alloc(1)
+    free(buf)
+    deref(buf)
+}
+# CASE R5
+unsafe {
+    let bad = addr(1 + 2)
+}
+# CASE R6
+unsafe {
+    unsafe {
+    }
+}
+# CASE R7
+unsafe {
+    let buf = alloc(1)
+    let items = [buf]
+}
+# CASE R8
+unsafe {
+    let buf = alloc(0)
+}
+# CASE R9
+unsafe {
+    let left = alloc(1)
+    let right = alloc(1)
+    let bad = left < right
+}
+# CASE R10
+unsafe {
+    let buf = alloc(1)
+    let bad = float(buf)
+}
+# CASE R11
+func touch(ptr) {
+    free(ptr)
+}
+
+unsafe {
+    let buf = alloc(1)
+    touch(buf)
+}
+# CASE R12
+unsafe {
+    let buf = alloc(1)
+    if (true) {
+        free(buf)
+    }
+}

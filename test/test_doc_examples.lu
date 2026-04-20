@@ -1,0 +1,64 @@
+// Testing examples from docs/data_types.md
+
+// Bloc Example
+
+bloc Color { r, g, b, a }
+
+let red = Color{255, 0, 0, 255}
+assert(red.r == 255)
+assert(type(red) == "bloc")
+assert(shape(red) == "Color")
+
+bloc Pair { a, b }
+let p = Pair{10, 20}
+assert(p.a == 10)
+assert(Pair{10, 20} == Pair{10, 20})
+assert(Pair{10, 20} != Pair{10, 21})
+
+// Box Example
+
+let buf = box[64]
+assert(buf.len == 64)
+assert(buf.cap >= 64)
+assert(type(buf) == "box")
+
+free(buf)
+assert(buf.len == 0)
+
+// Template Example
+
+template Player { name, hp, tag }
+
+let hero = Player("Astra", 100, "ally")
+assert(type(hero) == "template")
+assert(shape(hero) == "Player")
+assert(len(hero) == 3)
+
+hero.hp -= 25
+assert(hero.hp == 75)
+
+// Containment Example
+
+bloc Vec2 { x, y }
+template Entity { name, pos, buffer }
+
+let origin = Vec2{0, 0}
+let buf2 = box[128]
+let e = Entity("Client", origin, buf2)
+// buf is now owned by the template
+assert(type(e) == "template")
+
+// Unsafe Example
+
+template World { name, size }
+let w = World("Main", 100)
+
+unsafe {
+    let buf3 = alloc(2)
+    store(buf3, w.size)
+    let v = load(buf3)
+    assert(v == 100)
+    defer(buf3)
+}
+
+print("All doc examples passed!")

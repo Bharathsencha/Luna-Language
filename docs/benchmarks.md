@@ -130,3 +130,17 @@ python3 benchmark/env_native.py
 | `benchmark/vector_native.py` | 1M vector multiply (Python) |
 | `benchmark/env_luna.lu` | 1M env lookups (Luna) |
 | `benchmark/env_native.py` | 1M env lookups (Python) |
+
+
+## Benchmark Results GO vs Luna
+
+| Benchmark | Language | User Time (s) | Sys Time (s) | Max RSS (MB) |
+| :--- | :--- | :--- | :--- | :--- |
+| **alloc_heavy** | Luna | 8.77 | 0.15 | 197.66 |
+| | Go | 0.37 | 0.19 | 55.62 |
+| **long_live** | Luna | 0.58 | 0.07 | 141.50 |
+| | Go | 0.16 | 0.03 | 16.92 |
+| **cycles** | Luna | 0.09 | 0.01 | 30.78 |
+| | Go | 0.01 | 0.00 | 4.04 |
+| **strings** | Luna | 7.34 | 0.16 | 235.44 |
+| | Go | 0.27 | 0.14 | 68.17 |

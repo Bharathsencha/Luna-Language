@@ -1,0 +1,36 @@
+print("=== Running GC Large Object Safety Tests ===")
+
+func make_big_keeper(tag, slots) {
+    let payload = []
+    for (let i = 0; i < slots; i++) {
+        append(payload, repeat(tag + "-", 2048) + to_string(i))
+    }
+
+    let meta = {"tag": tag, "payload": payload}
+    return func(idx) {
+        return map_get(meta, "tag") + ":" + map_get(meta, "payload")[idx]
+    }
+}
+
+let keepers = []
+for (let i = 0; i < 6; i++) {
+    append(keepers, make_big_keeper("blob" + to_string(i), 6))
+}
+
+for (let round = 0; round < 40; round++) {
+    let junk = []
+    for (let i = 0; i < 18; i++) {
+        append(junk, repeat("noise-", 1024) + to_string(round) + "-" + to_string(i))
+    }
+
+    if (round % 10 == 0) {
+        assert(keepers[0](0) == "blob0:" + repeat("blob0-", 2048) + "0")
+        assert(keepers[3](4) == "blob3:" + repeat("blob3-", 2048) + "4")
+        assert(keepers[5](5) == "blob5:" + repeat("blob5-", 2048) + "5")
+    }
+}
+
+assert(keepers[1](2) == "blob1:" + repeat("blob1-", 2048) + "2")
+assert(keepers[4](1) == "blob4:" + repeat("blob4-", 2048) + "1")
+
+print("GC large object safety tests passed!")

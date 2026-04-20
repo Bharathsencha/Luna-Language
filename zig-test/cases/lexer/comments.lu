@@ -1,0 +1,3 @@
+let x = 1 # trailing
+// whole line comment
+let y = 2

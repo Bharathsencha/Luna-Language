@@ -1,8 +1,8 @@
-# Luna Language: AST Memory Arenas (The "New GC")
+# Luna Language: AST Memory Arenas
 
 ## Overview
 
-In recent updates, Luna introduced a  optimization to its memory management model by implementing **AST Memory Arenas** (`arena.c` and `arena.h`). This replaces the traditional use of `malloc`, `free`, and `strdup` for Abstract Syntax Tree (AST) node allocations.
+In recent updates, Luna introduced an optimization to its memory management model by implementing **AST Memory Arenas** (`arena.c` and `arena.h`). This replaces the traditional use of `malloc`, `free`, and `strdup` for Abstract Syntax Tree (AST) node allocations.
 
 While not a traditional tracing Garbage Collector (like Java's or Go's), the Memory Arena acts as an ultra-fast, bulk-reclamation memory manager specifically tailored for the lifespan of a script's execution.
 
@@ -46,4 +46,4 @@ When the interpreter executes a `for` loop or evaluates an expression, the CPU p
 Strings copied during parsing (`NODE_STRING`, identifiers, variable names) use `arena_strdup`. Everything is tied to the arena's lifecycle, meaning if the script crashes or completes, a single `arena_free(ast_arena)` guarantees 100% of the parsed memory is released cleanly safely.
 
 ## TLDR:
-By replacing universal `malloc` with a domain-specific **Memory Arena**, Luna completely eliminates the traditional "Interpreter memory bottleneck," paving the way for lightning-fast parsing, better CPU utilization, and zero-traverse garbage collection.
+By replacing universal `malloc` with a domain-specific **Memory Arena**, Luna dramatically reduces AST allocation overhead, improves cache locality, and keeps parser-owned memory management simple. The arena is not the runtime GC; it complements Luna's tracing GC by handling a different lifetime pattern.

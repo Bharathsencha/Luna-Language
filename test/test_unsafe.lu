@@ -1,0 +1,24 @@
+print("=== Running Unsafe Tests ===")
+
+unsafe {
+    let value = 7
+    let value_ptr = address_of(value)
+    let buf = alloc(2)
+    let next = ptr_offset(buf, 1)
+
+    store(value_ptr, 11)
+    store(buf, "left")
+    store(next, "right")
+
+    assert(value == 11)
+    assert(load(buf) == "left")
+    assert(load(next) == "right")
+    assert(type(buf) == "pointer")
+    assert(int(buf) > 0)
+    assert(next > buf)
+
+    print(type(buf))
+    defer(buf)
+}
+
+print("Unsafe tests passed!")

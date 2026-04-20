@@ -47,12 +47,20 @@ const char *token_name(TokenType t) {
             return "CHAR";
         case T_PLUS:
             return "PLUS";
+        case T_PLUS_EQ:
+            return "PLUS_EQ";
         case T_MINUS:
             return "MINUS";
+        case T_MINUS_EQ:
+            return "MINUS_EQ";
         case T_MUL:
             return "MUL";
+        case T_MUL_EQ:
+            return "MUL_EQ";
         case T_DIV:
             return "DIV";
+        case T_DIV_EQ:
+            return "DIV_EQ";
         case T_MOD:
             return "MOD";
         case T_INC:     
@@ -87,6 +95,8 @@ const char *token_name(TokenType t) {
             return "RBRACKET";
         case T_COMMA:
             return "COMMA";
+        case T_DOT:
+            return "DOT";
         case T_COLON:
             return "COLON";
         case T_SEMICOLON: 
@@ -97,6 +107,24 @@ const char *token_name(TokenType t) {
             return "FOR";
         case T_IN:
             return "IN";
+        case T_CONST:
+            return "CONST";
+        case T_DATA:
+            return "DATA";
+        case T_BLOC:
+            return "BLOC";
+        case T_BOX:
+            return "BOX";
+        case T_USE:
+            return "USE";
+        case T_FROM:
+            return "FROM";
+        case T_EXPORT:
+            return "EXPORT";
+        case T_IMPORT:
+            return "IMPORT";
+        case T_UNSAFE:
+            return "UNSAFE";
         case T_BREAK:
             return "BREAK";
         case T_CONTINUE:

@@ -37,6 +37,7 @@ Value lib_str_reverse(int argc, Value *argv, struct Env *env);
 Value lib_str_repeat(int argc, Value *argv, struct Env *env);
 Value lib_str_pad_left(int argc, Value *argv, struct Env *env);
 Value lib_str_pad_right(int argc, Value *argv, struct Env *env);
+Value lib_str_format(int argc, Value *argv, struct Env *env);
 
 // Lists
 Value lib_str_split(int argc, Value *argv, struct Env *env);

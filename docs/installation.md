@@ -13,6 +13,12 @@ sudo apt update
 sudo apt install gcc build-essential git cmake nasm
 ```
 
+For the Zig-based internal test suite, install Zig as well:
+
+```bash
+sudo apt install zig
+```
+
 ## 2. Graphics Dependencies
 
 Luna uses its own OpenGL 3.3 rendering backend with a **statically linked** GLFW library (already vendored in `lib/libglfw3.a`). You only need the system-level graphics headers and X11 development libraries:
@@ -57,6 +63,12 @@ Run the core test suite to verify the interpreter works:
 bin/luna test/test_core.lu
 ```
 
+Run the internal Zig test suite to verify lexer/parser/interpreter/error internals:
+
+```bash
+make zig-test
+```
+
 To verify that the graphics backend works, run one of the demo scripts:
 
 ```bash
@@ -64,3 +76,14 @@ bin/luna fun/meadow.lu
 ```
 
 A window should open with an animated scene. Press Escape or close the window to exit.
+
+## 5. Test Workflow
+
+Luna now has two separate checks during development:
+
+- `make test`
+  Runs the existing Luna script tests and golden-output checks.
+- `make zig-test`
+  Runs host-side Zig tests against the internal C APIs for the lexer, parser, interpreter, and diagnostics.
+
+Use both when changing syntax, AST construction, evaluation logic, or error reporting.

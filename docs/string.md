@@ -25,6 +25,8 @@ Extract parts of strings or access individual characters.
 | `substring(s, start, len)` | Extracts len characters starting at start index  | `substring("Hello", 0, 2) → "He"` |
 | `slice(s, start, end)`     | Extracts from start index up to (not including) end index | `slice("Hello", 1, 4) → "ell"`|
 
+You can also index strings directly with brackets: `word[0]` returns `'w'` and `word[-1]` returns the last character.
+
 ## Searching
 
 Find substrings and check string patterns.
@@ -54,10 +56,43 @@ Transform and modify strings.
 | `repeat(s, n)`          | Repeats string s exactly n times                   | `repeat("Na", 3) → "NaNaNa"`         |
 | `pad_left(s, w, char)`  | Pads the start of s to width w using char          | `pad_left("7", 3, "0") → "007"`      |
 | `pad_right(s, w, char)` | Pads the end of s to width w using char            | `pad_right("Ok", 5, ".") → "Ok..."`  |
+| `format(s, ...)`        | Replaces each `{}` placeholder with the next value | `format("Hi {}", "Luna") → "Hi Luna"` |
 
 ### **Note:** `replace()` replaces **all** matching occurrences. There is currently no single-occurrence replace function.
 
+## String Interpolation
+
+String literals can interpolate Luna expressions anywhere a normal string
+expression is allowed.
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `"Hello {name}"` | Evaluates the expression inside braces and converts it to a string | `let name = "Luna"` then `"Hello {name}" → "Hello Luna"` |
+| `"sum = {1 + 2}"` | Interpolates arithmetic expressions | `"sum = {1 + 2}" → "sum = 3"` |
+| `"slot = {items[0]}"` | Interpolates indexing and call results | `let items = [7]` then `"slot = {items[0]}" → "slot = 7"` |
+
+Rules:
+
+- the text inside `{ ... }` is parsed as a normal Luna expression
+- interpolation runs when the string literal is evaluated
+- normal concatenation still works: `"Hello " + name`
+- `format()` is still useful when you want positional `{}` placeholders
+
 ### Sample code:
+```javascript
+let name = "Nova"
+let hp = 87
+let items = [3, 4]
+
+let line = "Pilot {name} has {hp} hp"
+let stats = "next={hp + 1}, first={items[0]}"
+print(line)
+print(stats)
+```
+```bash
+Output: Pilot Nova has 87 hp
+Output: next=88, first=3
+```
 ```javascript
 print(replace("one one one", "one", "two"))
 ```
@@ -72,6 +107,7 @@ Split and join strings with lists.
 | ------------------- | -------------------------------------------------- | ------------------------------------------- |
 | `split(s, delim)`   | Splits string into a list using delimiter          | `split("a,b,c", ",") → ["a", "b", "c"]`     |
 | `join(list, delim)` | Joins a list of strings into one string with delimiter | `join(["a", "b", "c"], "-") → "a-b-c"`  |
+| `slice(list, start, end)` | Extracts part of a list using the same slice builtin | `slice([10, 20, 30], 0, 2) → [10, 20]` |
 
 ---
 
@@ -162,4 +198,20 @@ format_list(shopping)
 let message = "This is a darn good example"
 let clean = censor_text(message, "darn")
 print("Censored:", clean)
+```
+
+## Example 3: Template Strings
+
+```javascript
+let name = "Nova"
+let hp = 87
+
+let online = "Pilot {name} is online"
+let status = "Pilot {name} has {hp} hp"
+let boosted = "Pilot {name} has {hp + 13} hp"
+
+print(online)
+print(status)
+print(boosted)
+print("Pilot " + name + " has " + to_string(hp) + " hp")
 ```

@@ -224,5 +224,3 @@ func main() {
 
     close_window()
 }
-
-main()

@@ -18,6 +18,7 @@
 #include "file_lib.h" 
 #include "list_lib.h"
 #include "gui_lib.h" // For GUI
+#include "gui_lib_3d.h"
 
 // Sand Lib Externs
 Value lib_sand_init(int argc, Value *argv, Env *env);
@@ -32,11 +33,18 @@ static int lib_is_truthy(Value v) {
         case VAL_BOOL:   return v.b;
         case VAL_INT:    return v.i != 0;
         case VAL_FLOAT:  return v.f != 0.0;
+        case VAL_BLOC:
+        case VAL_BLOC_TYPE:
+        case VAL_BOX:
+        case VAL_TEMPLATE:
+            return 1;
         case VAL_STRING: return v.string && v.string->chars && v.string->chars[0] != '\0';
         case VAL_NULL:   return 0;
         case VAL_LIST:   
-        case VAL_DENSE_LIST: return 1; // Updated to include Dense Lists
+        case VAL_DENSE_LIST:
+        case VAL_MAP: return 1; // container values are truthy
         case VAL_NATIVE: return 1;
+        case VAL_CLOSURE: return 1;
         case VAL_CHAR:   return v.c != 0;
         case VAL_FILE:   return v.file != NULL; // Files are truthy if open
         default:         return 0;
@@ -64,11 +72,132 @@ static Value lib_assert(int argc, Value *argv, Env *env) {
     return value_bool(1);
 }
 
+static Value lib_map_set(int argc, Value *argv, Env *env) {
+    if (argc != 3 || argv[0].type != VAL_MAP || argv[1].type != VAL_STRING || !argv[1].string) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_set() expects (map, string, value)",
+            "Usage: map_set(myMap, \"key\", value)");
+        return value_null();
+    }
+    value_map_set(&argv[0], intern_string(argv[1].string->chars), argv[2]);
+    return value_null();
+}
+
+static Value lib_map_get(int argc, Value *argv, Env *env) {
+    if (argc != 2 || argv[0].type != VAL_MAP || argv[1].type != VAL_STRING || !argv[1].string) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_get() expects (map, string)",
+            "Usage: map_get(myMap, \"key\")");
+        return value_null();
+    }
+    Value *value = value_map_get(&argv[0], intern_string(argv[1].string->chars));
+    return value ? value_copy(*value) : value_null();
+}
+
+static Value lib_map_has(int argc, Value *argv, Env *env) {
+    if (argc != 2 || argv[0].type != VAL_MAP || argv[1].type != VAL_STRING || !argv[1].string) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_has() expects (map, string)",
+            "Usage: map_has(myMap, \"key\")");
+        return value_null();
+    }
+    return value_bool(value_map_has(&argv[0], intern_string(argv[1].string->chars)));
+}
+
+static Value lib_map_delete(int argc, Value *argv, Env *env) {
+    if (argc != 2 || argv[0].type != VAL_MAP || argv[1].type != VAL_STRING || !argv[1].string) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_delete() expects (map, string)",
+            "Usage: map_delete(myMap, \"key\")");
+        return value_null();
+    }
+    return value_bool(value_map_delete(&argv[0], intern_string(argv[1].string->chars)));
+}
+
+static Value lib_map_keys(int argc, Value *argv, Env *env) {
+    if (argc != 1 || argv[0].type != VAL_MAP) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_keys() expects 1 map",
+            "Usage: map_keys(myMap)");
+        return value_null();
+    }
+    return value_map_keys(argv[0]);
+}
+
+static Value lib_map_values(int argc, Value *argv, Env *env) {
+    if (argc != 1 || argv[0].type != VAL_MAP) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_values() expects 1 map",
+            "Usage: map_values(myMap)");
+        return value_null();
+    }
+    return value_map_values(argv[0]);
+}
+
+static Value lib_map_items(int argc, Value *argv, Env *env) {
+    if (argc != 1 || argv[0].type != VAL_MAP) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "map_items() expects 1 map",
+            "Usage: map_items(myMap)");
+        return value_null();
+    }
+    return value_map_items(argv[0]);
+}
+
+static Value lib_range(int argc, Value *argv, Env *env) {
+    long long start = 0;
+    long long end = 0;
+    long long step = 1;
+
+    if (argc == 1 && argv[0].type == VAL_INT) {
+        end = argv[0].i;
+    } else if (argc == 2 && argv[0].type == VAL_INT && argv[1].type == VAL_INT) {
+        start = argv[0].i;
+        end = argv[1].i;
+    } else if (argc == 3 && argv[0].type == VAL_INT && argv[1].type == VAL_INT && argv[2].type == VAL_INT) {
+        start = argv[0].i;
+        end = argv[1].i;
+        step = argv[2].i;
+    } else {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "range() expects 1-3 integer arguments",
+            "Usage: range(end), range(start, end), or range(start, end, step)");
+        return value_null();
+    }
+
+    if (step == 0) {
+        error_report(ERR_ARGUMENT, 0, 0,
+            "range() step cannot be zero",
+            "Use a positive or negative step value");
+        return value_null();
+    }
+
+    Value out = value_list();
+    if (step > 0) {
+        for (long long i = start; i < end; i += step) {
+            value_list_append(&out, value_int(i));
+        }
+    } else {
+        for (long long i = start; i > end; i += step) {
+            value_list_append(&out, value_int(i));
+        }
+    }
+    return out;
+}
+
 void env_register_stdlib(Env *env) {
     env_def(env, intern_string("null"), value_null());
     
     // Core Utilities 
     env_def(env, intern_string("assert"), value_native(lib_assert));
+    env_def(env, intern_string("map_set"), value_native(lib_map_set));
+    env_def(env, intern_string("map_get"), value_native(lib_map_get));
+    env_def(env, intern_string("map_has"), value_native(lib_map_has));
+    env_def(env, intern_string("map_delete"), value_native(lib_map_delete));
+    env_def(env, intern_string("map_keys"), value_native(lib_map_keys));
+    env_def(env, intern_string("map_values"), value_native(lib_map_values));
+    env_def(env, intern_string("map_items"), value_native(lib_map_items));
+    env_def(env, intern_string("range"), value_native(lib_range));
 
     // Math Library
     env_def(env, intern_string("abs"), value_native(lib_math_abs));
@@ -140,6 +269,7 @@ void env_register_stdlib(Env *env) {
     env_def(env, intern_string("repeat"), value_native(lib_str_repeat));
     env_def(env, intern_string("pad_left"), value_native(lib_str_pad_left));
     env_def(env, intern_string("pad_right"), value_native(lib_str_pad_right));
+    env_def(env, intern_string("format"), value_native(lib_str_format));
     
     env_def(env, intern_string("split"), value_native(lib_str_split));
     env_def(env, intern_string("join"), value_native(lib_str_join));
@@ -155,8 +285,14 @@ void env_register_stdlib(Env *env) {
 
     // List Library (Hybrid Sort & Fisher-Yates Shuffle)
     env_def(env, intern_string("sort"), value_native(lib_list_sort));
+    env_def(env, intern_string("ssort"), value_native(lib_list_ssort));
     env_def(env, intern_string("shuffle"), value_native(lib_list_shuffle));
     env_def(env, intern_string("list_append"), value_native(lib_list_append));
+    env_def(env, intern_string("remove"), value_native(lib_list_remove));
+    env_def(env, intern_string("find"), value_native(lib_list_find));
+    env_def(env, intern_string("map"), value_native(lib_list_map));
+    env_def(env, intern_string("filter"), value_native(lib_list_filter));
+    env_def(env, intern_string("reduce"), value_native(lib_list_reduce));
     env_def(env, intern_string("dense_list"), value_native(lib_dense_list));
 
     // Time Library
@@ -241,6 +377,33 @@ void env_register_stdlib(Env *env) {
     env_def(env, intern_string("draw_gradient_v"), value_native(lib_gui_draw_gradient_v));
     env_def(env, intern_string("draw_gradient_ex"), value_native(lib_gui_draw_gradient_ex));
     env_def(env, intern_string("draw_texture_pro"), value_native(lib_gui_draw_texture_pro));
+
+    // --- 3D GUI API ---
+    env_def(env, intern_string("create_camera_3d"), value_native(lib_gui_create_camera_3d));
+    env_def(env, intern_string("update_camera_3d"), value_native(lib_gui_update_camera_3d));
+    env_def(env, intern_string("set_camera_fov"), value_native(lib_gui_set_camera_fov));
+    env_def(env, intern_string("begin_mode_3d"), value_native(lib_gui_begin_mode_3d));
+    env_def(env, intern_string("end_mode_3d"), value_native(lib_gui_end_mode_3d));
+    env_def(env, intern_string("get_camera_forward"), value_native(lib_gui_get_camera_forward));
+    
+    env_def(env, intern_string("draw_cube"), value_native(lib_gui_draw_cube));
+    env_def(env, intern_string("draw_cube_wires"), value_native(lib_gui_draw_cube_wires));
+    env_def(env, intern_string("draw_sphere"), value_native(lib_gui_draw_sphere));
+    env_def(env, intern_string("draw_plane"), value_native(lib_gui_draw_plane));
+    env_def(env, intern_string("draw_cylinder"), value_native(lib_gui_draw_cylinder));
+    env_def(env, intern_string("draw_grid"), value_native(lib_gui_draw_grid));
+    env_def(env, intern_string("draw_line_3d"), value_native(lib_gui_draw_line_3d));
+    env_def(env, intern_string("draw_triangle_3d"), value_native(lib_gui_draw_triangle_3d));
+    
+    env_def(env, intern_string("create_light"), value_native(lib_gui_create_light));
+    env_def(env, intern_string("set_light_enabled"), value_native(lib_gui_set_light_enabled));
+    env_def(env, intern_string("set_light_color"), value_native(lib_gui_set_light_color));
+    env_def(env, intern_string("set_light_position"), value_native(lib_gui_set_light_position));
+    env_def(env, intern_string("set_light_intensity"), value_native(lib_gui_set_light_intensity));
+    env_def(env, intern_string("set_ambient_light"), value_native(lib_gui_set_ambient_light));
+    
+    env_def(env, intern_string("check_collision_boxes"), value_native(lib_gui_check_collision_boxes));
+    env_def(env, intern_string("check_collision_spheres"), value_native(lib_gui_check_collision_spheres));
     env_def(env, intern_string("get_texture_width"), value_native(lib_gui_get_texture_width));
     env_def(env, intern_string("get_texture_height"), value_native(lib_gui_get_texture_height));
     env_def(env, intern_string("unload_texture"), value_native(lib_gui_unload_texture));

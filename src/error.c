@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
 #include "luna_error.h"
 
 // Initialize the global tracker
@@ -13,6 +14,8 @@ int luna_had_error = 0;
 
 // Global source information for context display
 static SourceInfo g_source_info = {NULL, NULL};
+static LunaErrorInfo g_last_error = {0};
+static int g_error_quiet = 0;
 
 // ANSI color codes (can be disabled on Windows if needed)
 #ifdef _WIN32
@@ -32,14 +35,64 @@ static SourceInfo g_source_info = {NULL, NULL};
     #define COLOR_RESET "\033[0m"
 #endif
 
+static int error_use_color(void) {
+#ifdef _WIN32
+    return 0;
+#else
+    const char *no_color = getenv("NO_COLOR");
+    if (no_color && no_color[0] != '\0') return 0;
+    return isatty(fileno(stderr));
+#endif
+}
+
+static const char *color_if_enabled(const char *code) {
+    return error_use_color() ? code : "";
+}
+
 void error_init(const char *source, const char *filename) {
     g_source_info.source = source;
     g_source_info.filename = filename;
 }
 
+void error_clear_last(void) {
+    memset(&g_last_error, 0, sizeof(g_last_error));
+    luna_had_error = 0;
+}
+
+int error_get_last(LunaErrorInfo *out) {
+    if (!out || !g_last_error.had_error) {
+        return 0;
+    }
+    *out = g_last_error;
+    return 1;
+}
+
+void error_set_quiet(int quiet) {
+    g_error_quiet = quiet ? 1 : 0;
+}
+
+static void error_store_last(ErrorType type, int line, int col, const char *message, const char *suggestion) {
+    memset(&g_last_error, 0, sizeof(g_last_error));
+    g_last_error.had_error = 1;
+    g_last_error.type = type;
+    g_last_error.line = line;
+    g_last_error.col = col;
+
+    if (g_source_info.filename) {
+        snprintf(g_last_error.filename, sizeof(g_last_error.filename), "%s", g_source_info.filename);
+    }
+    if (message) {
+        snprintf(g_last_error.message, sizeof(g_last_error.message), "%s", message);
+    }
+    if (suggestion) {
+        snprintf(g_last_error.suggestion, sizeof(g_last_error.suggestion), "%s", suggestion);
+    }
+}
+
 const char *error_type_name(ErrorType type) {
     switch (type) {
         case ERR_SYNTAX: return "Syntax Error (Skill issue)";
+        case ERR_STATIC: return "Static Error";
         case ERR_RUNTIME: return "Runtime Error";
         case ERR_TYPE: return "Type Error";
         case ERR_NAME: return "Name Error";
@@ -89,23 +142,25 @@ void error_report(ErrorType type, int line, int col, const char *message, const 
     luna_had_error = 1;
     // Fallback to global tracker if line is unknown
     if (line <= 0) line = luna_current_line;
+    error_store_last(type, line, col, message, suggestion);
+    if (g_error_quiet) return;
 
-    fprintf(stderr, "%s%s%s", COLOR_RED, error_type_name(type), COLOR_RESET);
+    fprintf(stderr, "%s%s%s", color_if_enabled(COLOR_RED), error_type_name(type), color_if_enabled(COLOR_RESET));
     
     if (g_source_info.filename) {
-        fprintf(stderr, " in %s%s%s", COLOR_BOLD, g_source_info.filename, COLOR_RESET);
+        fprintf(stderr, " in %s%s%s", color_if_enabled(COLOR_BOLD), g_source_info.filename, color_if_enabled(COLOR_RESET));
     }
     
-    fprintf(stderr, " at line %s%d%s", COLOR_BOLD, line, COLOR_RESET);
+    fprintf(stderr, " at line %s%d%s", color_if_enabled(COLOR_BOLD), line, color_if_enabled(COLOR_RESET));
     
     if (col > 0) {
-        fprintf(stderr, ", column %s%d%s", COLOR_BOLD, col, COLOR_RESET);
+        fprintf(stderr, ", column %s%d%s", color_if_enabled(COLOR_BOLD), col, color_if_enabled(COLOR_RESET));
     }
     
     fprintf(stderr, ":\n  %s\n", message);
     
     if (suggestion) {
-        fprintf(stderr, "%sHint:%s %s\n", COLOR_BLUE, COLOR_RESET, suggestion);
+        fprintf(stderr, "%sHint:%s %s\n", color_if_enabled(COLOR_BLUE), color_if_enabled(COLOR_RESET), suggestion);
     }
 }
 
@@ -113,17 +168,19 @@ void error_report_with_context(ErrorType type, int line, int col, const char *me
     luna_had_error = 1;
     // Fallback to global tracker if line is unknown
     if (line <= 0) line = luna_current_line;
+    error_store_last(type, line, col, message, suggestion);
+    if (g_error_quiet) return;
 
-    fprintf(stderr, "%s%s%s", COLOR_RED, error_type_name(type), COLOR_RESET);
+    fprintf(stderr, "%s%s%s", color_if_enabled(COLOR_RED), error_type_name(type), color_if_enabled(COLOR_RESET));
     
     if (g_source_info.filename) {
-        fprintf(stderr, " in %s%s%s", COLOR_BOLD, g_source_info.filename, COLOR_RESET);
+        fprintf(stderr, " in %s%s%s", color_if_enabled(COLOR_BOLD), g_source_info.filename, color_if_enabled(COLOR_RESET));
     }
     
-    fprintf(stderr, " at line %s%d%s", COLOR_BOLD, line, COLOR_RESET);
+    fprintf(stderr, " at line %s%d%s", color_if_enabled(COLOR_BOLD), line, color_if_enabled(COLOR_RESET));
     
     if (col > 0) {
-        fprintf(stderr, ", column %s%d%s", COLOR_BOLD, col, COLOR_RESET);
+        fprintf(stderr, ", column %s%d%s", color_if_enabled(COLOR_BOLD), col, color_if_enabled(COLOR_RESET));
     }
     
     fprintf(stderr, ":\n  %s\n", message);
@@ -133,15 +190,15 @@ void error_report_with_context(ErrorType type, int line, int col, const char *me
         char *source_line = get_line_from_source(g_source_info.source, line);
         if (source_line) {
             // Display line number and source
-            fprintf(stderr, "\n%s%4d |%s %s\n", COLOR_BLUE, line, COLOR_RESET, source_line);
+            fprintf(stderr, "\n%s%4d |%s %s\n", color_if_enabled(COLOR_BLUE), line, color_if_enabled(COLOR_RESET), source_line);
             
             // Display pointer to error position
             if (col > 0) {
-                fprintf(stderr, "     %s|%s ", COLOR_BLUE, COLOR_RESET);
+                fprintf(stderr, "     %s|%s ", color_if_enabled(COLOR_BLUE), color_if_enabled(COLOR_RESET));
                 for (int i = 1; i < col; i++) {
                     fprintf(stderr, " ");
                 }
-                fprintf(stderr, "%s^~~~%s here\n", COLOR_YELLOW, COLOR_RESET);
+                fprintf(stderr, "%s^~~~%s here\n", color_if_enabled(COLOR_YELLOW), color_if_enabled(COLOR_RESET));
             }
             
             free(source_line);
@@ -150,7 +207,7 @@ void error_report_with_context(ErrorType type, int line, int col, const char *me
     }
     
     if (suggestion) {
-        fprintf(stderr, "%sHint:%s %s\n", COLOR_GREEN, COLOR_RESET, suggestion);
+        fprintf(stderr, "%sHint:%s %s\n", color_if_enabled(COLOR_GREEN), color_if_enabled(COLOR_RESET), suggestion);
     }
 }
 

@@ -479,5 +479,3 @@ func main() {
     close_audio_device()
     close_window()
 }
-
-main()

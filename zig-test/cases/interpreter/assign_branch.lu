@@ -1,0 +1,3 @@
+let score = 3
+if (score < 5) { score = score + 7 }
+let doubled = score * 2

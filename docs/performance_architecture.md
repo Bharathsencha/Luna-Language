@@ -18,11 +18,15 @@ _Test Environment: AMD Ryzen 7 7435HS, 24GB DDR5, Linux Mint._
 
 ### Environment Variable Lookups (1M Iterations)
 
-| Implementation | Time (s) | 
-|----------------|----------|
-| Native Python (Bytecode) | ~0.028s | 
-| Luna (Unoptimized string linear scan) | ~0.380s | 
-| **Luna (String Interning + Lexical Caching)** | **~0.200s** |
+| Implementation | Time (s) | Speedup vs Unoptimized |
+|----------------|----------|------------------------|
+| Native Python (Bytecode) | ~0.028s | — |
+| Luna (Unoptimized — string linear scan) | ~0.380s | 1x (Baseline) |
+| Luna + String Interning + Lexical Caching | ~0.200s | 1.9x |
+| Luna + Primitive Fast Path + Occupied Slot Tracking | ~0.06s | 6.3x |
+| **Luna + Env Pool + Builtin Ptr Compare + Flags** | **~0.05s** | **7.6x** |
+
+> **0.380s → 0.200s → 0.06s → 0.05s.** Interning and caching halved the lookup cost, occupied-slot tracking eliminated the 512-slot scan, then env pooling, interned builtin dispatch, and compiler flags shaved off the last bit.
 
 ### Vector Multiplication (1M Elements)
 
@@ -42,7 +46,7 @@ Before any runtime optimization even runs, Luna is compiled aggressively. Most i
 
 The Makefile compiles with `-march=native`, which tells GCC to target the exact CPU running the build rather than a generic x86 baseline. This means if the machine has AVX2 or AVX-512, GCC is free to use them. The binary produced is physically different depending on what hardware it was built on.
 
-`-O3` enables the highest standard optimization level, turning on auto-vectorization, loop unrolling, branch prediction hints, and every other transformation GCC knows how to apply. `-flto=auto` adds Link Time Optimization on top, meaning GCC can inline and optimize across file boundaries at link time. A function in `interpreter.c` calling into `value.c` can get inlined as if they lived in the same translation unit.
+`-O3` enables the highest standard optimization level, turning on auto-vectorization, loop unrolling, branch prediction hints, and every other transformation GCC knows how to apply. `-flto=auto` adds Link Time Optimization on top, meaning GCC can inline and optimize across file boundaries at link time. A function in `interpreter.c` calling into `value.c` can get inlined as if they lived in the same translation unit. On top of that, `-funroll-loops` tells GCC to unroll inner loops beyond what `-O3` does by default, `-fomit-frame-pointer` frees up a register on hot paths, and `-DNDEBUG` strips all `assert()` calls from the binary so they compile to nothing.
 
 Builds also run fully parallel via `-j$(nproc)`, automatically using every available CPU core to compile all translation units simultaneously.
 
@@ -136,7 +140,19 @@ To prevent the AST node from accidentally reusing a pointer from a *previous* fu
 
 The cache is only valid if `cached_env_version == env_get_version(e)`. When a function recurses, the new `Env` has a new version, the cache safely misses, and the new memory address is dynamically re-cached for that specific depth level. 
 
-This mechanism allows Luna to securely strip the 0.40s variable execution bottleneck down to **0.20s**.
+This mechanism allows Luna to securely strip the 0.40s variable execution bottleneck down to **0.20s** (now **~0.05s** with the primitive fast path, occupied-slot tracking, env pooling, and interned builtin dispatch described below).
+
+### Builtin Pointer Compare
+
+The same interning trick applies to built-in function names. When the interpreter dispatches a call to `len`, `append`, `type`, `int`, or `float`, the original code ran `strcmp()` on every candidate. Now those 5 names are interned once at startup and the dispatch is a single pointer compare (`==`) per candidate — same cost as comparing two integers.
+
+### Keyword First-Char Dispatch
+
+The lexer originally checked every identifier against 25+ keywords with a linear `strcmp` chain. Replacing this with a `switch(buf[0])` first-char dispatch means each identifier only hits 1-4 comparisons instead of up to 30. Keywords starting with `w` check `while`, `with`; keywords starting with `f` check `func`, `for`, `false`, and so on. Most letters have 1-2 keywords max.
+
+### Function Hash Table
+
+User-defined functions were stored in a flat array (up to 64 entries) with linear scan on every call. Replacing this with a 64-slot hash table using the same pointer-identity hash as variables gives O(1) lookup instead of O(n) scan per function call.
 
 ### Real-World Example: The Un-Interned GUI Bug
 
@@ -172,9 +188,35 @@ This ensures the dictionary holds the exact same memory address pointer that the
 
 ## 6. Memory Management
 
-Luna uses a hybrid deterministic memory manager instead of a traditional garbage collector that pauses unpredictably.
+Luna now uses a hybrid runtime memory model instead of the older RC-first setup.
 
-**Reference Counting** handles strings and lists. The moment nothing points to an object its `ref_count` hits zero and `value_free()` is called immediately. No batch cleanup, no pause.
+**Tracing GC** handles the active runtime heap for strings, lists, dense lists, maps, closures, and GC-owned backing buffers. The current checked GC benchmark suite is sub-ms on max pause across all shipped `test_gc` workloads.
+
+**Primitive Fast Path** — The `ValueType` enum is ordered so non-heap types (INT, FLOAT, CHAR, BOOL, NATIVE, FILE, NULL) come first. `value_free()` and `value_copy()` are `static inline` functions that check `VALUE_IS_HEAP()` — a single integer comparison. For primitives this compiles to zero work. Heap values still route through the runtime-managed path, but primitives stay effectively free.
+
+**Move Semantics** — The interpreter avoids the common copy-then-free pattern for temporary values. `env_def_move()`, `env_assign_move()`, `value_list_append_move()`, and `value_move()` transfer ownership directly without redundant intermediate work. This eliminates overhead on variable definition, assignment, list build, and function call/return paths.
+
+**Occupied Slot Tracking** — The `Env` hash table has 512 slots, but a typical loop body only defines 2-3 variables. Instead of scanning all 512 slots on every `env_clear_locals()` call (once per loop iteration), the `Env` struct maintains an `occupied_slots[]` side array that records which slots were actually used. Clearing and freeing only iterates the occupied entries. This turned a 512-iteration scan into a 2-3 iteration scan per loop iteration, contributing to the ~7x speedup on the env benchmark.
+
+**Env Pool / Freelist** — Every function call, if block, and loop body allocates a fresh `Env` struct (~12KB with the 512-slot hash table). Instead of `malloc`/`free` on each scope entry/exit, Luna maintains a 32-entry freelist. `env_free()` returns the `Env` to the pool (after clearing occupied vars), and `env_create()` pulls from the pool if available — only resetting `occupied_count`, `parent`, and `version`. This eliminates thousands of allocation calls per second in recursive or loop-heavy code.
+
+**Zero-Alloc Print** — `NODE_PRINT` originally called `value_to_string()` to build a heap string, `printf`'d it, then freed it — 1-2 mallocs per print. `value_fprint()` writes directly to `stdout` via `fprintf`, zero allocations for primitives. Lists and dense lists recurse through the same path.
+
+**String Concat Fast Path** — The `+` operator on two strings originally went through 5 mallocs and 3 frees (type conversion, intermediate buffer, result). The fast path allocates just the `StringObj` and the character buffer directly, copies both sides with `memcpy`, done — 2 mallocs total.
+
+**String Literal Caching + Direct Builders** — Runtime string literals executed from hot AST paths are now cached once and rooted once instead of being rebuilt every loop iteration. Direct raw string builders (`value_string_concat_raw`, `value_string_repeat_raw`) also cut temporary buffer churn from concat/repeat-heavy workloads. This is what finally pulled the `strings.lu` GC case down into sub-ms territory.
+
+**O(n) List-to-String** — `value_to_string()` for lists was O(n²) due to repeated `strcat` rescanning the output buffer on each element. Replaced with a position-tracked `memcpy` that maintains a write cursor and doubles the buffer on demand. Linear in list size.
+
+**Exact Integer Division** — `10 / 2` used to return `5.0` (float). Now checks `l.i % r.i == 0` and returns `5` (int) for exact division, keeping values on the integer fast path longer.
+
+**Inline Token Buffer** — The lexer's `make_token()` used to `malloc` for every single token, including one-character operators like `+`, `(`, `)`. The `Token` struct now has a 24-byte inline buffer (`ibuf`). Lexemes shorter than 24 characters (which covers all operators, keywords, identifiers, numbers, char literals, and most strings) are stored directly in the struct with zero heap allocation. Only long string literals fall through to `malloc`. A `token_str()` inline helper abstracts the choice, and `free_token()` only calls `free()` when the heap path was used.
+
+**Sort Scratch Buffer** — The hybrid merge sort in `list_lib.c` used to `malloc` and `free` two temporary arrays on every merge call — O(N log N) allocation pairs for a list of N elements. Now `lib_list_sort()` allocates a single scratch buffer of N elements upfront and passes it down through the recursion. The merge function indexes into this shared buffer for both halves. Total allocation cost: 1 `malloc` + 1 `free` per sort, regardless of list size.
+
+**Constant Folding** — The parser now evaluates binary operations on literal constants at parse time instead of creating AST nodes for the interpreter to walk. `3 + 4 * 2` folds down to a single `ast_number(11)` node — the interpreter never sees the multiplication or addition. Covers all arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), and logical (`&&`, `||`) operators on int, float, and bool literals. Unary negation (`-5`) and NOT (`!true`) fold similarly. This eliminates dead AST nodes and the corresponding `eval_expr` calls entirely.
+
+**Tail-Call Optimization** — Self-recursive tail calls (`return f(...)` where `f` is the currently executing function) are detected at runtime in `NODE_RETURN`. Instead of creating a new C stack frame and Env scope, the interpreter evaluates the new arguments, clears the current scope's locals, rebinds the parameters, and restarts the function body via `goto`. This converts O(n) stack growth into O(1) constant space. `sum(1000000, 0)` runs without stack overflow. Non-tail recursion (e.g., `fib(n-1) + fib(n-2)`) is completely unaffected.
 
 **AST Memory Arena** handles AST nodes and dense list allocations. Instead of calling `malloc` and `free` for thousands of individual nodes, the arena grabs a 1MB block upfront and uses pointer bumping for every allocation. Cleanup is not a traversal, it is a single pointer reset to zero. The whole block is considered empty in one instruction, with zero per-node free calls.
 

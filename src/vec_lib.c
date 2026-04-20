@@ -11,7 +11,7 @@
 
 extern Arena *ast_arena;
 
-// Define the ASM function pointer type (retained signature for compatibility)
+// Vector operation function signature used by the AVX2/native math helpers.
 typedef void (*VecOp)(long long count, double *a, double *b, double *out);
 
 #include <immintrin.h>
@@ -72,8 +72,7 @@ static Value vec_op_direct(Value list_a, Value list_b, VecOp op) {
         if (count == 0) return value_dense_list();
 
         Value res = value_dense_list();
-        // The resulting structure survives to the interpreter heap, so use standard malloc
-        res.dlist->data = arena_alloc(ast_arena, sizeof(double) * count);
+        res.dlist->data = malloc(sizeof(double) * count);
         res.dlist->count = count;
         res.dlist->capacity = count;
 

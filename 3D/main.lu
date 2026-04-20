@@ -1,0 +1,133 @@
+// Neon Geometry - Luna 3D Engine Showcase
+init_window(1280, 720, "Luna 3D - Neon Geometry Showcase")
+set_fps(60)
+
+let cam = create_camera_3d([0.0, 10.0, -25.0], [0.0, 2.0, 0.0], [0.0, 1.0, 0.0], 45.0)
+
+// Very dark ambient light to make point lights pop
+set_ambient_light(rgb(10, 10, 15))
+
+// 4 orbiting point lights with different colors
+let l1 = create_light(1, [0, 0, 0], [0, 0, 0], rgb(255, 50, 50))
+let l2 = create_light(1, [0, 0, 0], [0, 0, 0], rgb(50, 255, 50))
+let l3 = create_light(1, [0, 0, 0], [0, 0, 0], rgb(50, 150, 255))
+let l4 = create_light(1, [0, 0, 0], [0, 0, 0], rgb(255, 50, 255))
+
+set_light_intensity(l1, 2.5)
+set_light_intensity(l2, 2.5)
+set_light_intensity(l3, 2.5)
+set_light_intensity(l4, 2.5)
+
+let time = 0.0
+
+let cam_angle = 0.0
+let cam_height = 10.0
+let cam_radius = 25.0
+
+while (window_open()) {
+    let dt = get_delta_time()
+    time = time + dt
+
+    // Dynamic Camera Control
+    if (is_key_down(0)) { cam_angle = cam_angle + 1.5 * dt } // A
+    if (is_key_down(3)) { cam_angle = cam_angle - 1.5 * dt } // D
+    if (is_key_down(18)) { cam_height = cam_height + 10.0 * dt } // S
+    if (is_key_down(8)) { cam_height = cam_height - 10.0 * dt } // W
+    
+    // Auto orbit if no input
+    if (!is_key_down(0) and !is_key_down(3)) {
+        cam_angle = cam_angle + 0.3 * dt
+    }
+
+    let cx = sin(cam_angle) * cam_radius
+    let cz = cos(cam_angle) * cam_radius
+    update_camera_3d(cam, [cx, cam_height, cz], [0.0, 3.0, 0.0])
+
+    // Update lights
+    let r1 = 8.0
+    let s1 = time * 1.5
+    let p1 = [sin(s1)*r1, 4.0 + sin(s1*2.0)*2.0, cos(s1)*r1]
+    set_light_position(l1, p1)
+
+    let s2 = time * 1.2 + 1.57
+    let p2 = [sin(s2)*r1, 4.0 + cos(s2*1.8)*2.0, cos(s2)*r1]
+    set_light_position(l2, p2)
+
+    let s3 = time * 0.9 + 3.14
+    let p3 = [sin(s3)*r1, 4.0 + sin(s3*2.2)*2.0, cos(s3)*r1]
+    set_light_position(l3, p3)
+
+    let s4 = time * 1.7 + 4.71
+    let p4 = [sin(s4)*r1, 4.0 + cos(s4*1.5)*2.0, cos(s4)*r1]
+    set_light_position(l4, p4)
+
+    begin_drawing()
+    clear_background(rgb(10, 10, 12)) // Deep dark gray/blue
+
+    begin_mode_3d(cam)
+        // Sci-Fi Ground
+        draw_plane([0, 0, 0], [100, 100], rgb(30, 30, 35))
+        draw_grid(50, 2.0)
+
+        // Center Core Structure
+        let core_w = 4.0
+        draw_cube([0, 3, 0], [core_w, core_w, core_w], rgb(100, 100, 100))
+        draw_cube_wires([0, 3, 0], [core_w+0.1, core_w+0.1, core_w+0.1], rgb(0, 255, 255))
+
+        // Pulsing inner sphere
+        let pulse = 2.0 + sin(time * 3.0) * 0.5
+        draw_sphere([0, 3, 0], pulse, 32, 32, rgb(255, 255, 255))
+
+        // DNA-like twisting outer pillars
+        for (let i in range(16)) {
+            let offset = i * 0.4
+            let tw = time * 0.5 + offset
+            let px = sin(tw) * 14.0
+            let pz = cos(tw) * 14.0
+            
+            // Pillar size
+            let ph = 8.0 + sin(tw*3.0) * 4.0
+            draw_cylinder([px, ph*0.5, pz], 0.5, 0.5, ph, 12, rgb(80, 80, 80))
+            
+            // Opposite strand
+            let px2 = sin(tw + 3.14) * 14.0
+            let pz2 = cos(tw + 3.14) * 14.0
+            draw_cylinder([px2, ph*0.5, pz2], 0.5, 0.5, ph, 12, rgb(80, 80, 80))
+            
+            // Connecting bridge lines
+            draw_line_3d([px, ph*0.5, pz], [px2, ph*0.5, pz2], rgb(0, 200, 255))
+        }
+
+        // Floating pyramids (triangles)
+        for (let i in range(5)) {
+            let a = time * 0.8 + i * 1.2
+            let r = 20.0
+            let tx = sin(a) * r
+            let tz = cos(a) * r
+            let ty = 6.0 + sin(time * 2.0 + i) * 2.0
+            
+            draw_triangle_3d([tx, ty+2, tz], [tx-1, ty, tz-1], [tx+1, ty, tz-1], rgb(200, 200, 200))
+            draw_triangle_3d([tx, ty+2, tz], [tx+1, ty, tz-1], [tx+1, ty, tz+1], rgb(180, 180, 180))
+            draw_triangle_3d([tx, ty+2, tz], [tx+1, ty, tz+1], [tx-1, ty, tz+1], rgb(160, 160, 160))
+            draw_triangle_3d([tx, ty+2, tz], [tx-1, ty, tz+1], [tx-1, ty, tz-1], rgb(140, 140, 140))
+        }
+
+        // Draw light sources as glowing spheres
+        draw_sphere(p1, 0.4, 8, 8, rgb(255, 100, 100))
+        draw_sphere(p2, 0.4, 8, 8, rgb(100, 255, 100))
+        draw_sphere(p3, 0.4, 8, 8, rgb(100, 150, 255))
+        draw_sphere(p4, 0.4, 8, 8, rgb(255, 100, 255))
+        
+    end_mode_3d()
+
+    // 2D Overlay UI
+    draw_rectangle(0, 0, 1280, 80, rgb(0, 0, 0, 200))
+    draw_gradient_v(0, 80, 1280, 20, rgb(0, 0, 0, 200), rgb(0, 0, 0, 0))
+    
+    draw_text_default("SYSTEM OVERRIDE: NEON GEOMETRY", 20, 20, 24, rgb(0, 255, 255))
+    draw_text_default("W/S: Height  |  A/D: Orbit  |  Auto-Orbit Active", 20, 50, 18, rgb(150, 150, 200))
+
+    end_drawing()
+}
+
+close_window()
