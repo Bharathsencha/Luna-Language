@@ -378,10 +378,12 @@ void env_register_stdlib(Env *env) {
     env_def(env, intern_string("draw_gradient_ex"), value_native(lib_gui_draw_gradient_ex));
     env_def(env, intern_string("draw_texture_pro"), value_native(lib_gui_draw_texture_pro));
 
-    // --- 3D GUI API ---
+    // 3D GUI API
     env_def(env, intern_string("create_camera_3d"), value_native(lib_gui_create_camera_3d));
     env_def(env, intern_string("update_camera_3d"), value_native(lib_gui_update_camera_3d));
+    env_def(env, intern_string("update_camera_free"), value_native(lib_gui_update_camera_free));
     env_def(env, intern_string("set_camera_fov"), value_native(lib_gui_set_camera_fov));
+    env_def(env, intern_string("capture_cursor"), value_native(lib_gui_capture_cursor));
     env_def(env, intern_string("begin_mode_3d"), value_native(lib_gui_begin_mode_3d));
     env_def(env, intern_string("end_mode_3d"), value_native(lib_gui_end_mode_3d));
     env_def(env, intern_string("get_camera_forward"), value_native(lib_gui_get_camera_forward));

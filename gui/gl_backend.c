@@ -669,6 +669,12 @@ void gl_set_window_opacity(float opacity) {
     if (g_window) glfwSetWindowOpacity(g_window, opacity);
 }
 
+void gl_set_cursor_captured(int captured) {
+    if (!g_window) return;
+    glfwSetInputMode(g_window, GLFW_CURSOR,
+                     captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+}
+
 // FRAME
 
 void gl_begin_drawing(void) {

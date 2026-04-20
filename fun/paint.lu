@@ -1,6 +1,15 @@
 let WIDTH  = 1280
 let HEIGHT = 720
 
+# Input constant fallbacks (GLFW key/mouse codes)
+let KEY_B = 66
+let KEY_C = 67
+let KEY_E = 69
+let KEY_R = 82
+let KEY_UP = 265
+let KEY_DOWN = 264
+let MOUSE_LEFT_BUTTON = 0
+
 # Toolbar on the LEFT as a vertical sidebar
 let SB_W   = 72   # sidebar width
 let SB_PAD = 12
@@ -50,7 +59,7 @@ func handle_input() {
     if (rainbow_hue > 360.0) { rainbow_hue = 0.0 }
     if (rainbow_msg_timer > 0.0) { rainbow_msg_timer = rainbow_msg_timer - 0.016 }
 
-    if (is_key_pressed(KEY_S)) { take_screenshot("luna_art.png") }
+    if (is_key_pressed(83)) { take_screenshot("luna_art.png") }  # S
     if (is_key_pressed(KEY_C)) {
         begin_texture_mode(canvas)
         clear_background(252, 250, 247, 255)

@@ -77,12 +77,32 @@ Value lib_gui_update_camera_3d(int argc, Value *argv, struct Env *env) {
     return value_null();
 }
 
+// update_camera_free(cam_id, speed=4.0, sensitivity=0.003)
+Value lib_gui_update_camera_free(int argc, Value *argv, struct Env *env) {
+    if (argc < 1) return value_null();
+    int id = (int)argv[0].i;
+    if (id < 0 || id >= camera_3d_count) return value_null();
+
+    float speed = (argc >= 2) ? (float)val3d_to_double(argv[1]) : 4.0f;
+    float sensitivity = (argc >= 3) ? (float)val3d_to_double(argv[2]) : 0.003f;
+    gl3d_update_camera_free(&cameras_3d[id], speed, sensitivity);
+    return value_null();
+}
+
 // set_camera_fov(cam_id, fov)
 Value lib_gui_set_camera_fov(int argc, Value *argv, struct Env *env) {
     if (argc < 2) return value_null();
     int id = (int)argv[0].i;
     if (id < 0 || id >= camera_3d_count) return value_null();
     cameras_3d[id].fov = (float)val3d_to_double(argv[1]);
+    return value_null();
+}
+
+// capture_cursor(captured)
+Value lib_gui_capture_cursor(int argc, Value *argv, struct Env *env) {
+    if (argc < 1) return value_null();
+    gl_set_cursor_captured((int)val3d_to_double(argv[0]) != 0);
+    gl3d_reset_free_camera_mouse();
     return value_null();
 }
 

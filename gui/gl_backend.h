@@ -37,6 +37,7 @@ void  gl_close_window(void);
 void  gl_set_target_fps(int fps);
 float gl_get_frame_time(void);
 void  gl_set_window_opacity(float opacity);
+void  gl_set_cursor_captured(int captured);
 
 // FRAME
 

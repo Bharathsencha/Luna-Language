@@ -14,7 +14,9 @@ struct Env;
 // Camera System
 Value lib_gui_create_camera_3d(int argc, Value *argv, struct Env *env);
 Value lib_gui_update_camera_3d(int argc, Value *argv, struct Env *env);
+Value lib_gui_update_camera_free(int argc, Value *argv, struct Env *env);
 Value lib_gui_set_camera_fov(int argc, Value *argv, struct Env *env);
+Value lib_gui_capture_cursor(int argc, Value *argv, struct Env *env);
 Value lib_gui_begin_mode_3d(int argc, Value *argv, struct Env *env);
 Value lib_gui_end_mode_3d(int argc, Value *argv, struct Env *env);
 Value lib_gui_get_camera_forward(int argc, Value *argv, struct Env *env);

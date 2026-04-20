@@ -29,6 +29,13 @@ static GLint  g3d_u_model = -1;
 static GLint  g3d_u_use_lighting = -1;
 static GLint  g3d_u_ambient = -1;
 static GLint  g3d_u_view_pos = -1;
+static GLint  g3d_u_light_count = -1;
+static GLint  g3d_u_light_type[GL3D_MAX_LIGHTS];
+static GLint  g3d_u_light_pos[GL3D_MAX_LIGHTS];
+static GLint  g3d_u_light_dir[GL3D_MAX_LIGHTS];
+static GLint  g3d_u_light_color[GL3D_MAX_LIGHTS];
+static GLint  g3d_u_light_intensity[GL3D_MAX_LIGHTS];
+static GLint  g3d_u_light_enabled[GL3D_MAX_LIGHTS];
 
 static int g3d_initialized = 0;
 static int g3d_mode_active = 0;
@@ -36,6 +43,9 @@ static int g3d_mode_active = 0;
 static GMat4 g3d_projection;
 static GMat4 g3d_view;
 static GCamera3D g3d_current_cam;
+static int g3d_free_camera_mouse_initialized = 0;
+static double g3d_free_camera_last_mouse_x = 0.0;
+static double g3d_free_camera_last_mouse_y = 0.0;
 
 // Lighting state
 static GLight3D g3d_lights[GL3D_MAX_LIGHTS];
@@ -50,6 +60,12 @@ static int   g3d_batch_count = 0;
 
 // Window size access (from gl_backend.c — we need these externs)
 extern int g_win_w, g_win_h;
+
+static float clampf(float value, float lo, float hi) {
+    if (value < lo) return lo;
+    if (value > hi) return hi;
+    return value;
+}
 
 
 static const char *vs_3d_src =
@@ -304,32 +320,24 @@ static void upload_lighting_uniforms(void) {
     float vp[3] = {g3d_current_cam.position.x, g3d_current_cam.position.y, g3d_current_cam.position.z};
     glUniform3fv(g3d_u_view_pos, 1, vp);
 
-    GLint loc_count = glGetUniformLocation(g3d_shader, "uLightCount");
-    glUniform1i(loc_count, g3d_light_count);
+    glUniform1i(g3d_u_light_count, g3d_light_count);
 
     for (int i = 0; i < g3d_light_count; i++) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "uLightType[%d]", i);
-        glUniform1i(glGetUniformLocation(g3d_shader, buf), g3d_lights[i].type);
+        glUniform1i(g3d_u_light_type[i], g3d_lights[i].type);
 
-        snprintf(buf, sizeof(buf), "uLightPos[%d]", i);
         float lp[3] = {g3d_lights[i].position.x, g3d_lights[i].position.y, g3d_lights[i].position.z};
-        glUniform3fv(glGetUniformLocation(g3d_shader, buf), 1, lp);
+        glUniform3fv(g3d_u_light_pos[i], 1, lp);
 
-        snprintf(buf, sizeof(buf), "uLightDir[%d]", i);
         GVec3 dir = vec3_normalize(vec3_sub(g3d_lights[i].target, g3d_lights[i].position));
         float ld[3] = {dir.x, dir.y, dir.z};
-        glUniform3fv(glGetUniformLocation(g3d_shader, buf), 1, ld);
+        glUniform3fv(g3d_u_light_dir[i], 1, ld);
 
-        snprintf(buf, sizeof(buf), "uLightColor[%d]", i);
         float lc[3] = {g3d_lights[i].color.r/255.0f, g3d_lights[i].color.g/255.0f, g3d_lights[i].color.b/255.0f};
-        glUniform3fv(glGetUniformLocation(g3d_shader, buf), 1, lc);
+        glUniform3fv(g3d_u_light_color[i], 1, lc);
 
-        snprintf(buf, sizeof(buf), "uLightIntensity[%d]", i);
-        glUniform1f(glGetUniformLocation(g3d_shader, buf), g3d_lights[i].intensity);
+        glUniform1f(g3d_u_light_intensity[i], g3d_lights[i].intensity);
 
-        snprintf(buf, sizeof(buf), "uLightEnabled[%d]", i);
-        glUniform1i(glGetUniformLocation(g3d_shader, buf), g3d_lights[i].enabled);
+        glUniform1i(g3d_u_light_enabled[i], g3d_lights[i].enabled);
     }
 }
 
@@ -343,6 +351,22 @@ int gl3d_init(void) {
     g3d_u_use_lighting = glGetUniformLocation(g3d_shader, "uUseLighting");
     g3d_u_ambient = glGetUniformLocation(g3d_shader, "uAmbient");
     g3d_u_view_pos = glGetUniformLocation(g3d_shader, "uViewPos");
+    g3d_u_light_count = glGetUniformLocation(g3d_shader, "uLightCount");
+    for (int i = 0; i < GL3D_MAX_LIGHTS; i++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "uLightType[%d]", i);
+        g3d_u_light_type[i] = glGetUniformLocation(g3d_shader, buf);
+        snprintf(buf, sizeof(buf), "uLightPos[%d]", i);
+        g3d_u_light_pos[i] = glGetUniformLocation(g3d_shader, buf);
+        snprintf(buf, sizeof(buf), "uLightDir[%d]", i);
+        g3d_u_light_dir[i] = glGetUniformLocation(g3d_shader, buf);
+        snprintf(buf, sizeof(buf), "uLightColor[%d]", i);
+        g3d_u_light_color[i] = glGetUniformLocation(g3d_shader, buf);
+        snprintf(buf, sizeof(buf), "uLightIntensity[%d]", i);
+        g3d_u_light_intensity[i] = glGetUniformLocation(g3d_shader, buf);
+        snprintf(buf, sizeof(buf), "uLightEnabled[%d]", i);
+        g3d_u_light_enabled[i] = glGetUniformLocation(g3d_shader, buf);
+    }
 
     // Create 3D VAO/VBO
     glGenVertexArrays(1, &g3d_vao);
@@ -374,6 +398,67 @@ void gl3d_shutdown(void) {
     if (g3d_vbo) glDeleteBuffers(1, &g3d_vbo);
     if (g3d_shader) glDeleteProgram(g3d_shader);
     g3d_initialized = 0;
+}
+
+void gl3d_reset_free_camera_mouse(void) {
+    g3d_free_camera_mouse_initialized = 0;
+}
+
+void gl3d_update_camera_free(GCamera3D *cam, float move_speed, float mouse_sensitivity) {
+    if (!cam) return;
+
+    GVec2 mouse = gl_get_mouse_position();
+    if (!g3d_free_camera_mouse_initialized) {
+        g3d_free_camera_last_mouse_x = mouse.x;
+        g3d_free_camera_last_mouse_y = mouse.y;
+        g3d_free_camera_mouse_initialized = 1;
+    }
+
+    float dx = (float)(mouse.x - g3d_free_camera_last_mouse_x);
+    float dy = (float)(mouse.y - g3d_free_camera_last_mouse_y);
+    g3d_free_camera_last_mouse_x = mouse.x;
+    g3d_free_camera_last_mouse_y = mouse.y;
+
+    GVec3 up = vec3_normalize(cam->up);
+    if (fabsf(up.x) < 0.0001f && fabsf(up.y) < 0.0001f && fabsf(up.z) < 0.0001f) {
+        up = (GVec3){0.0f, 1.0f, 0.0f};
+    }
+
+    GVec3 forward = vec3_normalize(vec3_sub(cam->target, cam->position));
+    if (fabsf(forward.x) < 0.0001f && fabsf(forward.y) < 0.0001f && fabsf(forward.z) < 0.0001f) {
+        forward = (GVec3){0.0f, 0.0f, -1.0f};
+    }
+
+    float yaw = atan2f(forward.z, forward.x);
+    float pitch = asinf(clampf(forward.y, -1.0f, 1.0f));
+    yaw += dx * mouse_sensitivity;
+    pitch -= dy * mouse_sensitivity;
+    pitch = clampf(pitch, -1.5533f, 1.5533f);
+
+    GVec3 look = {
+        cosf(pitch) * cosf(yaw),
+        sinf(pitch),
+        cosf(pitch) * sinf(yaw)
+    };
+    look = vec3_normalize(look);
+
+    GVec3 right = vec3_normalize(vec3_cross(look, up));
+    if (fabsf(right.x) < 0.0001f && fabsf(right.y) < 0.0001f && fabsf(right.z) < 0.0001f) {
+        right = (GVec3){1.0f, 0.0f, 0.0f};
+    }
+
+    float frame_time = gl_get_frame_time();
+    if (frame_time <= 0.0f) frame_time = 1.0f / 60.0f;
+    float step = move_speed * frame_time;
+    GVec3 move = {0};
+
+    if (gl_is_key_down(GKEY_W)) move = vec3_add(move, vec3_scale(look, step));
+    if (gl_is_key_down(GKEY_S)) move = vec3_add(move, vec3_scale(look, -step));
+    if (gl_is_key_down(GKEY_A)) move = vec3_add(move, vec3_scale(right, -step));
+    if (gl_is_key_down(GKEY_D)) move = vec3_add(move, vec3_scale(right, step));
+
+    cam->position = vec3_add(cam->position, move);
+    cam->target = vec3_add(cam->position, look);
 }
 
 

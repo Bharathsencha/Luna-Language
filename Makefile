@@ -19,7 +19,7 @@ DATA_RT_DIR = rust/data_rt
 DATA_RT_SRCS := $(shell find $(DATA_RT_DIR)/src -type f) $(DATA_RT_DIR)/Cargo.toml
 DATA_RT_BUILD_LIB = $(DATA_RT_DIR)/target/release/libluna_data_rt.a
 DATA_RT_LIB = $(LIBDIR)/libluna_data_rt.a
-CARGO = cargo
+CARGO = env -u MAKEFLAGS -u MFLAGS cargo
 ZIG = zig
 
 # Source files
@@ -172,12 +172,12 @@ test: $(BINDIR)/$(TARGET)
 	@./$(BINDIR)/$(TARGET) test/balls.lu
 	@echo ""
 	@./test_runner.sh
-	@cargo test --manifest-path rust/unsafe_rt/Cargo.toml
-	@cargo test --manifest-path rust/data_rt/Cargo.toml
+	@$(CARGO) test --manifest-path rust/unsafe_rt/Cargo.toml
+	@$(CARGO) test --manifest-path rust/data_rt/Cargo.toml
 	@echo "All tests passed!"
 
 test-rust-data:
-	@cargo test --manifest-path rust/data_rt/Cargo.toml
+	@$(CARGO) test --manifest-path rust/data_rt/Cargo.toml
 	@echo "Rust data runtime tests passed."
 
 # Clean build artifacts

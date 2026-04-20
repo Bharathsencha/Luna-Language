@@ -43,6 +43,8 @@ void gl3d_shutdown(void);            // cleanup
 
 void gl3d_begin_mode_3d(GCamera3D cam);  // enable depth, set projection/view
 void gl3d_end_mode_3d(void);             // restore 2D state
+void gl3d_update_camera_free(GCamera3D *cam, float move_speed, float mouse_sensitivity);
+void gl3d_reset_free_camera_mouse(void);
 
 
 void gl3d_draw_cube(GVec3 pos, GVec3 size, GColor color);
