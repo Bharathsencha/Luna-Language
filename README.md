@@ -20,10 +20,6 @@ The project explores the boundary between high-level scripting ease (JavaScript-
 - **Manual Memory Tools**: `unsafe` blocks with `alloc`, `store`, `deref`, `ptr_add`, `addr`, and `defer`.
 - **Own Data Types**: Luna ships native `bloc` / `box` / `template` data tiers with a Rust-backed validation runtime; see [Data Types Reference](docs/data_types.md).
 - **Creative Coding**: Direct bindings for Luna's native OpenGL/GLFW graphics and audio layer for interactive apps and experiments.
-<<<<<<< HEAD
-
-=======
->>>>>>> 4c55070eba980b19638118e11f15f90535f6121f
 ---
 
 ## Setup
