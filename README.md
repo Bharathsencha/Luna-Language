@@ -2,220 +2,144 @@
   <img src="assets/luna.png" alt="Luna Logo" width="140">
 </p>
 
-# Luna 
+<h1 align="center">Luna</h1>
 
-Luna is a high-performance programming language built from scratch in C, designed for creative coding and high-speed scripting.
-
-The project explores the boundary between high-level scripting ease (JavaScript-like syntax) and bare-metal performance. By leveraging professional-grade optimizations like SIMD vectorization and memory arenas, Luna achieves execution speeds comparable to C and NumPy on heavy workloads.
+<p align="center">
+  A high-performance scripting language built in C — JavaScript-like syntax, bare-metal speed.
+</p>
 
 ---
 
-## Key Features
+Luna is a scripting language built from scratch in C. It gives you expressive, JavaScript-style syntax while pushing performance through SIMD vectorization, memory arenas, and a tracing GC with sub-millisecond max pauses. It ships its own 2D/3D OpenGL rendering backend and audio layer, making it a complete platform for creative coding and high-speed scripting.
 
-- **High-Performance Runtime**: SIMD-accelerated math, constant-time environment lookups, and O(1) string interning.
-- **Modern Syntax**: JavaScript-inspired syntax for ease of use.
-- **Creative Coding**:New GUI based on OpenGL, [Mini Audio](https://github.com/mackron/miniaudio) and [STB](https://github.com/nothings/stb).
-- **Sub-MS GC**: The current tracing GC benchmark suite is below 1ms max pause.
-- **Modern Syntax**: JavaScript-inspired syntax with explicit `use` modules and interpolation-ready strings.
-- **Manual Memory Tools**: `unsafe` blocks with `alloc`, `store`, `deref`, `ptr_add`, `addr`, and `defer`.
-- **Own Data Types**: Luna ships native `bloc` / `box` / `template` data tiers with a Rust-backed validation runtime; see [Data Types Reference](docs/data_types.md).
-- **Creative Coding**: Direct bindings for Luna's native OpenGL/GLFW graphics and audio layer for interactive apps and experiments.
+---
+
+## Luna
+
+Most scripting languages make you choose between ease of use and performance. Luna doesn't.
+
+- Write clean, readable code with a familiar JS-inspired syntax
+- Get C and NumPy-level throughput on heavy workloads through native SIMD bridges
+- Ship interactive 2D/3D applications with the built-in OpenGL 3.3 + miniaudio backend
+- Trust the GC — current benchmarks show sub-ms max pause across all shipped workloads
+- Drop into `unsafe` blocks for manual memory control when you need it
+
+---
+
+## Feature Highlights
+
+- **Bare-metal performance** — SIMD-accelerated `vec_mul` / `mat_mul` match or beat NumPy. The parser uses a bump-allocated memory arena for O(1) AST allocation, constant folding at parse time, O(1) variable lookups via a djb2 hash table, string interning for pointer-fast name comparisons, and tail-call optimization for self-recursive functions.
+
+- **Sub-ms garbage collector** — incremental tri-color tracing GC with SATB write barriers, young/old generation tracking, and remembered-set support. Max pause is under 1ms across all shipped benchmark workloads. AST and `unsafe` memory are intentionally kept outside the collector's domain.
+
+- **2D/3D graphics and audio** — custom OpenGL 3.3 Core Profile renderer on statically linked GLFW with a 65,536-vertex batch renderer, full 2D shape primitives, FBO render-to-texture, `stb_truetype` font atlas, and Blinn-Phong lit 3D scenes (cameras, lights, meshes, grids). Audio via miniaudio with streaming, one-shot SFX, and real-time FFT. Zero runtime graphics dependencies beyond system OpenGL and X11.
+
+- **Familiar syntax, powerful features** — JavaScript-inspired `let` / `func` / `for` / `switch` with closures, first-class functions, string interpolation (`"HP: {hp + bonus}"`), higher-order `map()` / `filter()` / `reduce()`, named module exports (`use {greet} from "utils.lu"`), and `data` constructors for tagged structured values.
+
+- **Three-tier structured data** — `bloc` for tiny immutable inline values, `box` for manual non-GC heap buffers, `template` for schema-backed GC-managed objects. All three are validated by a Rust static runtime (`libluna_data_rt.a`).
+
+- **Manual memory when you need it** — `unsafe` blocks expose `alloc`, `store`, `load`, `ptr_offset`, `address_of`, and `defer` with 12 enforced safety rules (no use-after-free, no pointer escape, no GC container contamination, etc.) backed by a Rust rule engine. Scope-based `defer(close(file))` is available in normal code too.
+
 ---
 
 ## Setup
+
 ```bash
-# Clone the repository
 git clone https://github.com/Bharathsencha/Luna-Language
 cd Luna-Language
 ```
 
+**Dependencies (Ubuntu/Debian):**
+
 ```bash
-# Build the Luna toolchain
+sudo apt install gcc build-essential git cmake nasm libx11-dev libgl1-mesa-dev
+```
+
+**Build:**
+
+```bash
 make
 ```
 
+**Run:**
+
 ```bash
-# Run your first program
 ./bin/luna your_script.lu
 ```
+
+All graphics dependencies (GLFW, stb_image, stb_truetype, miniaudio) are vendored — no extra installs needed.
 
 ---
 
 ## Quick Start
-Create a file called `hello.lu`:
+
+### Hello World
 
 ```javascript
 print("Hello, Luna!")
 
 let name = input("What's your name? ")
-print("Welcome to Luna,", name, "!")
-let greeting = "Hello {name}"
+let greeting = "Welcome to Luna, {name}!"
 print(greeting)
 ```
 
-Run it:
-```bash
-./bin/luna hello.lu
-```
+### Variables, Types, and String Interpolation
 
-### Type Inference And Input
-
-Luna infers a variable's runtime type from the value assigned to it.
+Luna infers types from assigned values. String literals can embed any Luna expression inside `{ }`.
 
 ```javascript
-let x = 10        # int
-let y = 1.5       # float
-let name = "Luna" # string
-let ok = true     # boolean
+let x     = 10        # int
+let y     = 1.5       # float
+let name  = "Luna"    # string
+let ok    = true      # boolean
+
+let score = 42
+let msg   = "Player {name} scored {score} — next: {score + 1}"
+print(msg)
+# Player Luna scored 42 — next: 43
 ```
 
-`input(prompt)` always returns a `string`, even if the user types digits.
+### Functions and Recursion
 
 ```javascript
-let raw_age = input("Age: ")  # "10"
-let age = int(raw_age)        # 10
-```
-
----
-
-## Language Reference
-
-### Core Syntax
-
-| Feature | Syntax | Description |
-|---------|--------|-------------|
-| Declaration | `let x = 10` | Declares a variable in the current scope |
-| Functions | `func add(a, b) { return a + b }` | First-class function support |
-| Control Flow | `if`, `else`, `while`, `for`, `switch` | Standard structured control flow |
-| Lists | `let arr = [1, 2, 3]` | Dynamic, mixed-type lists |
-| Maps | `let cfg = {"width": 1280}` | String-keyed hash maps for config/state |
-| Modules | `use {greet} from "utils.lu"` | Loads explicit exports from another Luna file |
-| Comments | `#` or `//` | Standard inline comments |
-| String Interpolation | `let msg = "sum = {1 + 2}"` | Evaluates Luna expressions inside string literals at runtime |
-| Data Types | `data Vec2 { x, y }` | Declares a tagged constructor for your own structured values |
-
-### Performance Extensions
-
-| Function | Description |
-|----------|-------------|
-| `dense_list(size, fill)` | Pre-flattened, SIMD-ready float array |
-| `vec_mul(A, B)` | SIMD-accelerated vector multiplication |
-| `range(start, end, step)` | Builds integer ranges for loops and iteration |
-| `clock()` | High-precision monotonic timer |
-
-### Collection Helpers
-
-| Function | Description |
-|----------|-------------|
-| `map_keys(m)` | Returns the map's keys as a list |
-| `map_values(m)` | Returns the map's values as a list |
-| `map_items(m)` | Returns `[key, value]` pairs as a list |
-| `shape(value)` | Returns the data tag for a data value |
-
-### Memory Functions
-
-| Function | Description |
-|----------|-------------|
-| `alloc(n)` | Allocates `n` Luna value slots inside `unsafe` |
-| `free(ptr)` | Frees an allocation pointer manually |
-| `defer(ptr)` | Frees a pointer automatically when the unsafe block ends |
-| `defer(close(file))` | Schedules a cleanup call when the current scope ends |
-| `deref(ptr)` | Reads a value through a pointer |
-| `store(ptr, value)` | Writes a value through a pointer |
-| `ptr_add(ptr, offset)` | Moves to another slot in the same allocation |
-| `addr(name)` | Takes the address of a named variable |
-| `int(ptr)` | Returns a raw integer address from a pointer |
-
-### Runtime Docs
-
-- `docs/memory.md` for the unsafe memory API guide
-- `docs/gc.md` for the tracing GC design, benchmarks, and current sub-ms pause profile
-- `docs/data structure.md` for the planned `bloc`, `box`, and `template` model
-- `rust/readme.md` for the Rust static-runtime crates and build layout
-
-### Structured Data Types
-
-Luna ships three native structured-data tiers, each optimized for a different
-use case:
-
-```javascript
-bloc Vec2 { x, y }
-template Player { name, hp, pos }
-
-let p = Vec2{3, 4}
-let hero = Player{"Astra", 100, p}
-let buf = box[256]
-```
-
-- `bloc` — tiny immutable inline values (GC-ignored, cache-line capped)
-- `box` — manual non-GC heap buffers with scope-based cleanup
-- `template` — rich schema-backed GC-managed objects with named field access
-
-Short example:
-
-```javascript
-unsafe {
-    let buf = alloc(4)
-    defer(buf)
-
-    for (let i = 0; i < 4; i++) {
-        store(ptr_add(buf, i), i * 10)
-    }
-
-    for (let i = 0; i < 4; i++) {
-        print("slot", i, "=", deref(ptr_add(buf, i)))
-    }
+func factorial(n) {
+    if (n <= 1) { return 1 }
+    return n * factorial(n - 1)
 }
-```
 
----
-
-## Examples & Test Programs
-
-Here are some complete programs you can run to explore Luna's capabilities.
-
-### 1. Basic Operations
-```javascript
-# Variables and basic math
-let x = 10
-let y = 5
-print("Sum:", x + y)
-print("Product:", x * y)
-
-# Multiple assignments
-let a, b, c = 10, 1.1, "Hello"
-print("a:", a, "b:", b, "c:", c)
-
-# String escaping
-print("Line 1\nLine 2")
-print("She said \"Hello!\"")
-```
-
-### 2. List Operations
-```javascript
-let grades = [85, 92, 78, 90, 88]
-let sum = 0
-for (let i = 0; i < len(grades); i++) {
-    sum = sum + grades[i]
+func greet(name) {
+    return "Hello, {name}!"
 }
-let average = float(sum) / float(len(grades))
-print("Grades:", grades)
-print("Average:", average)
+
+print(factorial(6))       # 720
+print(greet("Astra"))     # Hello, Astra!
 ```
 
-### 2.1. For-In Loops
+### Lists, Maps, and Higher-Order Functions
+
 ```javascript
-let names = ["Luna", "Sol", "Nova"]
-for (let name in names) {
-    print(format("Hello {}", name))
-}
+let numbers = [1, 2, 3, 4, 5]
+
+let doubled = map(numbers, func(x) { return x * 2 })
+let evens   = filter(doubled, func(x) { return x % 4 == 0 })
+let total   = reduce(evens, func(acc, x) { return acc + x }, 0)
+
+print(doubled)  # [2, 4, 6, 8, 10]
+print(evens)    # [4, 8]
+print(total)    # 12
+
+# Maps — string-keyed hash tables
+let player = {"name": "Astra", "hp": 100, "zone": "forest"}
+map_set(player, "hp", map_get(player, "hp") + 25)
+print("Keys:", map_keys(player))
 ```
 
-### 2.2. Modules
+### Modules
+
 ```javascript
 # utils.lu
 export func greet(name) {
-    return "Hello {name}"
+    return "Hello, {name}!"
 }
 ```
 
@@ -225,219 +149,184 @@ use {greet} from "utils.lu"
 print(greet("Luna"))
 ```
 
-### 3. Switch Statement & Input
-```javascript
-print("1. Start Game", "2. Load Game", "3. Exit")
-let choice = int(input("Select (1-3): "))
+### Data Constructors
 
-switch (choice) {
-    case 1: print("Starting..."); break
-    case 2: print("Loading..."); break
-    case 3: print("Goodbye!"); break
-    default: print("Invalid!")
-}
+```javascript
+data Vec2   { x, y }
+data Entity { name, hp, pos }
+
+let origin = Vec2(0, 0)
+let hero   = Entity("Astra", 100, Vec2(3, 4))
+
+print(shape(hero))              # Entity
+print("pos = ({hero["pos"]["x"]}, {hero["pos"]["y"]})")
 ```
 
-### 4. Recursive Algorithms
-```javascript
-func factorial(n) {
-    if (n <= 1) { return 1 }
-    return n * factorial(n - 1)
-}
-print("Factorial of 6 is", factorial(6))
-```
-
-### 5. Interactive Calculator
-```javascript
-while (true) {
-    let op = input("Op (+, -, *, /) or 'exit': ")
-    if (op == "exit") { break }
-    let n1 = int(input("N1: "))
-    let n2 = int(input("N2: "))
-    switch (op) {
-        case "+": print("Result:", n1 + n2); break
-        case "-": print("Result:", n1 - n2); break
-        case "*": print("Result:", n1 * n2); break
-        case "/": 
-            if (n2 == 0) { print("Error!"); }
-            else { print("Result:", n1 / n2); }
-            break
-    }
-}
-```
-
-### 6. Dynamic Lists
-```javascript
-func get_items() {
-    let count = int(input("How many items? "))
-    let list = []
-    for (let i = 0; i < count; i++) {
-        append(list, input("> "))
-    }
-    return list
-}
-print("You collected:", get_items())
-```
-
-### 7. Hashmaps 
-Hashmaps in Luna are string-keyed objects for app state, configuration, save data, and lookup tables.
-You write them with braces and string keys, then use the map helpers to read or update fields.
+### File I/O with Scope Cleanup
 
 ```javascript
-let config = {
-    "title": "Luna",
-    "width": 1280,
-    "height": 720
-}
-
-print(map_get(config, "title"))
-map_set(config, "fullscreen", true)
-print(map_has(config, "fullscreen"))
-```
-
-```javascript
-let player = {
-    "name": "Astra",
-    "hp": 100,
-    "zone": "forest",
-    "inventory_count": 3
-}
-
-if (map_has(player, "hp")) {
-    map_set(player, "hp", map_get(player, "hp") + 25)
-}
-
-map_set(player, "last_checkpoint", "ruins_gate")
-
-print("Loaded player:", player)
-print("Known fields:", map_keys(player))
-print("Known values:", map_values(player))
-print("Known entries:", map_items(player))
-```
-
-### 7.1. String Interpolation
-
-String literals can interpolate full Luna expressions directly and still support normal
-concatenation.
-
-```javascript
-let name = "Luna"
-let score = 42
-let nums = [10, 20, 30]
-
-let hello = "Hello {name}"
-let line = "Player {name} scored {score}"
-let expr = "next score = {score + 1}, slot = {nums[1]}"
-
-print(hello)
-print(line)
-print(expr)
-print("Hello " + name)
-```
-
-### 7.2. Range
-
-```javascript
-for (let i in range(0, 5)) {
-    print("step", i)
-}
-```
-
-### 8. Higher-Order List Workflows
-Now that functions are first-class values, you can pass closures into list helpers directly.
-
-```javascript
-let numbers = [1, 2, 3, 4, 5]
-
-let doubled = map(numbers, func(x) {
-    return x * 2
-})
-
-let evens = filter(doubled, func(x) {
-    return x % 4 == 0
-})
-
-let total = reduce(evens, func(acc, x) {
-    return acc + x
-}, 0)
-
-print(doubled) # [2, 4, 6, 8, 10]
-print(evens)   # [4, 8]
-print(total)   # 12
-```
-
-### 9. Scope Cleanup
-
-```javascript
-func write_note(path, text) {
+func save_log(path, text) {
     let file = open(path, "w")
-    defer(close(file))
+    defer(close(file))          # runs automatically when scope exits
     write(file, text)
 }
+
+save_log("run.log", "started\n")
+
+let f = open("run.log", "r")
+print(read(f))
+close(f)
 ```
 
-### 10. Data Types
+### 2D Window with OpenGL
 
 ```javascript
-data Vec2 { x, y }
-data Result { ok, value }
+init_window(800, 600, "Luna 2D")
+set_fps(60)
 
-let p = Vec2(3, 4)
-let r = Result(true, 99)
+let t = 0.0
 
-print(shape(p))
-print(p["x"], p["y"])
-print("point = ({p[\"x\"]}, {p[\"y\"]})")
-print(shape(r), r["ok"], r["value"])
+while (window_open()) {
+    begin_drawing()
+    clear_background(rgb(20, 20, 30))
+
+    let cx = 400 + int(cos(t) * 150)
+    let cy = 300 + int(sin(t) * 100)
+    draw_circle(cx, cy, 40, rgb(100, 200, 255))
+    draw_rectangle(50, 50, 200, 80, rgb(255, 100, 80))
+
+    t = t + get_delta_time()
+    end_drawing()
+}
+
+close_window()
 ```
 
----
-
-## User Input in Luna
-
-The language supports runtime input using the built-in `input(prompt)` function. It displays the given prompt string and waits for the user to type something, which is returned as a string.
+### 3D Scene with Lighting
 
 ```javascript
-let name = input("Enter your name: ")
-print("Hello,", name)
+init_window(1280, 720, "Luna 3D")
+set_fps(60)
+
+let cam = create_camera_3d([0, 5, -10], [0, 0, 0], [0, 1, 0], 45.0)
+let sun = create_light(0, [10, 20, 10], [0, 0, 0], rgb(255, 250, 240))
+set_ambient_light([30, 30, 50])
+
+let angle = 0.0
+
+while (window_open()) {
+    angle = angle + get_delta_time()
+    let px = cos(angle) * 3
+    let pz = sin(angle) * 3
+
+    begin_drawing()
+    clear_background(rgb(15, 15, 25))
+
+    begin_mode_3d(cam)
+        draw_cube([px, 0.5, pz], [1, 1, 1], rgb(100, 180, 255))
+        draw_sphere([0, 0.5, 0], 0.5, 12, 12, rgb(255, 160, 80))
+        draw_plane([0, 0, 0], [10, 10], rgb(40, 40, 60))
+        draw_grid(10, 1)
+    end_mode_3d()
+
+    end_drawing()
+}
+
+close_window()
 ```
 
-If you need the input as a number instead of a string, convert it using `int(value)` or `float(value)`.
+### Manual Memory with `unsafe`
+
+```javascript
+unsafe {
+    let buf = alloc(4)
+    defer(buf)                          # freed automatically at block exit
+
+    for (let i = 0; i < 4; i++) {
+        store(ptr_offset(buf, i), i * i)
+    }
+
+    for (let i = 0; i < 4; i++) {
+        print("slot", i, "=", load(ptr_offset(buf, i)))
+    }
+}
+# slot 0 = 0 | slot 1 = 1 | slot 2 = 4 | slot 3 = 9
+```
 
 ---
 
-## Error Handling
+## Language Reference
 
-Luna provides clear diagnostics for:
-- **Type errors**: Invalid operations on incompatible types.
-- **Undefined variables**: Accessing variables that don't exist.
-- **Index out of bounds**: Accessing invalid list indices.
-- **Division by zero**: Arithmetic errors.
-
-The interpreter will highlight the exact line and provide a hint to help you fix the issue.
-
----
-
-## Further Documentation
-
-- **[Architecture Guide](docs/arch.md)**: Deep dive into the compiler and interpreter internals.
-- **[Data Types Reference](docs/data_types.md)**: Complete guide to `bloc`, `box`, and `template` — rules, bounds, examples, and memory layout.
-- **[Rust Data-Type Runtime](rust/readme.md)**: The `data_rt` crate — kind tags, layout validation, schema access, and C bridge.
-- **[Installation Guide](docs/installation.md)**: Comprehensive setup for Luna.
-- **[Performance Benchmarks](docs/benchmarks.md)**: Detailed speed comparisons vs Python and C.
-- **[Rust Runtime Notes](rust/readme.md)**: How Luna's Rust static libraries are organized and built.
-- **[Demo Technical Walkthrough](fun/README.md)**: A deep, exhaustive explanation of the `fun/` directory.
+| Feature | Syntax |
+|---|---|
+| Variable | `let x = 10` |
+| Function | `func add(a, b) { return a + b }` |
+| Closure | `func(x) { return x * 2 }` |
+| Control flow | `if` / `else` / `while` / `for` / `switch` |
+| List | `let arr = [1, 2, 3]` |
+| Map | `let cfg = {"width": 1280}` |
+| String interpolation | `"Score: {score + bonus}"` |
+| Data constructor | `data Vec2 { x, y }` |
+| Module | `use {greet} from "utils.lu"` |
+| Dense array | `dense_list(1000000, 0.0)` |
+| SIMD multiply | `vec_mul(A, B)` |
+| Matrix multiply | `mat_mul(A, B)` |
+| Scope cleanup | `defer(close(file))` |
 
 ---
 
-## Legal Disclaimer
+## Architecture
 
-I do not own any of the songs or assets used in the demonstration projects. All materials belong to their respective artists. For a full list of music, fonts, and icon credits, please refer to **[musicplayer/CREDITS.md](musicplayer/CREDITS.md)**.
+Luna is a modular tree-walking interpreter. The main layers:
+
+- **Lexer → Parser → AST** — recursive-descent parser with Pratt-style expression precedence and a constant-folding pass at parse time
+- **Interpreter** — recursive AST evaluator with closure capture, tail-call optimization, and module loading
+- **Arena** — slab allocator for all AST nodes; single `arena_reset()` tears down the parse tree instantly
+- **GC** — incremental tracing collector; strings, lists, maps, closures, and dense arrays are GC-managed
+- **Unsafe runtime** — Rust static library (`libluna_memory_rt.a`) that enforces 12 pointer-safety rules before the C side performs any memory operation
+- **Data runtime** — Rust static library (`libluna_data_rt.a`) implementing kind tags, bloc layout validation, fixed-size box buffers, and template schema descriptors
+- **GUI layer** — OpenGL 3.3 batch renderer + miniaudio, bridged to Luna scripts through `gui_lib.c`
+
+---
+
+## Testing
+
+```bash
+make test        # Luna script tests with assert() and golden output
+make zig-test    # Host-side Zig tests: lexer, parser, AST shape, error line/column
+make test-gc     # GC benchmark suite with pause profiling
+```
+
+Luna has two complementary test layers. The Luna script tests verify observable language behavior. The Zig suite calls internal C APIs directly to pinpoint exactly which subsystem regressed and on which line.
+
+---
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| [docs/arch.md](docs/arch.md) | Full source file inventory and architectural decisions |
+| [docs/gc.md](docs/gc.md) | Collector model, SATB barrier, benchmark suite, pause profile |
+| [docs/arena.md](docs/arena.md) | Memory arena design and cache-locality benefits |
+| [docs/memory.md](docs/memory.md) | `unsafe` block API and all 12 enforced safety rules |
+| [docs/data_types.md](docs/data_types.md) | `bloc`, `box`, and `template` reference |
+| [docs/gui.md](docs/gui.md) | Full 2D/3D GUI and audio API reference |
+| [docs/benchmarks.md](docs/benchmarks.md) | Speed comparisons vs Python, NumPy, C, and Go |
+| [docs/installation.md](docs/installation.md) | Build dependencies and setup guide |
+| [docs/string.md](docs/string.md) | String library reference |
+| [docs/math.md](docs/math.md) | Math, SIMD, and random number library reference |
+| [docs/file.md](docs/file.md) | File I/O library reference |
+| [rust/readme.md](rust/readme.md) | Rust runtime crates, FFI surface, and build layout |
+| [zig.md](docs/zig.md) | Zig test suite design and usage |
+
+---
+
+## Legal
+
+All songs and assets used in the demonstration projects belong to their respective artists. See [musicplayer/CREDITS.md](musicplayer/CREDITS.md) for a full list.
 
 ---
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or later (GPLv3+). See the [LICENSE](LICENSE) file for details.
-
----
+GNU General Public License v3.0 or later (GPLv3+). See [LICENSE](LICENSE).
