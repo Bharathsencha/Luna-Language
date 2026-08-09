@@ -1,8 +1,7 @@
 export let util_answer = 42
+export let util_module_loaded = "module-loaded"
 
-let util_module_loaded = "module-loaded"
-
-func util_ping() {
+export func util_ping() {
     return "util-ok"
 }
 

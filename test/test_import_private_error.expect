@@ -1,0 +1,6 @@
+Name Error in test/import_helper.lu at line 2:
+  Variable 'private_func' is not defined
+Hint: Declare variables with 'let' before using them
+Type Error in test/import_helper.lu at line 2:
+  'private_func' is not a function
+Hint: Make sure you are calling a function value, closure, or native builtin

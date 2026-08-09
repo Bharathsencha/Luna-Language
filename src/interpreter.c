@@ -1944,60 +1944,49 @@ static Value exec_stmt(Env *e, AstNode *n) {
             AstNode *prog = parser_parse_program(&parser);
             parser_close(&parser);
             if (prog) {
-                if (n->import_stmt.is_module_use) {
-                    const char **exported_names = NULL;
-                    int exported_count = 0;
-                    collect_module_exports(prog, &exported_names, &exported_count);
+                const char **exported_names = NULL;
+                int exported_count = 0;
+                collect_module_exports(prog, &exported_names, &exported_count);
 
-                    Env *module_parent = env_root(e);
-                    Env *module_env = env_create(module_parent);
-                    if (prog->kind == NODE_BLOCK) {
-                        for (int i = 0; i < prog->block.items.count; i++) {
-                            exec_stmt(module_env, prog->block.items.items[i]);
-                            gc_safe_point();
-                            if (luna_had_error || return_exception.active) break;
-                        }
-                    } else {
-                        exec_stmt(module_env, prog);
-                        gc_safe_point();
-                    }
-
-                    if (!luna_had_error) {
-                        const char **names = n->import_stmt.name_count > 0 ? n->import_stmt.names : exported_names;
-                        int name_count = n->import_stmt.name_count > 0 ? n->import_stmt.name_count : exported_count;
-                        for (int i = 0; i < name_count; i++) {
-                            if (!module_name_requested(names[i], exported_names, exported_count)) {
-                                char msg[256];
-                                snprintf(msg, sizeof(msg), "Module '%s' does not export '%s'", n->import_stmt.path, names[i]);
-                                error_report_with_context(ERR_NAME, n->line, 0, msg,
-                                    "Export names explicitly in the module before using them");
-                                break;
-                            }
-                            Value *slot = env_get_local(module_env, names[i]);
-                            if (!slot) {
-                                char msg[256];
-                                snprintf(msg, sizeof(msg), "Export '%s' is missing from module '%s'", names[i], n->import_stmt.path);
-                                error_report_with_context(ERR_NAME, n->line, 0, msg,
-                                    "Make sure the exported value is defined at module top level");
-                                break;
-                            }
-                            env_def(e, names[i], *slot);
-                        }
-                    }
-
-                    deferred_calls_run_scope(module_env);
-                    env_free(module_env);
-                    free((void *)exported_names);
-                } else if (prog->kind == NODE_BLOCK) {
+                Env *module_parent = env_root(e);
+                Env *module_env = env_create(module_parent);
+                if (prog->kind == NODE_BLOCK) {
                     for (int i = 0; i < prog->block.items.count; i++) {
-                        exec_stmt(e, prog->block.items.items[i]);
+                        exec_stmt(module_env, prog->block.items.items[i]);
                         gc_safe_point();
                         if (luna_had_error || return_exception.active) break;
                     }
                 } else {
-                    exec_stmt(e, prog);
+                    exec_stmt(module_env, prog);
                     gc_safe_point();
                 }
+
+                if (!luna_had_error) {
+                    const char **names = n->import_stmt.name_count > 0 ? n->import_stmt.names : exported_names;
+                    int name_count = n->import_stmt.name_count > 0 ? n->import_stmt.name_count : exported_count;
+                    for (int i = 0; i < name_count; i++) {
+                        if (!module_name_requested(names[i], exported_names, exported_count)) {
+                            char msg[256];
+                            snprintf(msg, sizeof(msg), "Module '%s' does not export '%s'", n->import_stmt.path, names[i]);
+                            error_report_with_context(ERR_NAME, n->line, 0, msg,
+                                "Export names explicitly in the module before using them");
+                            break;
+                        }
+                        Value *slot = env_get_local(module_env, names[i]);
+                        if (!slot) {
+                            char msg[256];
+                            snprintf(msg, sizeof(msg), "Export '%s' is missing from module '%s'", names[i], n->import_stmt.path);
+                            error_report_with_context(ERR_NAME, n->line, 0, msg,
+                                "Make sure the exported value is defined at module top level");
+                            break;
+                        }
+                        env_def(e, names[i], *slot);
+                    }
+                }
+
+                deferred_calls_run_scope(module_env);
+                env_free(module_env);
+                free((void *)exported_names);
                 nodelist_free(&prog->block.items);
             }
             free(src);

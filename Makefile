@@ -233,8 +233,7 @@ run-comp: $(BINDIR)/$(TARGET)
 	@+ZIG=$(ZIG) ./benchmark/compare.sh
 
 test-gc: $(BINDIR)/$(TARGET)
-	@chmod +x test_gc/run_gc_bench.sh
-	@./test_gc/run_gc_bench.sh
+	@python3 test_gc/run_benchmarks.py
 
 test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo "==> GC stress+verify: test/test_gc_safety.lu"

@@ -1,0 +1,7 @@
+export func exported_func() {
+    return "exported"
+}
+
+func private_func() {
+    return "private"
+}
