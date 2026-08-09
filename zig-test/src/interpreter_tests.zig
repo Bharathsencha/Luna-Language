@@ -51,3 +51,48 @@ test "interpreter preserves function results from fixtures" {
     try support.expectGlobalInt(&runtime, "total", 10);
     try support.expectGlobalInt(&runtime, "i", 5);
 }
+
+test "interpreter computes recursive fibonacci correctly" {
+    const source = try support.loadFixture("cases/interpreter/recursive_fib.lu");
+    defer testing.allocator.free(source);
+
+    var runtime: c.LunaRuntime = undefined;
+    var program: ?*c.AstNode = null;
+
+    try support.runtimeInit(&runtime);
+    defer c.luna_runtime_shutdown(&runtime);
+    defer if (program != null) c.ast_release(program);
+
+    try support.expectRunSuccess(&runtime, source, "recursive_fib.lu", &program);
+    try support.expectGlobalInt(&runtime, "fib_result", 610);
+}
+
+test "interpreter handles closure environment capture" {
+    const source = try support.loadFixture("cases/interpreter/closure_capture.lu");
+    defer testing.allocator.free(source);
+
+    var runtime: c.LunaRuntime = undefined;
+    var program: ?*c.AstNode = null;
+
+    try support.runtimeInit(&runtime);
+    defer c.luna_runtime_shutdown(&runtime);
+    defer if (program != null) c.ast_release(program);
+
+    try support.expectRunSuccess(&runtime, source, "closure_capture.lu", &program);
+    try support.expectGlobalInt(&runtime, "closure_res", 42);
+}
+
+test "interpreter accumulates inside for-in loop" {
+    const source = try support.loadFixture("cases/interpreter/for_in_accumulate.lu");
+    defer testing.allocator.free(source);
+
+    var runtime: c.LunaRuntime = undefined;
+    var program: ?*c.AstNode = null;
+
+    try support.runtimeInit(&runtime);
+    defer c.luna_runtime_shutdown(&runtime);
+    defer if (program != null) c.ast_release(program);
+
+    try support.expectRunSuccess(&runtime, source, "for_in_accumulate.lu", &program);
+    try support.expectGlobalInt(&runtime, "total", 100);
+}

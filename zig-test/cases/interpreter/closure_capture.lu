@@ -1,0 +1,7 @@
+func make_adder(x) {
+    return func(y) {
+        return x + y
+    }
+}
+let add10 = make_adder(10)
+let closure_res = add10(32)

@@ -511,6 +511,7 @@ static AstNode *primary(Parser *p) {
         const char **keys = NULL;
         AstNode **values = NULL;
         int count = 0;
+        int capacity = 0;
 
         while (match(p, T_NEWLINE));
         if (!check(p, T_RBRACE)) {
@@ -526,8 +527,14 @@ static AstNode *primary(Parser *p) {
                     return NULL;
                 }
 
-                keys = realloc(keys, sizeof(const char*) * (count + 1));
-                values = realloc(values, sizeof(AstNode*) * (count + 1));
+                if (count >= capacity) {
+                    capacity = capacity == 0 ? 8 : capacity * 2;
+                    const char **new_keys = realloc(keys, sizeof(const char*) * (size_t)capacity);
+                    AstNode **new_values = realloc(values, sizeof(AstNode*) * (size_t)capacity);
+                    if (!new_keys || !new_values) abort();
+                    keys = new_keys;
+                    values = new_values;
+                }
                 keys[count] = intern_string(token_str(&p->cur));
                 free_token(&p->cur);
                 advance(p);

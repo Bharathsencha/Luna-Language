@@ -1,0 +1,4 @@
+let total = 0
+for (let item in [10, 20, 30, 40]) {
+    total += item
+}

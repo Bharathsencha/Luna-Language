@@ -4,23 +4,19 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const test_module = b.createModule(.{
+    const unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
     });
 
-    const unit_tests = b.addTest(.{
-        .root_module = test_module,
-    });
-
-    test_module.linkSystemLibrary("m", .{});
-    test_module.linkSystemLibrary("rt", .{});
-    test_module.linkSystemLibrary("gcc_s", .{});
-    test_module.linkSystemLibrary("unwind", .{});
-    test_module.addIncludePath(b.path("../include"));
-    test_module.addCSourceFiles(.{
+    unit_tests.linkLibC();
+    unit_tests.linkSystemLibrary("m");
+    unit_tests.linkSystemLibrary("rt");
+    unit_tests.linkSystemLibrary("gcc_s");
+    unit_tests.linkSystemLibrary("unwind");
+    unit_tests.addIncludePath(b.path("../include"));
+    unit_tests.addCSourceFiles(.{
         .root = b.path(".."),
         .files = &.{
             "src/lexer.c",
@@ -40,6 +36,7 @@ pub fn build(b: *std.Build) void {
             "src/intern.c",
             "src/luna_runtime.c",
             "src/luna_test.c",
+            "src/data_runtime.c",
         },
         .flags = &.{
             "-std=c11",
@@ -47,7 +44,8 @@ pub fn build(b: *std.Build) void {
             "-Iinclude",
         },
     });
-    test_module.addObjectFile(b.path("../lib/libluna_memory_rt.a"));
+    unit_tests.addObjectFile(b.path("../lib/libluna_memory_rt.a"));
+    unit_tests.addObjectFile(b.path("../lib/libluna_data_rt.a"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

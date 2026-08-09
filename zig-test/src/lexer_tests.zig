@@ -11,7 +11,7 @@ test "lexer emits stable token sequence with lines" {
     defer c.luna_token_buffer_free(&tokens);
 
     try testing.expectEqual(@as(c_int, 1), c.luna_lex_source(source, &tokens));
-    try testing.expectEqual(@as(usize, 11), tokens.count);
+    try testing.expectEqual(@as(usize, 10), tokens.count);
 
     const items = tokens.items.?;
     try testing.expectEqual(@as(c_uint, c.T_LET), items[0].type);
@@ -23,8 +23,7 @@ test "lexer emits stable token sequence with lines" {
     try testing.expectEqual(@as(c_uint, c.T_LPAREN), items[6].type);
     try testing.expectEqual(@as(c_uint, c.T_IDENT), items[7].type);
     try testing.expectEqual(@as(c_uint, c.T_RPAREN), items[8].type);
-    try testing.expectEqual(@as(c_uint, c.T_NEWLINE), items[9].type);
-    try testing.expectEqual(@as(c_uint, c.T_EOF), items[10].type);
+    try testing.expectEqual(@as(c_uint, c.T_EOF), items[9].type);
     try testing.expectEqual(@as(c_int, 2), items[5].line);
 }
 

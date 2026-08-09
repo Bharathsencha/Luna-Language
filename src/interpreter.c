@@ -129,6 +129,16 @@ static void interp_append(char **buf, size_t *len, size_t *cap, const char *src,
     (*buf)[*len] = '\0';
 }
 
+static inline int string_may_have_interpolation(const char *src) {
+    if (!src) return 0;
+    const char *p = strchr(src, '{');
+    while (p) {
+        if (interp_name_start(p[1])) return 1;
+        p = strchr(p + 1, '{');
+    }
+    return 0;
+}
+
 static int try_interpolate_string(Env *e, const char *src, Value *out) {
     if (!e || !src || !out || !strchr(src, '{')) return 0;
 
@@ -271,21 +281,10 @@ static void deferred_calls_push(Env *scope, Value callee, int argc, Value *argv,
 }
 
 static void deferred_calls_run_scope(Env *scope) {
-    if (!scope) return;
-    while (1) {
-        int found = -1;
-        for (int i = deferred_call_count - 1; i >= 0; i--) {
-            if (deferred_calls[i].scope == scope) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) break;
-
-        DeferredCall call = deferred_calls[found];
-        deferred_calls[found] = deferred_calls[deferred_call_count - 1];
-        deferred_call_count--;
-
+    if (!scope || deferred_call_count == 0) return;
+    while (deferred_call_count > 0 && deferred_calls[deferred_call_count - 1].scope == scope) {
+        int idx = --deferred_call_count;
+        DeferredCall call = deferred_calls[idx];
         Value result = luna_call_value(scope, call.callee, call.argc, call.argv, call.line);
         value_free(result);
         value_free(call.callee);
@@ -752,7 +751,7 @@ static Value eval_expr(Env *e, AstNode *n) {
         case NODE_NUMBER: return value_int(n->number.value);
         case NODE_FLOAT: return value_float(n->fnumber.value);
         case NODE_STRING:
-            if (strchr(n->string.text, '{')) {
+            if (string_may_have_interpolation(n->string.text)) {
                 Value interpolated;
                 if (try_interpolate_string(e, n->string.text, &interpolated)) {
                     return interpolated;
@@ -928,7 +927,7 @@ static Value eval_expr(Env *e, AstNode *n) {
         
         // Variable lookup (O(0) Fast Local Cache)
         case NODE_IDENT: {
-            if (n->ident.cached_val && n->ident.cached_env_version == env_get_version(e)) {
+            if (n->ident.cached_val && n->ident.cached_env_version == env_scope_id(e)) {
                 return value_copy(*(n->ident.cached_val));
             }
 
@@ -942,7 +941,7 @@ static Value eval_expr(Env *e, AstNode *n) {
             }
             // Bind the cache pointer
             n->ident.cached_val = v;
-            n->ident.cached_env_version = env_get_version(e);
+            n->ident.cached_env_version = env_scope_id(e);
             return value_copy(*v);
         }
         
@@ -1048,13 +1047,13 @@ static Value eval_expr(Env *e, AstNode *n) {
         //  Increment Operator (++)
         case NODE_INC: {
             Value *v = NULL;
-            if (n->inc.cached_val && n->inc.cached_env_version == env_get_version(e)) {
+            if (n->inc.cached_val && n->inc.cached_env_version == env_scope_id(e)) {
                 v = n->inc.cached_val;
             } else {
                 v = env_get(e, n->inc.name);
                 if (v) {
                     n->inc.cached_val = v;
-                    n->inc.cached_env_version = env_get_version(e);
+                    n->inc.cached_env_version = env_scope_id(e);
                 }
             }
             
@@ -1073,13 +1072,13 @@ static Value eval_expr(Env *e, AstNode *n) {
         // Decrement Operator (--)
         case NODE_DEC: {
             Value *v = NULL;
-            if (n->dec.cached_val && n->dec.cached_env_version == env_get_version(e)) {
+            if (n->dec.cached_val && n->dec.cached_env_version == env_scope_id(e)) {
                 v = n->dec.cached_val;
             } else {
                 v = env_get(e, n->dec.name);
                 if (v) {
                     n->dec.cached_val = v;
-                    n->dec.cached_env_version = env_get_version(e);
+                    n->dec.cached_env_version = env_scope_id(e);
                 }
             }
             
@@ -1567,7 +1566,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 value_free(v);
                 return value_null();
             }
-            if (n->assign.cached_val && n->assign.cached_env_version == env_get_version(e)) {
+            if (n->assign.cached_val && n->assign.cached_env_version == env_scope_id(e)) {
                 // O(0) cache hit update
                 value_free(*(n->assign.cached_val));
                 *(n->assign.cached_val) = v;
@@ -1575,7 +1574,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 Value *target = env_get(e, n->assign.name);
                 if (target) {
                     n->assign.cached_val = target;
-                    n->assign.cached_env_version = env_get_version(e);
+                    n->assign.cached_env_version = env_scope_id(e);
                     value_free(*target);
                     *target = v;
                 } else {

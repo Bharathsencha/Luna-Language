@@ -61,3 +61,19 @@ test "parser keeps binary precedence stable inside let expressions" {
     try testing.expectEqual(@as(c_uint, c.NODE_BINOP), c.luna_ast_kind(right));
     try testing.expectEqual(@as(c_uint, c.OP_MUL), c.luna_ast_binop_op(right));
 }
+
+test "parser constant folds arithmetic expressions at parse time" {
+    const source = try support.loadFixture("cases/parser/constant_fold.lu");
+    defer testing.allocator.free(source);
+    const program = c.luna_parse_source(source, "constant_fold.lu");
+    defer if (program != null) c.ast_release(program);
+
+    try testing.expect(program != null);
+    const root = program.?;
+    const stmt = c.luna_ast_block_item(root, 0);
+    try testing.expect(stmt != null);
+
+    const expr = c.luna_ast_let_expr(stmt);
+    try testing.expect(expr != null);
+    try testing.expectEqual(@as(c_uint, c.NODE_NUMBER), c.luna_ast_kind(expr));
+}
