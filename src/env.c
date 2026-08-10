@@ -441,9 +441,52 @@ void env_gc_mark_chain(Env *e, void *ctx) {
 
 void env_gc_mark_active_roots(void *ctx) {
     for (Env *env = gc_active_envs; env; env = env->gc_next) {
-        env_gc_mark_chain(env, ctx);
+        for (int i = 0; i < env->occupied_count; i++) {
+            int idx = env->occupied_slots[i];
+            if (env->vars[idx].occupied) {
+                value_gc_mark(&env->vars[idx].val, ctx);
+            }
+        }
     }
     for (Env *env = gc_captured_env_roots; env; env = env->gc_captured_next) {
-        env_gc_mark_chain(env, ctx);
+        for (int i = 0; i < env->occupied_count; i++) {
+            int idx = env->occupied_slots[i];
+            if (env->vars[idx].occupied) {
+                value_gc_mark(&env->vars[idx].val, ctx);
+            }
+        }
+    }
+}
+
+void debug_print_keepers(void) {
+    Env *global = NULL;
+    for (Env *env = gc_active_envs; env; env = env->gc_next) {
+        if (env->parent == NULL) {
+            global = env;
+            break;
+        }
+    }
+    if (!global) return;
+    for (int i = 0; i < global->occupied_count; i++) {
+        int idx = global->occupied_slots[i];
+        if (global->vars[idx].occupied && strcmp(global->vars[idx].name, "keepers") == 0) {
+            Value v = global->vars[idx].val;
+            if (v.type == VAL_LIST && v.list) {
+                fprintf(stderr, "VERIFY: keepers count=%d, capacity=%d, list_obj=%p, list_color=%d, items_obj=%p, items_color=%d\n",
+                        v.list->count, v.list->capacity,
+                        (void*)GC_FROM_PAYLOAD(v.list), GC_FROM_PAYLOAD(v.list)->color,
+                        (void*)v.list->items, v.list->items ? GC_FROM_PAYLOAD(v.list->items)->color : -1);
+                for (int j = 0; j < v.list->count; j++) {
+                    Value c = v.list->items[j];
+                    if (c.type == VAL_CLOSURE && c.closure) {
+                        GCObject *c_obj = GC_FROM_PAYLOAD(c.closure);
+                        fprintf(stderr, "  [%d] closure=%p, color=%d, env=%p\n",
+                                j, (void*)c_obj, c_obj->color, (void*)c.closure->env);
+                    } else {
+                        fprintf(stderr, "  [%d] non-closure type=%d\n", j, c.type);
+                    }
+                }
+            }
+        }
     }
 }

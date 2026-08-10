@@ -12,6 +12,7 @@
 
 Value interpret(AstNode *program, Env *env); 
 Value luna_call_value(Env *caller_env, Value callee, int argc, Value *argv, int line);
+Value instantiate_data_type(Value dtype, int argc, Value *argv, int line);
 void interpreter_gc_mark_runtime_roots(void *ctx);
 
 #endif

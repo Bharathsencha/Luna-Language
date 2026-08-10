@@ -10,6 +10,8 @@
 #include "mystr.h"
 #include "env.h"
 #include "data_runtime.h"
+#include "luna_vm.h"
+#include "luna_chunk.h"
 
 typedef enum {
     BLOC_FIELD_UNSET = 0,
@@ -335,19 +337,42 @@ static void string_finalize(GCObject *obj) {
 }
 
 static void list_items_trace(GCObject *obj, void *ctx) {
+    GCTraceCtx *trace = (GCTraceCtx *)ctx;
     Value *items = (Value *)GC_PAYLOAD(obj);
     size_t count = obj->size / sizeof(Value);
-    for (size_t i = 0; i < count; i++) {
+    /* Resume from the cursor stored in the gray stack entry (0 on first visit). */
+    for (size_t i = trace->scan_start; i < count; i++) {
+        gc_visit_tick(ctx);
+        if (trace->deadline_hit) {
+            trace->scan_resume = i;
+            return;
+        }
         value_gc_mark(&items[i], ctx);
+        if (trace->deadline_hit) {
+            /* deadline fired inside gc_visit_ref before items[i] was shaded */
+            trace->scan_resume = i;
+            return;
+        }
     }
 }
 
 static void map_entries_trace(GCObject *obj, void *ctx) {
+    GCTraceCtx *trace = (GCTraceCtx *)ctx;
     MapEntry *entries = (MapEntry *)GC_PAYLOAD(obj);
     size_t count = obj->size / sizeof(MapEntry);
-    for (size_t i = 0; i < count; i++) {
-        if (!entries[i].occupied) continue;
-        value_gc_mark(&entries[i].value, ctx);
+    for (size_t i = trace->scan_start; i < count; i++) {
+        gc_visit_tick(ctx);
+        if (trace->deadline_hit) {
+            trace->scan_resume = i;
+            return;
+        }
+        if (entries[i].occupied) {
+            value_gc_mark(&entries[i].value, ctx);
+            if (trace->deadline_hit) {
+                trace->scan_resume = i;
+                return;
+            }
+        }
     }
 }
 
@@ -388,6 +413,40 @@ static void closure_finalize(GCObject *obj) {
     if (closure->owns_env) env_free_chain(closure->env);
 }
 
+static void mark_chunk_constants(LunaChunk *chunk, void *ctx) {
+    if (!chunk) return;
+    for (size_t i = 0; i < chunk->const_len; i++) {
+        value_gc_mark(&chunk->constants[i], ctx);
+    }
+    for (size_t i = 0; i < chunk->subchunk_len; i++) {
+        mark_chunk_constants(chunk->subchunks[i], ctx);
+    }
+}
+
+static void vm_closure_trace(GCObject *obj, void *ctx) {
+    VMClosureObj *closure = (VMClosureObj *)GC_PAYLOAD(obj);
+    for (int i = 0; i < closure->upvalue_count; i++) {
+        if (closure->upvalues[i]) {
+            gc_visit_ref(ctx, (void **)&closure->upvalues[i]);
+        }
+    }
+    mark_chunk_constants(closure->chunk, ctx);
+}
+
+static void vm_closure_finalize(GCObject *obj) {
+    VMClosureObj *closure = (VMClosureObj *)GC_PAYLOAD(obj);
+    if (closure->upvalues) {
+        free(closure->upvalues);
+    }
+}
+
+void vm_upvalue_trace(GCObject *obj, void *ctx) {
+    VMUpvalue *upval = (VMUpvalue *)GC_PAYLOAD(obj);
+    if (upval->location) {
+        value_gc_mark(upval->location, ctx);
+    }
+}
+
 static void data_type_trace(GCObject *obj, void *ctx) {
     (void)obj;
     (void)ctx;
@@ -398,10 +457,35 @@ static void data_type_finalize(GCObject *obj) {
 }
 
 static void template_trace(GCObject *obj, void *ctx) {
+    GCTraceCtx *trace = (GCTraceCtx *)ctx;
     TemplateObj *templ = (TemplateObj *)GC_PAYLOAD(obj);
-    if (templ->dtype) gc_visit_ref(ctx, (void **)&templ->dtype);
-    for (int i = 0; i < templ->field_count; i++) {
+    /* child 0 = dtype, children 1..N = fields */
+    if (trace->scan_start == 0) {
+        gc_visit_tick(ctx);
+        if (trace->deadline_hit) {
+            trace->scan_resume = 0;
+            return;
+        }
+        if (templ->dtype) {
+            gc_visit_ref(ctx, (void **)&templ->dtype);
+            if (trace->deadline_hit) {
+                trace->scan_resume = 0;
+                return;
+            }
+        }
+    }
+    size_t field_start = (trace->scan_start > 0) ? trace->scan_start - 1 : 0;
+    for (int i = (int)field_start; i < templ->field_count; i++) {
+        gc_visit_tick(ctx);
+        if (trace->deadline_hit) {
+            trace->scan_resume = (size_t)i + 1; /* +1 for dtype slot */
+            return;
+        }
         value_gc_mark(&templ->fields[i], ctx);
+        if (trace->deadline_hit) {
+            trace->scan_resume = (size_t)i + 1;
+            return;
+        }
     }
 }
 
@@ -551,6 +635,7 @@ static void map_reinsert_entry(MapObj *map, const char *key, Value value) {
     while (map->entries[idx].occupied) {
         idx = (idx + 1) & (map->capacity - 1);
     }
+    gc_note_owner_write_value(map->entries, &value);
     map->entries[idx].occupied = 1;
     map->entries[idx].key = key;
     map->entries[idx].value = value;
@@ -952,6 +1037,21 @@ Value value_closure(struct AstNode *funcdef, struct Env *env, int owns_env) {
     return v;
 }
 
+Value value_vm_closure(struct LunaChunk *chunk, int upvalue_count) {
+    Value v;
+    v.type = VAL_VM_CLOSURE;
+    v.vm_closure = (VMClosureObj *)luna_gc_alloc(sizeof(VMClosureObj), vm_closure_trace, vm_closure_finalize);
+    v.vm_closure->ref_count = 0;
+    v.vm_closure->chunk = chunk;
+    v.vm_closure->upvalue_count = upvalue_count;
+    if (upvalue_count > 0) {
+        v.vm_closure->upvalues = calloc(upvalue_count, sizeof(VMUpvalue*));
+    } else {
+        v.vm_closure->upvalues = NULL;
+    }
+    return v;
+}
+
 Value value_data_type(const char *name, const char **fields, int field_count, int is_template) {
     /* Rust-side template schema registration */
     if (is_template) {
@@ -1155,6 +1255,12 @@ void _value_free_refcount(Value v) {
             if (v.closure->owns_env) env_free_chain(v.closure->env);
             free(v.closure);
         }
+    } else if (v.type == VAL_VM_CLOSURE && v.vm_closure) {
+        v.vm_closure->ref_count--;
+        if (v.vm_closure->ref_count == 0) {
+            // upvalues freed by GC finalize hook vm_closure_finalize
+            free(v.vm_closure);
+        }
     } else if (v.type == VAL_DATA_TYPE && v.dtype) {
         v.dtype->ref_count--;
         if (v.dtype->ref_count == 0) {
@@ -1211,6 +1317,9 @@ Value _value_copy_refcount(Value v) {
         case VAL_CLOSURE:
             if (v.closure) v.closure->ref_count++;
             break;
+        case VAL_VM_CLOSURE:
+            if (v.vm_closure) v.vm_closure->ref_count++;
+            break;
         case VAL_DATA_TYPE:
             if (v.dtype) v.dtype->ref_count++;
             break;
@@ -1245,6 +1354,9 @@ void value_gc_mark(Value *value, void *ctx) {
             break;
         case VAL_CLOSURE:
             if (value->closure) gc_visit_ref(ctx, (void **)&value->closure);
+            break;
+        case VAL_VM_CLOSURE:
+            if (value->vm_closure) gc_visit_ref(ctx, (void **)&value->vm_closure);
             break;
         case VAL_DATA_TYPE:
             if (value->dtype) gc_visit_ref(ctx, (void **)&value->dtype);
@@ -1341,6 +1453,8 @@ char *value_to_string(Value v) {
             return my_strdup("<function>");
         case VAL_CLOSURE:
             return my_strdup("<closure>");
+        case VAL_VM_CLOSURE:
+            return my_strdup("<vm closure>");
         case VAL_DATA_TYPE:
             if (v.dtype && v.dtype->name) {
                 size_t len = strlen(v.dtype->name) + 8;
@@ -1515,6 +1629,7 @@ void value_fprint(FILE *f, Value v) {
         case VAL_NULL:   fputs("null", f); break;
         case VAL_FUNCTION: fputs("<function>", f); break;
         case VAL_CLOSURE: fputs("<closure>", f); break;
+        case VAL_VM_CLOSURE: fputs("<vm closure>", f); break;
         case VAL_DATA_TYPE:
             if (v.dtype && v.dtype->name) fprintf(f, "<data %s>", v.dtype->name);
             else fputs("<data>", f);
@@ -1588,6 +1703,9 @@ void value_list_append(Value *list, Value v) {
             Value *grown = alloc_list_items_buffer(n);
             if (old_items) {
                 memcpy(grown, old_items, sizeof(Value) * (size_t)list->list->count);
+                for (int i = 0; i < list->list->count; i++) {
+                    gc_note_owner_write_value(grown, &grown[i]);
+                }
             }
             gc_note_payload_overwrite(old_items);
             list->list->items = grown;
@@ -1616,6 +1734,9 @@ void value_list_append_move(Value *list, Value *v) {
             Value *grown = alloc_list_items_buffer(n);
             if (old_items) {
                 memcpy(grown, old_items, sizeof(Value) * (size_t)list->list->count);
+                for (int i = 0; i < list->list->count; i++) {
+                    gc_note_owner_write_value(grown, &grown[i]);
+                }
             }
             gc_note_payload_overwrite(old_items);
             list->list->items = grown;

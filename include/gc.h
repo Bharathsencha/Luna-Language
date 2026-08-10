@@ -32,9 +32,12 @@ typedef enum {
     GC_GEN_OLD = 1,
 } GCGeneration;
 
-#define IMIX_LINE_SIZE       256
-#define IMIX_LINES_PER_BLOCK 128
-#define IMIX_BLOCK_SIZE      (IMIX_LINE_SIZE * IMIX_LINES_PER_BLOCK)
+#define IMIX_LINE_SIZE          256
+#define IMIX_LINES_PER_BLOCK    128
+#define IMIX_BLOCK_SIZE         (IMIX_LINE_SIZE * IMIX_LINES_PER_BLOCK)
+#define NOFL_GRANULE_SIZE       16
+#define NOFL_GRANULES_PER_BLOCK (IMIX_BLOCK_SIZE / NOFL_GRANULE_SIZE)
+#define NOFL_BITMAP_BYTES       (NOFL_GRANULES_PER_BLOCK / 8)
 
 typedef struct GCObject GCObject;
 typedef struct GCHeap GCHeap;
@@ -46,7 +49,18 @@ typedef struct {
     GCHeap    *heap;
     GCVisitFn  visit;
     void      *userdata;
+    uint64_t   deadline_ns;
+    bool       deadline_hit;
+    size_t     scan_start;   /* tracer reads: child index to start visiting from */
+    size_t     scan_resume;  /* tracer writes: child index to resume next time   */
 } GCTraceCtx;
+
+/* Entry on the gray stack — bundles the object with a resume cursor so that
+ * large array/map tracers can be interrupted and continued across GC steps. */
+typedef struct {
+    GCObject *obj;
+    size_t    cursor;  /* child index to resume from on next trace */
+} GCGrayEntry;
 
 struct GCObject {
     GCColor      color;
@@ -65,8 +79,11 @@ struct GCObject {
 typedef struct ImixBlock ImixBlock;
 struct ImixBlock {
     uint8_t      line_mark[IMIX_LINES_PER_BLOCK];
+    uint8_t      granule_bitmap[NOFL_BITMAP_BYTES];
     uint8_t      data[IMIX_BLOCK_SIZE];
     size_t       bump;
+    size_t       hole_start;
+    size_t       hole_end;
     size_t       young_objects;
     ImixBlock   *next;
     bool         evacuating;
@@ -75,7 +92,7 @@ struct ImixBlock {
 struct GCHeap {
     ImixBlock   *blocks;
     ImixBlock   *current;
-    GCObject   **gray_stack;
+    GCGrayEntry *gray_stack;
     size_t       gray_top;
     size_t       gray_cap;
     GCObject    *large_list;
@@ -97,6 +114,7 @@ struct GCHeap {
     bool         sweep_reclaim_empty;
     double       gc_ms_total;
     double       gc_ms_max;
+    uint64_t     target_pause_ns;
     GCRootMarker root_marker;
     void        *root_marker_ctx;
     size_t       young_bytes_allocated;
@@ -108,8 +126,17 @@ struct GCHeap {
     size_t       remembered_cap;
     ImixBlock   *sweep_cursor;
     size_t       sweep_block_budget;
+    ImixBlock   *sweep_chain;      /* detached blocks being swept/reclaimed */
+    ImixBlock   *reclaim_cursor;
+    GCObject    *large_sweep_list; /* detached large objects being swept */
+    size_t       large_sweep_budget;
     bool         stress_mode;
     bool         verify_mode;
+    bool         mark_roots_done;
+    size_t       mark_step_count;
+    bool         minor_marked_old; /* an OLD object was grayed during this minor GC */
+    bool         pause_trace;
+    double       pause_trace_threshold_ms;
 };
 
 GCHeap *gc_heap_create(size_t initial_limit);
@@ -138,6 +165,8 @@ typedef struct {
 GCHeapStats gc_heap_stats(GCHeap *heap);
 void        gc_heap_print_stats(GCHeap *heap);
 void        gc_visit_ref(void *ctx, void **slot);
+void        gc_visit_tick(void *ctx);
+void        gc_visit_reset_deadline_counter(void); /* reset per-step visit counter */
 int         gc_heap_is_managed_payload(GCHeap *heap, void *payload);
 
 int         luna_gc_runtime_init(size_t initial_limit);

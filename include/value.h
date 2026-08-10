@@ -35,14 +35,15 @@ typedef enum {
     VAL_DENSE_LIST, // Added for high-performance SIMD/Matrix math
     VAL_MAP,
     VAL_CLOSURE,
+    VAL_VM_CLOSURE,
     VAL_DATA_TYPE,
     VAL_TEMPLATE,
 } ValueType;
 
 #define VALUE_IS_HEAP(v) \
     ((v).type == VAL_STRING || (v).type == VAL_LIST || (v).type == VAL_DENSE_LIST || \
-     (v).type == VAL_MAP || (v).type == VAL_CLOSURE || (v).type == VAL_DATA_TYPE || \
-     (v).type == VAL_BLOC || (v).type == VAL_TEMPLATE)
+     (v).type == VAL_MAP || (v).type == VAL_CLOSURE || (v).type == VAL_VM_CLOSURE || \
+     (v).type == VAL_DATA_TYPE || (v).type == VAL_BLOC || (v).type == VAL_TEMPLATE)
 
 typedef struct {
     int ref_count;
@@ -78,6 +79,16 @@ typedef struct {
     struct Env *env;
     int owns_env;
 } ClosureObj;
+
+struct LunaChunk;
+struct VMUpvalue;
+
+typedef struct {
+    int ref_count;
+    struct LunaChunk *chunk;
+    struct VMUpvalue **upvalues;
+    int upvalue_count;
+} VMClosureObj;
 
 typedef struct {
     int ref_count;
@@ -116,6 +127,7 @@ struct Value {
         DenseListObj *dlist;
         MapObj *map;
         ClosureObj *closure;
+        VMClosureObj *vm_closure;
         DataTypeObj *dtype;
         TemplateObj *template_obj;
         struct AstNode *func; // AST Pointer for user-defined functions
@@ -158,6 +170,7 @@ Value value_list(void);
 Value value_dense_list(void); // Constructor for dense arrays
 Value value_map(void);
 Value value_closure(struct AstNode *funcdef, struct Env *env, int owns_env);
+Value value_vm_closure(struct LunaChunk *chunk, int upvalue_count);
 Value value_data_type(const char *name, const char **fields, int field_count, int is_template);
 Value value_template_from_dtype(Value dtype, int argc, Value *argv, char *msg, size_t msg_len);
 Value value_template_get_field(Value template_value, const char *field, int *found);

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Bharath
 
 #include "gc.h"
+#include "env.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,8 +37,16 @@ int gc_heap_is_managed_payload(GCHeap *heap, void *payload) {
         uint8_t *end = block->data + IMIX_BLOCK_SIZE;
         if (ptr >= start && ptr < end) return 1;
     }
+    for (ImixBlock *block = heap->sweep_chain; block; block = block->next) {
+        uint8_t *start = block->data;
+        uint8_t *end = block->data + IMIX_BLOCK_SIZE;
+        if (ptr >= start && ptr < end) return 1;
+    }
 
     for (GCObject *obj = heap->large_list; obj; obj = obj->next) {
+        if ((uint8_t *)GC_PAYLOAD(obj) == ptr) return 1;
+    }
+    for (GCObject *obj = heap->large_sweep_list; obj; obj = obj->next) {
         if ((uint8_t *)GC_PAYLOAD(obj) == ptr) return 1;
     }
 
@@ -78,11 +87,22 @@ static ImixBlock *imix_block_new(void) {
     }
 
     memset(block->line_mark, 0, sizeof(block->line_mark));
+    memset(block->granule_bitmap, 0, sizeof(block->granule_bitmap));
     block->bump = 0;
+    block->hole_start = 0;
+    block->hole_end = 0;
     block->young_objects = 0;
     block->next = NULL;
     block->evacuating = false;
     return block;
+}
+
+static inline void nofl_granule_mark(ImixBlock *block, size_t offset, size_t total_bytes) {
+    size_t start_g = offset / NOFL_GRANULE_SIZE;
+    size_t end_g = (offset + total_bytes - 1) / NOFL_GRANULE_SIZE;
+    for (size_t g = start_g; g <= end_g && g < NOFL_GRANULES_PER_BLOCK; g++) {
+        block->granule_bitmap[g >> 3] |= (1u << (g & 7));
+    }
 }
 
 static void gc_remembered_push(GCHeap *heap, GCObject *obj) {
@@ -161,10 +181,23 @@ static void gc_heap_record_pause(GCHeap *heap, uint64_t start_ns) {
     if (pause_ms > heap->gc_ms_max) heap->gc_ms_max = pause_ms;
 }
 
+static inline uint64_t gc_phase_begin(GCHeap *heap) {
+    return heap->pause_trace ? gc_now_ns() : 0;
+}
+
+static inline void gc_phase_end(GCHeap *heap, uint64_t start_ns, const char *phase) {
+    if (!heap->pause_trace) return;
+    double ms = (double)(gc_now_ns() - start_ns) / 1000000.0;
+    if (ms >= heap->pause_trace_threshold_ms) {
+        fprintf(stderr, "GC_PAUSE %.3fms phase=%s minor=%d\n",
+                ms, phase, heap->minor_collection ? 1 : 0);
+    }
+}
+
 static size_t gc_compute_young_limit(size_t heap_limit, size_t bytes_live) {
-    size_t young = heap_limit / 4;
-    size_t min_young = 1 * 1024 * 1024;
-    size_t max_young = 8 * 1024 * 1024;
+    size_t young = heap_limit / 8;
+    size_t min_young = 128 * 1024;   /* 128 KB — fire minor GC sooner */
+    size_t max_young = 512 * 1024;   /* 512 KB — keeps gray-set drain tractable */
     (void)bytes_live;
 
     if (young < min_young) young = min_young;
@@ -220,12 +253,25 @@ static int gc_verify_seen_contains(const GCVerifyStack *stack, GCObject *obj) {
     return 0;
 }
 
+static bool last_collection_was_minor = false;
+
 static void gc_verify_visit(void *ctx, GCObject *obj) {
     GCTraceCtx *trace = (GCTraceCtx *)ctx;
     GCVerifyState *state = (GCVerifyState *)trace->userdata;
     if (!obj) return;
     if (obj->color == GC_DEAD) {
-        fprintf(stderr, "gc verify: reachable object marked dead\n");
+        typedef struct {
+            int ref_count;
+            char *chars;
+        } TempStringObj;
+        TempStringObj *str = (TempStringObj *)((uint8_t *)obj + sizeof(GCObject));
+        if (str->chars == (char *)str + sizeof(TempStringObj)) {
+            fprintf(stderr, "gc verify: reachable object marked dead! size=%u, generation=%u, trace=%p, was_minor=%d, str=\"%s\"\n",
+                    obj->size, obj->generation, (void*)obj->trace, last_collection_was_minor, str->chars);
+        } else {
+            fprintf(stderr, "gc verify: reachable object marked dead! size=%u, generation=%u, trace=%p, was_minor=%d\n",
+                    obj->size, obj->generation, (void*)obj->trace, last_collection_was_minor);
+        }
         abort();
     }
     if (gc_verify_seen_contains(&state->seen, obj)) return;
@@ -287,10 +333,13 @@ static void imix_mark_lines(ImixBlock *block, size_t offset, size_t size) {
 void _gc_gray_push(GCHeap *heap, GCObject *obj);
 
 static void gray_push(GCHeap *heap, GCObject *obj) {
+    if (heap->minor_collection && obj->generation == GC_GEN_OLD) {
+        heap->minor_marked_old = true;
+    }
     if (heap->gray_top == heap->gray_cap) {
         size_t new_cap = heap->gray_cap ? heap->gray_cap * 2 : 64;
-        GCObject **new_stack =
-            (GCObject **)realloc(heap->gray_stack, new_cap * sizeof(GCObject *));
+        GCGrayEntry *new_stack =
+            (GCGrayEntry *)realloc(heap->gray_stack, new_cap * sizeof(GCGrayEntry));
         if (!new_stack) {
             fprintf(stderr, "gc: gray stack out of memory\n");
             abort();
@@ -298,17 +347,37 @@ static void gray_push(GCHeap *heap, GCObject *obj) {
         heap->gray_stack = new_stack;
         heap->gray_cap = new_cap;
     }
-
-    heap->gray_stack[heap->gray_top++] = obj;
+    heap->gray_stack[heap->gray_top].obj    = obj;
+    heap->gray_stack[heap->gray_top].cursor = 0; /* fresh push — start from child 0 */
+    heap->gray_top++;
 }
 
-static GCObject *gray_pop(GCHeap *heap) {
-    if (heap->gray_top == 0) return NULL;
+/* Re-push with a non-zero cursor after a mid-trace deadline interruption. */
+static void gray_push_cursor(GCHeap *heap, GCObject *obj, size_t cursor) {
+    if (heap->gray_top == heap->gray_cap) {
+        size_t new_cap = heap->gray_cap ? heap->gray_cap * 2 : 64;
+        GCGrayEntry *new_stack =
+            (GCGrayEntry *)realloc(heap->gray_stack, new_cap * sizeof(GCGrayEntry));
+        if (!new_stack) {
+            fprintf(stderr, "gc: gray stack out of memory\n");
+            abort();
+        }
+        heap->gray_stack = new_stack;
+        heap->gray_cap = new_cap;
+    }
+    heap->gray_stack[heap->gray_top].obj    = obj;
+    heap->gray_stack[heap->gray_top].cursor = cursor;
+    heap->gray_top++;
+}
+
+static GCGrayEntry gray_pop(GCHeap *heap) {
+    GCGrayEntry empty = {NULL, 0};
+    if (heap->gray_top == 0) return empty;
     return heap->gray_stack[--heap->gray_top];
 }
 
 void _gc_gray_push(GCHeap *heap, GCObject *obj) {
-    gray_push(heap, obj);
+    gray_push(heap, obj);  /* cursor = 0: this is a fresh gray reference */
 }
 
 GCHeap *gc_heap_create(size_t initial_limit) {
@@ -319,19 +388,27 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->blocks = heap->current;
     heap->heap_limit = initial_limit ? initial_limit : (4 * 1024 * 1024);
     heap->growth_factor = 1.5;
-    heap->increment_steps = 64;
-    heap->sweep_block_budget = 3;
-    heap->incremental_mode = false;
+    heap->increment_steps = 1024; /* drain more gray objects per step to keep up with fast allocators */
+    heap->sweep_block_budget = 8;  /* sweep fewer blocks per step to bound each safepoint */
+    heap->incremental_mode = true;
     heap->young_limit = gc_compute_young_limit(heap->heap_limit, 0);
     heap->major_interval = gc_compute_major_interval(0, heap->heap_limit);
+    heap->large_sweep_budget = 64; /* large objects handled per sweep step */
     heap->stress_mode = getenv("LUNA_GC_STRESS") != NULL;
     heap->verify_mode = getenv("LUNA_GC_VERIFY") != NULL;
+    heap->pause_trace = getenv("LUNA_GC_PAUSE_TRACE") != NULL;
+    /* threshold in microseconds; report any single phase exceeding it */
+    heap->pause_trace_threshold_ms =
+        (double)gc_env_size("LUNA_GC_PAUSE_TRACE_US", 200, 1, 1000000) / 1000.0;
     heap->heap_limit = gc_env_size("LUNA_GC_INITIAL_HEAP_LIMIT", heap->heap_limit, 256 * 1024, (size_t)8 * 1024 * 1024 * 1024ULL);
     heap->young_limit = gc_env_size("LUNA_GC_YOUNG_LIMIT", heap->young_limit, 16 * 1024, 64 * 1024 * 1024);
     heap->major_interval = gc_env_size("LUNA_GC_MAJOR_INTERVAL", heap->major_interval, 1, 1000000);
     heap->incremental_mode = gc_env_bool("LUNA_GC_INCREMENTAL", heap->incremental_mode ? 1 : 0) != 0;
     heap->increment_steps = gc_env_size("LUNA_GC_INCREMENT_STEPS", heap->increment_steps, 1, 4096);
     heap->sweep_block_budget = gc_env_size("LUNA_GC_SWEEP_BUDGET", heap->sweep_block_budget, 1, 64);
+    heap->large_sweep_budget = gc_env_size("LUNA_GC_LARGE_SWEEP_BUDGET", heap->large_sweep_budget, 1, 4096);
+    size_t pause_target_us = gc_env_size("LUNA_GC_PAUSE_TARGET_US", 100, 10, 1000000);
+    heap->target_pause_ns = (uint64_t)pause_target_us * 1000ULL;
 
     heap->root_cap = 64;
     heap->roots = (GCObject **)malloc(heap->root_cap * sizeof(GCObject *));
@@ -350,8 +427,21 @@ void gc_heap_destroy(GCHeap *heap) {
         free(obj);
         obj = next;
     }
+    obj = heap->large_sweep_list;
+    while (obj) {
+        GCObject *next = obj->next;
+        if (obj->finalize) obj->finalize(obj);
+        free(obj);
+        obj = next;
+    }
 
     ImixBlock *block = heap->blocks;
+    while (block) {
+        ImixBlock *next = block->next;
+        free(block);
+        block = next;
+    }
+    block = heap->sweep_chain;
     while (block) {
         ImixBlock *next = block->next;
         free(block);
@@ -369,6 +459,7 @@ static GCObject *imix_bump_alloc(ImixBlock *block, size_t total) {
 
     GCObject *obj = (GCObject *)(block->data + block->bump);
     imix_mark_lines(block, block->bump, total);
+    nofl_granule_mark(block, block->bump, total);
     block->bump += total;
     return obj;
 }
@@ -400,7 +491,7 @@ void *gc_heap_alloc(GCHeap *heap, size_t size, GCTracer trace, GCFinalizer fin) 
         heap->current->young_objects++;
     }
 
-    obj->color = (heap->sweep_in_progress && total > IMIX_BLOCK_SIZE) ? GC_BLACK : GC_WHITE;
+    obj->color = heap->collection_in_progress ? GC_BLACK : GC_WHITE;
     obj->pinned = false;
     obj->generation = GC_GEN_YOUNG;
     obj->remembered = 0;
@@ -453,12 +544,7 @@ static void gc_remember_from_roots(GCHeap *heap) {
     for (size_t i = 0; i < heap->remembered_count; i++) {
         GCObject *obj = heap->remembered_set[i];
         if (!obj || obj->color == GC_DEAD) continue;
-        if (heap->minor_collection && obj->generation == GC_GEN_OLD) {
-            GCTraceCtx ctx = { heap, NULL, NULL };
-            if (obj->trace) obj->trace(obj, &ctx);
-            continue;
-        }
-        if (obj->color == GC_WHITE) {
+        if (obj->color != GC_GRAY) {
             obj->color = GC_GRAY;
             gray_push(heap, obj);
         }
@@ -466,15 +552,12 @@ static void gc_remember_from_roots(GCHeap *heap) {
 }
 
 static void mark_roots(GCHeap *heap) {
-    GCTraceCtx ctx = { heap, NULL, heap->root_marker_ctx };
+    uint64_t phase_ns = gc_phase_begin(heap);
+    GCTraceCtx ctx = { heap, NULL, heap->root_marker_ctx, 0, false, 0, 0 };
 
     for (size_t i = 0; i < heap->root_count; i++) {
         GCObject *root = heap->roots[i];
-        if (heap->minor_collection && root && root->generation == GC_GEN_OLD) {
-            if (root->trace) root->trace(root, &ctx);
-            continue;
-        }
-        if (root && root->color == GC_WHITE) {
+        if (root && root->color != GC_GRAY) {
             root->color = GC_GRAY;
             gray_push(heap, root);
         }
@@ -487,24 +570,74 @@ static void mark_roots(GCHeap *heap) {
     if (heap->minor_collection) {
         gc_remember_from_roots(heap);
     }
+    gc_phase_end(heap, phase_ns, "mark_roots");
 }
 
 static bool drain_gray(GCHeap *heap, size_t count) {
-    GCTraceCtx ctx = { heap, NULL, NULL };
+    uint64_t phase_ns = gc_phase_begin(heap);
+    bool time_slice = (count > 0 && heap->target_pause_ns > 0);
+    uint64_t start_ns = time_slice ? gc_now_ns() : 0;
+    uint64_t deadline_ns = time_slice ? (start_ns + heap->target_pause_ns) : 0;
 
-    for (size_t i = 0; i < count || count == 0; i++) {
-        GCObject *obj = gray_pop(heap);
-        if (!obj) return true;
+    GCTraceCtx ctx = {
+        .heap        = heap,
+        .visit       = NULL,
+        .userdata    = NULL,
+        .deadline_ns = deadline_ns,
+        .deadline_hit = false,
+        .scan_start  = 0,
+        .scan_resume = 0,
+    };
+
+    /* Reset the thread-local visit counter so this step gets a full
+     * target_pause_ns budget rather than inheriting leftover count
+     * from a previous object's partial trace. */
+    gc_visit_reset_deadline_counter();
+
+    size_t processed = 0;
+
+    while (heap->gray_top > 0) {
+        GCGrayEntry entry = gray_pop(heap);
+        GCObject *obj = entry.obj;
+        if (!obj) continue;
 
         obj->color = GC_BLACK;
+        ctx.deadline_hit = false;
+        ctx.scan_start   = entry.cursor;  /* tell tracer where to resume */
+        ctx.scan_resume  = entry.cursor;  /* tracer will update if interrupted */
+
         if (obj->trace) obj->trace(obj, &ctx);
+
+        if (ctx.deadline_hit) {
+            /* Tracer was interrupted mid-way: re-gray the object and
+             * store the resume cursor so next step starts where we left off. */
+            obj->color = GC_GRAY;
+            gray_push_cursor(heap, obj, ctx.scan_resume);
+            gc_phase_end(heap, phase_ns, "drain");
+            return false;
+        }
+
+        processed++;
+
+        if (count > 0 && processed >= count) {
+            gc_phase_end(heap, phase_ns, "drain");
+            return heap->gray_top == 0;
+        }
+
+        if (deadline_ns > 0 && (processed & 63) == 0) {
+            if (gc_now_ns() >= deadline_ns) {
+                gc_phase_end(heap, phase_ns, "drain");
+                return heap->gray_top == 0;
+            }
+        }
     }
 
+    gc_phase_end(heap, phase_ns, "drain");
     return heap->gray_top == 0;
 }
 
 static void sweep_block(GCHeap *heap, ImixBlock *block) {
-    if (heap->minor_collection && block->young_objects == 0) {
+    if (heap->minor_collection && block->young_objects == 0 && !heap->minor_marked_old) {
         return;
     }
 
@@ -572,104 +705,68 @@ static void sweep_block(GCHeap *heap, ImixBlock *block) {
     block->young_objects = young_objects;
 }
 
-static void sweep_large(GCHeap *heap) {
-    GCObject **prev = &heap->large_list;
-    GCObject *obj = heap->large_list;
+/* Incremental large-object sweep: pops one object from the detached
+ * heap->large_sweep_list, frees it or reattaches it to heap->large_list.
+ * New large allocations during sweep go straight to heap->large_list,
+ * so the two lists never interfere. */
+static void sweep_large_one(GCHeap *heap) {
+    uint64_t t0 = heap->pause_trace ? gc_now_ns() : 0;
+    GCObject *obj = heap->large_sweep_list;
+    heap->large_sweep_list = obj->next;
+    size_t total = gc_object_total_size(obj->size);
+    int keep = 1;
+    int promoted = 0;
 
-    while (obj) {
-        GCObject *next = obj->next;
-        size_t total = gc_object_total_size(obj->size);
-
-        if (heap->minor_collection) {
-            if (obj->generation == GC_GEN_YOUNG) {
-                if (obj->color == GC_WHITE) {
-                    if (obj->finalize) obj->finalize(obj);
-                    heap->bytes_allocated -= total;
-                    if (heap->young_bytes_allocated >= total) heap->young_bytes_allocated -= total;
-                    *prev = next;
-                    free(obj);
-                } else {
-                    obj->generation = GC_GEN_OLD;
-                    obj->color = GC_WHITE;
-                    gc_remember_if_points_to_young(heap, obj);
-                    if (heap->young_bytes_allocated >= total) heap->young_bytes_allocated -= total;
-                    heap->bytes_live += total;
-                    prev = &obj->next;
-                }
+    if (heap->minor_collection) {
+        if (obj->generation == GC_GEN_YOUNG) {
+            if (obj->color == GC_WHITE) {
+                keep = 0;
             } else {
+                obj->generation = GC_GEN_OLD;
                 obj->color = GC_WHITE;
+                if (heap->young_bytes_allocated >= total) heap->young_bytes_allocated -= total;
                 heap->bytes_live += total;
-                prev = &obj->next;
+                promoted = 1;
             }
-        } else if (obj->color == GC_WHITE) {
-            if (obj->finalize) obj->finalize(obj);
-            heap->bytes_allocated -= total;
-            if (obj->generation == GC_GEN_YOUNG && heap->young_bytes_allocated >= total) {
-                heap->young_bytes_allocated -= total;
-            }
-            *prev = next;
-            free(obj);
         } else {
-            obj->generation = GC_GEN_OLD;
             obj->color = GC_WHITE;
-            if (heap->young_bytes_allocated >= total) heap->young_bytes_allocated -= total;
             heap->bytes_live += total;
-            prev = &obj->next;
         }
-
-        obj = next;
+    } else if (obj->color == GC_WHITE) {
+        keep = 0;
+    } else {
+        obj->generation = GC_GEN_OLD;
+        obj->color = GC_WHITE;
+        if (heap->young_bytes_allocated >= total) heap->young_bytes_allocated -= total;
+        heap->bytes_live += total;
     }
-}
 
-static void mark_evacuate_candidates(GCHeap *heap) {
-    for (ImixBlock *block = heap->blocks; block; block = block->next) {
-        size_t live_lines = 0;
-        for (size_t i = 0; i < IMIX_LINES_PER_BLOCK; i++) live_lines += block->line_mark[i];
-        block->evacuating = (live_lines < IMIX_LINES_PER_BLOCK / 4);
-    }
-}
-
-static void reclaim_empty_blocks(GCHeap *heap) {
-    ImixBlock *prev = NULL;
-    ImixBlock *block = heap->blocks;
-    ImixBlock *fallback = heap->blocks;
-
-    while (block) {
-        ImixBlock *next = block->next;
-        int any_live = 0;
-        for (size_t i = 0; i < IMIX_LINES_PER_BLOCK; i++) {
-            if (block->line_mark[i]) {
-                any_live = 1;
-                break;
+    if (!keep) {
+        if (obj->finalize) obj->finalize(obj);
+        heap->bytes_allocated -= total;
+        if (obj->generation == GC_GEN_YOUNG && heap->young_bytes_allocated >= total) {
+            heap->young_bytes_allocated -= total;
+        }
+        uint32_t sz = obj->size;
+        free(obj);
+        if (heap->pause_trace && t0) {
+            double ms = (double)(gc_now_ns() - t0) / 1000000.0;
+            if (ms >= heap->pause_trace_threshold_ms) {
+                fprintf(stderr, "GC_LARGE free=%.3fms size=%u\n", ms, sz);
             }
         }
-
-        if (!any_live) {
-            block->bump = 0;
-            memset(block->line_mark, 0, sizeof(block->line_mark));
-
-            if (next || prev) {
-                if (prev) prev->next = next;
-                else heap->blocks = next;
-                if (heap->current == block) heap->current = next ? next : heap->blocks;
-                free(block);
-                block = next;
-                continue;
-            }
-        }
-
-        fallback = block;
-        prev = block;
-        block = next;
-    }
-
-    if (!heap->blocks) {
-        heap->blocks = imix_block_new();
-        heap->current = heap->blocks;
         return;
     }
 
-    if (!heap->current) heap->current = fallback ? fallback : heap->blocks;
+    if (promoted) gc_remember_if_points_to_young(heap, obj);
+    obj->next = heap->large_list;
+    heap->large_list = obj;
+    if (heap->pause_trace && t0) {
+        double ms = (double)(gc_now_ns() - t0) / 1000000.0;
+        if (ms >= heap->pause_trace_threshold_ms) {
+            fprintf(stderr, "GC_LARGE keep=%.3fms size=%u gen=%u\n", ms, obj->size, obj->generation);
+        }
+    }
 }
 
 static void gc_select_current_block(GCHeap *heap) {
@@ -684,14 +781,10 @@ static void gc_select_current_block(GCHeap *heap) {
 
 static void gc_finish_sweep_phase(GCHeap *heap) {
     if (!heap) return;
+    uint64_t phase_ns = gc_phase_begin(heap);
 
-    if (!heap->minor_collection || heap->sweep_reclaim_empty) {
-        reclaim_empty_blocks(heap);
-    }
     gc_select_current_block(heap);
-    sweep_large(heap);
     if (!heap->minor_collection) {
-        mark_evacuate_candidates(heap);
         if (heap->bytes_live > heap->heap_limit / 2) {
             heap->heap_limit = (size_t)(heap->bytes_live * 2 * heap->growth_factor);
         }
@@ -704,43 +797,111 @@ static void gc_finish_sweep_phase(GCHeap *heap) {
 
     heap->total_collections++;
     heap->sweep_in_progress = false;
+    last_collection_was_minor = heap->sweep_minor;
     heap->sweep_minor = false;
     heap->sweep_reclaim_empty = false;
     heap->sweep_cursor = NULL;
+    heap->sweep_chain = NULL;
+    heap->reclaim_cursor = NULL;
+    heap->large_sweep_list = NULL;
     heap->collection_in_progress = false;
     heap->minor_collection = false;
+    heap->minor_marked_old = false;
+    gc_phase_end(heap, phase_ns, "finish_sweep");
     gc_verify_heap(heap);
 }
 
 static void gc_prepare_sweep_phase(GCHeap *heap, bool minor, bool reclaim_empty) {
     if (!heap) return;
 
-    heap->sweep_cursor = heap->blocks;
+    /* Detach the existing block chain and large-object list: they become the
+     * sweep set.  Fresh allocations during the sweep phase build up new,
+     * disjoint lists (heap->blocks / heap->large_list), so incremental sweep
+     * can never race with the mutator over list pointers. */
+    heap->sweep_chain = heap->blocks;
+    heap->sweep_cursor = heap->sweep_chain;
+    heap->reclaim_cursor = NULL;
+    heap->large_sweep_list = heap->large_list;
+    heap->large_list = NULL;
+
     heap->sweep_in_progress = true;
     heap->sweep_minor = minor;
     heap->sweep_reclaim_empty = reclaim_empty;
     heap->collection_in_progress = false;
 
     ImixBlock *fresh = imix_block_new();
-    fresh->next = heap->blocks;
     heap->blocks = fresh;
     heap->current = fresh;
 }
 
 static void gc_sweep_some_blocks(GCHeap *heap, size_t budget) {
     if (!heap || !heap->sweep_in_progress) return;
+    uint64_t phase_ns = gc_phase_begin(heap);
+    uint64_t deadline = heap->target_pause_ns ? gc_now_ns() + heap->target_pause_ns : 0;
 
+    /* Pass 1: sweep blocks in the detached chain. */
     size_t swept = 0;
     while (heap->sweep_cursor && swept < budget) {
         ImixBlock *block = heap->sweep_cursor;
         heap->sweep_cursor = block->next;
         sweep_block(heap, block);
         swept++;
+        if (deadline && gc_now_ns() >= deadline) {
+            gc_phase_end(heap, phase_ns, "sweep_blocks");
+            return;
+        }
+    }
+    if (heap->sweep_cursor) {
+        gc_phase_end(heap, phase_ns, "sweep_blocks");
+        return;
     }
 
-    if (!heap->sweep_cursor) {
-        gc_finish_sweep_phase(heap);
+    /* Pass 2: walk the swept chain once more — free empty blocks (when
+     * allowed) and reattach the rest to the live block list. */
+    if (heap->sweep_chain) {
+        if (!heap->reclaim_cursor) heap->reclaim_cursor = heap->sweep_chain;
+        size_t n = 0;
+        while (heap->reclaim_cursor) {
+            ImixBlock *block = heap->reclaim_cursor;
+            heap->reclaim_cursor = block->next;
+
+            int empty = 1;
+            for (size_t i = 0; i < IMIX_LINES_PER_BLOCK; i++) {
+                if (block->line_mark[i]) { empty = 0; break; }
+            }
+
+            if (empty && heap->sweep_reclaim_empty) {
+                block->bump = 0;
+                memset(block->line_mark, 0, sizeof(block->line_mark));
+                free(block);
+            } else {
+                block->next = heap->blocks;
+                heap->blocks = block;
+            }
+
+            n++;
+            if (deadline && gc_now_ns() >= deadline) {
+                gc_phase_end(heap, phase_ns, "reclaim_blocks");
+                return;
+            }
+        }
+        heap->sweep_chain = NULL;
     }
+
+    /* Pass 3: sweep large objects. */
+    size_t lswept = 0;
+    while (heap->large_sweep_list) {
+        sweep_large_one(heap);
+        lswept++;
+        if (lswept >= heap->large_sweep_budget ||
+            (deadline && gc_now_ns() >= deadline)) {
+            gc_phase_end(heap, phase_ns, "sweep_large");
+            return;
+        }
+    }
+
+    gc_phase_end(heap, phase_ns, "sweep_finish");
+    gc_finish_sweep_phase(heap);
 }
 
 void gc_heap_collect(GCHeap *heap) {
@@ -757,6 +918,23 @@ void gc_heap_collect(GCHeap *heap) {
     gc_heap_record_pause(heap, start_ns);
 }
 
+/*
+ * Adaptive drain: when the incremental marker is falling behind the allocator
+ * (mark_step_count keeps growing), we double the step budget so the GC
+ * catches up faster within the same safepoint.  This avoids a stop-the-world
+ * drain while still making progress.
+ *
+ * We cap the adaptive budget at 4096 objects per step; beyond that we do a
+ * one-shot full drain (which is bounded by the live-set, not by allocation
+ * rate, so it terminates quickly once the live set is fully marked).
+ */
+static size_t gc_adaptive_steps(GCHeap *heap) {
+    if (heap->mark_step_count < 4) return heap->increment_steps;
+    size_t steps = heap->increment_steps << (heap->mark_step_count / 4);
+    if (steps > 4096) steps = 4096;
+    return steps;
+}
+
 void gc_heap_step(GCHeap *heap) {
     uint64_t start_ns = gc_now_ns();
 
@@ -768,24 +946,47 @@ void gc_heap_step(GCHeap *heap) {
 
     if (!heap->collection_in_progress) {
         heap->collection_in_progress = true;
+        heap->mark_roots_done = false;
+        heap->mark_step_count = 0;
         heap->bytes_live = 0;
         heap->minor_collection = false;
         gc_reset_remembered_set(heap);
-        mark_roots(heap);
     }
 
-    if (drain_gray(heap, heap->increment_steps)) {
+    if (!heap->mark_roots_done) {
+        mark_roots(heap);
+        heap->mark_roots_done = true;
+        if (heap->target_pause_ns > 0 && gc_now_ns() - start_ns >= heap->target_pause_ns) {
+            gc_heap_record_pause(heap, start_ns);
+            return;
+        }
+    }
+
+    heap->mark_step_count++;
+    size_t steps = gc_adaptive_steps(heap);
+
+    if (drain_gray(heap, steps)) {
+        heap->mark_step_count = 0;
+        if (heap->target_pause_ns > 0 && gc_now_ns() - start_ns >= heap->target_pause_ns) {
+            /* marking done but budget spent — start sweep on the next safepoint */
+            gc_heap_record_pause(heap, start_ns);
+            return;
+        }
         gc_prepare_sweep_phase(heap, false, true);
         gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        heap->young_limit = gc_compute_young_limit(heap->heap_limit, heap->bytes_live);
     }
 
     gc_heap_record_pause(heap, start_ns);
 }
 
+static void gc_heap_step_minor(GCHeap *heap);
+
 static void gc_heap_collect_minor(GCHeap *heap) {
     uint64_t start_ns = gc_now_ns();
     heap->collection_in_progress = true;
     heap->minor_collection = true;
+    heap->minor_marked_old = false;
     heap->bytes_live = 0;
     mark_roots(heap);
     drain_gray(heap, 0);
@@ -805,14 +1006,34 @@ static void gc_heap_step_minor(GCHeap *heap) {
 
     if (!heap->collection_in_progress) {
         heap->collection_in_progress = true;
+        heap->mark_roots_done = false;
+        heap->mark_step_count = 0;
         heap->minor_collection = true;
+        heap->minor_marked_old = false;
         heap->bytes_live = 0;
-        mark_roots(heap);
     }
 
-    if (drain_gray(heap, heap->increment_steps)) {
+    if (!heap->mark_roots_done) {
+        mark_roots(heap);
+        heap->mark_roots_done = true;
+        if (heap->target_pause_ns > 0 && gc_now_ns() - start_ns >= heap->target_pause_ns) {
+            gc_heap_record_pause(heap, start_ns);
+            return;
+        }
+    }
+
+    heap->mark_step_count++;
+    size_t steps = gc_adaptive_steps(heap);
+
+    if (drain_gray(heap, steps)) {
+        heap->mark_step_count = 0;
+        if (heap->target_pause_ns > 0 && gc_now_ns() - start_ns >= heap->target_pause_ns) {
+            gc_heap_record_pause(heap, start_ns);
+            return;
+        }
         gc_prepare_sweep_phase(heap, true, gc_should_reclaim_empty_blocks_on_minor(heap));
         gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        heap->young_limit = gc_compute_young_limit(heap->heap_limit, heap->bytes_live);
     }
 
     gc_heap_record_pause(heap, start_ns);
@@ -825,7 +1046,9 @@ void gc_heap_maybe_collect(GCHeap *heap) {
         uint64_t start_ns = gc_now_ns();
         gc_sweep_some_blocks(heap, heap->sweep_block_budget);
         gc_heap_record_pause(heap, start_ns);
-        if (heap->sweep_in_progress) return;
+        /* one sweep step per safepoint; the next collection (if any) starts
+         * on a later safepoint so pauses stay bounded */
+        return;
     }
 
     // If a major incremental mark is in progress, keep advancing that state machine.

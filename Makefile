@@ -2,8 +2,7 @@ ifeq (,$(filter -j%,$(MAKEFLAGS)))
 MAKEFLAGS += -j$(shell nproc)
 endif
 CC = gcc
-# Added -Igui to ensure the compiler can find headers in the gui/ folder
-CFLAGS = -std=c11 -O3 -march=native -flto=auto -fopenmp -funroll-loops -fomit-frame-pointer -DNDEBUG -Iinclude -Igui -Wall -Wextra -Wno-unused-parameter
+CFLAGS = -std=c11 -O3 -march=native -flto=auto -fopenmp -funroll-loops -fomit-frame-pointer -DNDEBUG -Iinclude -Igui -Ivm -Wall -Wextra -Wno-unused-parameter
 DEPFLAGS = -MMD -MP
 ASM = nasm
 ASMFLAGS = -f elf64
@@ -31,7 +30,8 @@ SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
        src/unsafe_runtime.c src/luna_runtime.c src/luna_test.c \
        src/sand_lib.c src/arena.c src/intern.c src/data_runtime.c \
        gui/gui_lib.c gui/gl_backend.c gui/audio_backend.c \
-       gui/gl_backend_3d.c gui/gui_lib_3d.c
+       gui/gl_backend_3d.c gui/gui_lib_3d.c \
+       vm/luna_chunk.c vm/luna_compiler.c vm/luna_vm.c vm/luna_vm_gc.c
 
 # Object files
 OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
@@ -46,7 +46,9 @@ OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
        $(OBJDIR)/list_lib.o $(OBJDIR)/sand_lib.o $(OBJDIR)/arena.o \
        $(OBJDIR)/intern.o $(OBJDIR)/data_runtime.o $(OBJDIR)/gui_lib.o \
        $(OBJDIR)/gl_backend.o $(OBJDIR)/audio_backend.o \
-       $(OBJDIR)/gl_backend_3d.o $(OBJDIR)/gui_lib_3d.o
+       $(OBJDIR)/gl_backend_3d.o $(OBJDIR)/gui_lib_3d.o \
+       $(OBJDIR)/luna_chunk.o $(OBJDIR)/luna_compiler.o \
+       $(OBJDIR)/luna_vm.o $(OBJDIR)/luna_vm_gc.o
 DEPS = $(OBJS:.o=.d)
 
 all: $(BINDIR)/$(TARGET)
@@ -90,6 +92,10 @@ $(BINDIR)/$(TARGET): $(OBJS) $(UNSAFE_RT_LIB) $(DATA_RT_LIB) | $(BINDIR)
 
 # Compile source files from src/
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# Compile source files from vm/
+$(OBJDIR)/luna_%.o: vm/luna_%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # Rules to compile source files from gui/
@@ -233,7 +239,7 @@ run-comp: $(BINDIR)/$(TARGET)
 	@+ZIG=$(ZIG) ./benchmark/compare.sh
 
 test-gc: $(BINDIR)/$(TARGET)
-	@python3 test_gc/run_benchmarks.py
+	@python3 test_gc/gc_bench.py
 
 test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo "==> GC stress+verify: test/test_gc_safety.lu"

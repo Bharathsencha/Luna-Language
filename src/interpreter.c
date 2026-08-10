@@ -412,7 +412,7 @@ static int is_truthy(Value v) {
     }
 }
 
-static Value instantiate_data_type(Value dtype, int argc, Value *argv, int line) {
+Value instantiate_data_type(Value dtype, int argc, Value *argv, int line) {
     if (dtype.type != VAL_DATA_TYPE || !dtype.dtype) {
         error_report_with_context(ERR_TYPE, line, 0,
             "Value is not a data constructor",

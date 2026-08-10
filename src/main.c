@@ -20,6 +20,8 @@
 #include "mystr.h"
 #include "unsafe_runtime.h"
 #include "gc.h"
+#include "luna_vm.h"
+#include "luna_compiler.h"
 
 #define MAX_INPUT 1024
 #define HISTORY_MAX 128
@@ -222,6 +224,27 @@ void run_repl(Env *env) {
     repl_history_free(&history);
 }
 
+static void register_definitions(Env *env, AstNode *n) {
+    if (!n) return;
+    if (n->kind == NODE_BLOCK) {
+        for (int i = 0; i < n->block.items.count; i++) {
+            register_definitions(env, n->block.items.items[i]);
+        }
+    } else if (n->kind == NODE_DATA_DEF) {
+        Value dtype = value_data_type(n->data_def.name, n->data_def.fields, n->data_def.field_count,
+                                      n->data_def.is_template);
+        #ifdef LUNA_VM_DEBUG
+        printf("[REGISTER] Registering data type %s at pointer %p\n", n->data_def.name, (void*)n->data_def.name);
+        #endif
+        env_def_move(env, n->data_def.name, &dtype);
+    } else if (n->kind == NODE_BLOC_DEF) {
+        Value btype = value_bloc_type(n->bloc_def.name, n->bloc_def.fields, n->bloc_def.field_count);
+        if (btype.type != VAL_NULL) {
+            env_def_move(env, n->bloc_def.name, &btype);
+        }
+    }
+}
+
 static int ends_with_lu(const char *s) {
     size_t n = strlen(s);
     return n >= 3 && strcmp(s + n - 3, ".lu") == 0;
@@ -231,6 +254,7 @@ int main(int argc, char **argv) {
     // Force standard "C" locale to ensure '.' is treated as a decimal point
     // regardless of the user's system language settings.
     setlocale(LC_ALL, "C");
+    setbuf(stdout, NULL);
 
     // Initialize the AST Arena Allocator
     ast_init();
@@ -289,10 +313,23 @@ int main(int argc, char **argv) {
             env_free_global(global_env);
             return 1;
         }
-
         // Execute the parsed program (top-level statements and definitions)
-        // Note: interpret() auto-calls main() if defined, no need to do it here
-        interpret(prog, global_env);
+        if (getenv("LUNA_USE_VM")) {
+            register_definitions(global_env, prog);
+            LunaChunk *chunk = luna_compile_program(prog);
+            LunaVM vm;
+            luna_vm_init(&vm, luna_gc_runtime_heap());
+            vm.env = global_env;
+            luna_gc_runtime_set_root_marker(vm_gc_mark_roots, &vm);
+            Value ret = luna_vm_run(&vm, chunk);
+            value_free(ret);
+            luna_vm_free(&vm);
+            luna_gc_runtime_set_root_marker(luna_mark_runtime_roots, NULL);
+            luna_chunk_free(chunk);
+            free(chunk);
+        } else {
+            interpret(prog, global_env);
+        }
 
         ast_free(prog);
         free(src);

@@ -6,14 +6,14 @@ This directory contains the Go implementation of the Luna GC benchmarks. The goa
 
 | Benchmark | Language | User Time (s) | Sys Time (s) | Max RSS (MB) |
 | :--- | :--- | :--- | :--- | :--- |
-| **alloc_heavy** | Luna | 8.77 | 0.15 | 197.66 |
-| | Go | 0.37 | 0.19 | 55.62 |
-| **long_live** | Luna | 0.58 | 0.07 | 141.50 |
-| | Go | 0.16 | 0.03 | 16.92 |
-| **cycles** | Luna | 0.09 | 0.01 | 30.78 |
-| | Go | 0.01 | 0.00 | 4.04 |
-| **strings** | Luna | 7.34 | 0.16 | 235.44 |
-| | Go | 0.27 | 0.14 | 68.17 |
+| **alloc_heavy** | Luna | 10.87 | 0.15 | 194.82 |
+| | Go | 0.16 | 0.03 | 47.08 |
+| **long_live** | Luna | 1.58 | 0.05 | 93.35 |
+| | Go | 0.06 | 0.01 | 15.61 |
+| **cycles** | Luna | 6.18 | 0.25 | 428.66 |
+| | Go | 0.00 | 0.00 | 3.97 |
+| **strings** | Luna | 8.54 | 0.16 | 232.65 |
+| | Go | 0.09 | 0.04 | 66.64 |
 
 ### Metric Definitions
 - **User Time (s)**: The total time the CPU spent executing the program's code itself (user-mode).
