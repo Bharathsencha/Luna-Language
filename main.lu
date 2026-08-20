@@ -1,9 +1,1 @@
-let name = "Nova"
-let hp = 87
-
-let online = "Pilot {name} is online"
-let status = "Pilot {name} has {hp} hp"
-
-print(online)
-print(status)
-print("Pilot " + name + " has " + to_string(hp) + " hp")
+print("hello world")

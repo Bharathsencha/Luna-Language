@@ -1164,6 +1164,7 @@ int value_template_set_field(Value *template_value, const char *field, Value *rh
     Value *slot = &template_value->template_obj->fields[idx];
     value_free(*slot);
     *slot = value_move(rhs);
+    gc_note_owner_write_value(template_value->template_obj, slot);
     if (slot->type == VAL_BOX) {
         data_runtime_check_containment(DATA_KIND_TEMPLATE, DATA_KIND_BOX, 0);
         value_box_promote_to_template(*slot);

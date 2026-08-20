@@ -128,19 +128,15 @@ static void gc_detect_young_ref(void *ctx, GCObject *child) {
     }
 }
 
+/* During minor GC sweep, ALL reachable young objects are promoted together,
+ * so a promoted object cannot retain pointers to still-young objects.
+ * Future old→young edges are captured by the write barrier
+ * (luna_gc_runtime_remember).  The old approach of fully tracing each
+ * promoted object here caused unbounded multi-ms pauses on large containers.
+ * Now we simply skip the scan entirely. */
 static void gc_remember_if_points_to_young(GCHeap *heap, GCObject *obj) {
-    if (!heap || !obj || obj->generation != GC_GEN_OLD || !obj->trace) return;
-
-    GCPromotedRememberCtx scan = {0};
-    GCTraceCtx ctx = {
-        .heap = heap,
-        .visit = gc_detect_young_ref,
-        .userdata = &scan,
-    };
-    obj->trace(obj, &ctx);
-    if (scan.has_young_ref) {
-        gc_remembered_push(heap, obj);
-    }
+    (void)heap;
+    (void)obj;
 }
 
 static int gc_env_bool(const char *name, int default_value) {
@@ -195,9 +191,9 @@ static inline void gc_phase_end(GCHeap *heap, uint64_t start_ns, const char *pha
 }
 
 static size_t gc_compute_young_limit(size_t heap_limit, size_t bytes_live) {
-    size_t young = heap_limit / 8;
-    size_t min_young = 128 * 1024;   /* 128 KB — fire minor GC sooner */
-    size_t max_young = 512 * 1024;   /* 512 KB — keeps gray-set drain tractable */
+    size_t young = heap_limit / 4;
+    size_t min_young = 512 * 1024;   /* 512 KB — fewer minor GCs */
+    size_t max_young = 4 * 1024 * 1024; /* 4 MB — incremental drain handles large sets */
     (void)bytes_live;
 
     if (young < min_young) young = min_young;
@@ -388,12 +384,12 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->blocks = heap->current;
     heap->heap_limit = initial_limit ? initial_limit : (4 * 1024 * 1024);
     heap->growth_factor = 1.5;
-    heap->increment_steps = 1024; /* drain more gray objects per step to keep up with fast allocators */
-    heap->sweep_block_budget = 8;  /* sweep fewer blocks per step to bound each safepoint */
+    heap->increment_steps = 2048; /* drain more gray objects per step to keep up with fast allocators */
+    heap->sweep_block_budget = 16; /* sweep more blocks per step — each block is fast without remember-scan */
     heap->incremental_mode = true;
     heap->young_limit = gc_compute_young_limit(heap->heap_limit, 0);
     heap->major_interval = gc_compute_major_interval(0, heap->heap_limit);
-    heap->large_sweep_budget = 64; /* large objects handled per sweep step */
+    heap->large_sweep_budget = 128; /* large objects handled per sweep step */
     heap->stress_mode = getenv("LUNA_GC_STRESS") != NULL;
     heap->verify_mode = getenv("LUNA_GC_VERIFY") != NULL;
     heap->pause_trace = getenv("LUNA_GC_PAUSE_TRACE") != NULL;
@@ -407,7 +403,7 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->increment_steps = gc_env_size("LUNA_GC_INCREMENT_STEPS", heap->increment_steps, 1, 4096);
     heap->sweep_block_budget = gc_env_size("LUNA_GC_SWEEP_BUDGET", heap->sweep_block_budget, 1, 64);
     heap->large_sweep_budget = gc_env_size("LUNA_GC_LARGE_SWEEP_BUDGET", heap->large_sweep_budget, 1, 4096);
-    size_t pause_target_us = gc_env_size("LUNA_GC_PAUSE_TARGET_US", 100, 10, 1000000);
+    size_t pause_target_us = gc_env_size("LUNA_GC_PAUSE_TARGET_US", 250, 10, 1000000);
     heap->target_pause_ns = (uint64_t)pause_target_us * 1000ULL;
 
     heap->root_cap = 64;
@@ -569,6 +565,11 @@ static void mark_roots(GCHeap *heap) {
 
     if (heap->minor_collection) {
         gc_remember_from_roots(heap);
+        /* All pre-existing old→young edges are now captured in the gray
+         * stack.  Reset the remembered set so it stays small; the write
+         * barrier will repopulate it with any new edges created during or
+         * after this collection. */
+        gc_reset_remembered_set(heap);
     }
     gc_phase_end(heap, phase_ns, "mark_roots");
 }
