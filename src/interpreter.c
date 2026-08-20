@@ -10,6 +10,7 @@
 #include <math.h>  // Added for fabs()
 #include "interpreter.h"
 #include "ast.h"
+#include "luna_vm.h"
 #include "value.h"
 #include "mystr.h"
 #include "env.h"     
@@ -551,6 +552,9 @@ tco_restart:
 }
 
 Value luna_call_value(Env *caller_env, Value callee, int argc, Value *argv, int line) {
+    if (callee.type == VAL_VM_CLOSURE && callee.vm_closure) {
+        return luna_vm_call_closure(luna_gc_runtime_heap(), caller_env, callee.vm_closure, argc, argv, line);
+    }
     if (callee.type == VAL_CLOSURE || callee.type == VAL_FUNCTION) {
         return call_user_function_with_args(caller_env, callee, argc, argv, line);
     }

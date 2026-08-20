@@ -293,7 +293,7 @@ Value lib_list_map(int argc, Value *argv, Env *env) {
         error_report(ERR_ARGUMENT, 0, 0, "map() expects (list, func)", "Usage: map(list, func(x) { ... })");
         return value_null();
     }
-    if (argv[1].type != VAL_CLOSURE && argv[1].type != VAL_FUNCTION && argv[1].type != VAL_NATIVE) {
+    if (argv[1].type != VAL_CLOSURE && argv[1].type != VAL_FUNCTION && argv[1].type != VAL_NATIVE && argv[1].type != VAL_VM_CLOSURE) {
         error_report(ERR_ARGUMENT, 0, 0, "map() expects a callable second argument", "Pass a function value as the mapper");
         return value_null();
     }
@@ -316,7 +316,7 @@ Value lib_list_filter(int argc, Value *argv, Env *env) {
         error_report(ERR_ARGUMENT, 0, 0, "filter() expects (list, func)", "Usage: filter(list, func(x) { ... })");
         return value_null();
     }
-    if (argv[1].type != VAL_CLOSURE && argv[1].type != VAL_FUNCTION && argv[1].type != VAL_NATIVE) {
+    if (argv[1].type != VAL_CLOSURE && argv[1].type != VAL_FUNCTION && argv[1].type != VAL_NATIVE && argv[1].type != VAL_VM_CLOSURE) {
         error_report(ERR_ARGUMENT, 0, 0, "filter() expects a callable second argument", "Pass a function value as the predicate");
         return value_null();
     }
@@ -342,7 +342,7 @@ Value lib_list_reduce(int argc, Value *argv, Env *env) {
         error_report(ERR_ARGUMENT, 0, 0, "reduce() expects (list, func, init)", "Usage: reduce(list, func(acc, x) { ... }, init)");
         return value_null();
     }
-    if (argv[1].type != VAL_CLOSURE && argv[1].type != VAL_FUNCTION && argv[1].type != VAL_NATIVE) {
+    if (argv[1].type != VAL_CLOSURE && argv[1].type != VAL_FUNCTION && argv[1].type != VAL_NATIVE && argv[1].type != VAL_VM_CLOSURE) {
         error_report(ERR_ARGUMENT, 0, 0, "reduce() expects a callable second argument", "Pass a function value as the reducer");
         return value_null();
     }

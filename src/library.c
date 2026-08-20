@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "library.h"
 #include "intern.h"
 #include "value.h"
@@ -19,6 +20,7 @@
 #include "list_lib.h"
 #include "gui_lib.h" // For GUI
 #include "gui_lib_3d.h"
+#include "unsafe_runtime.h"
 
 // Sand Lib Externs
 Value lib_sand_init(int argc, Value *argv, Env *env);
@@ -70,6 +72,236 @@ static Value lib_assert(int argc, Value *argv, Env *env) {
         exit(1); // Exit here so that FAILED tests stop the process
     }
     return value_bool(1);
+}
+
+// Native implementation of input(prompt) for the VM's NODE_INPUT.
+static Value lib_input(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc >= 1 && argv[0].type == VAL_STRING && argv[0].string) {
+        printf("%s", argv[0].string->chars);
+    }
+    char buf[256];
+    if (fgets(buf, sizeof(buf), stdin)) {
+        buf[strcspn(buf, "\n")] = 0;
+    } else {
+        buf[0] = 0;
+    }
+    return value_string(buf);
+}
+
+// Native implementation of shape() for the VM.
+static Value lib_shape(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "shape() takes exactly 1 argument", "Use shape(value)");
+        return value_null();
+    }
+    Value v = argv[0];
+    if (v.type == VAL_BLOC) {
+        const char *name = value_bloc_name(v);
+        return name ? value_string(name) : value_null();
+    }
+    if (v.type == VAL_BOX) {
+        return value_string("box");
+    }
+    if (v.type == VAL_TEMPLATE) {
+        const char *name = value_template_name(v);
+        return name ? value_string(name) : value_null();
+    }
+    if (v.type == VAL_MAP && v.map) {
+        Value *tag = value_map_get(&v, intern_string("__tag"));
+        if (tag && tag->type == VAL_STRING && tag->string) {
+            return value_copy(*tag);
+        }
+    }
+    return value_null();
+}
+
+// Native implementation of debug() for the VM.
+static Value lib_debug(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "debug() takes exactly 1 argument", "Use debug(value)");
+        return value_null();
+    }
+    printf("value = ");
+    value_fprint(stdout, argv[0]);
+    putchar('\n');
+    return value_copy(argv[0]);
+}
+
+// --- unsafe-block pointer builtins for the VM ---
+
+static Value lib_alloc(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (!unsafe_runtime_inside_block()) {
+        error_report(ERR_RUNTIME, 0, 0,
+            "alloc() may only be used inside unsafe blocks",
+            "Wrap pointer operations in unsafe { ... }");
+        return value_null();
+    }
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "alloc() expects exactly 1 argument", "Use alloc(slotCount)");
+        return value_null();
+    }
+    return unsafe_runtime_alloc(argv[0], 0);
+}
+
+static Value lib_free(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "free() expects exactly 1 argument",
+            "Use free(boxValue) or free(ptr)");
+        return value_null();
+    }
+    if (argv[0].type == VAL_BOX) {
+        char msg[256];
+        if (!value_box_free(argv[0], msg, sizeof(msg))) {
+            error_report_with_context(ERR_RUNTIME, 0, 0, msg,
+                "A box must be freed exactly once");
+        }
+        return value_null();
+    }
+    if (!unsafe_runtime_inside_block()) {
+        error_report(ERR_RUNTIME, 0, 0,
+            "free() may only be used inside unsafe blocks",
+            "Wrap pointer operations in unsafe { ... }");
+        return value_null();
+    }
+    return unsafe_runtime_free(argv[0], 0);
+}
+
+static Value lib_load(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (!unsafe_runtime_inside_block()) {
+        error_report(ERR_RUNTIME, 0, 0,
+            "load() may only be used inside unsafe blocks",
+            "Wrap pointer operations in unsafe { ... }");
+        return value_null();
+    }
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "load() expects exactly 1 pointer argument", "Use load(ptr)");
+        return value_null();
+    }
+    return unsafe_runtime_deref(argv[0], 0);
+}
+
+static Value lib_store(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (!unsafe_runtime_inside_block()) {
+        error_report(ERR_RUNTIME, 0, 0,
+            "store() may only be used inside unsafe blocks",
+            "Wrap pointer operations in unsafe { ... }");
+        return value_null();
+    }
+    if (argc != 2) {
+        error_report(ERR_ARGUMENT, 0, 0, "store() expects exactly 2 arguments", "Use store(ptr, value)");
+        return value_null();
+    }
+    return unsafe_runtime_store(argv[0], argv[1], 0);
+}
+
+static Value lib_ptr_offset(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (!unsafe_runtime_inside_block()) {
+        error_report(ERR_RUNTIME, 0, 0,
+            "ptr_offset() may only be used inside unsafe blocks",
+            "Wrap pointer operations in unsafe { ... }");
+        return value_null();
+    }
+    if (argc != 2) {
+        error_report(ERR_ARGUMENT, 0, 0, "ptr_offset() expects exactly 2 arguments",
+            "Use ptr_offset(ptr, offset)");
+        return value_null();
+    }
+    return unsafe_runtime_ptr_add(argv[0], argv[1], 0);
+}
+
+static Value lib_defer(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "defer() expects exactly 1 argument",
+            "Use defer(close(file)) for general cleanup, or defer(ptr) inside unsafe");
+        return value_null();
+    }
+    if (unsafe_runtime_inside_block() && unsafe_runtime_is_pointer(argv[0])) {
+        return unsafe_runtime_defer(argv[0], 0);
+    }
+    error_report(ERR_ARGUMENT, 0, 0, "defer() expects a call expression",
+        "Use defer(close(file)) or another function call to schedule cleanup");
+    return value_null();
+}
+
+// Native implementation of type() for the VM.
+static Value lib_type(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "type() takes exactly 1 argument", "Use type(value)");
+        return value_null();
+    }
+    Value v = argv[0];
+    const char *tname = "unknown";
+    switch (v.type) {
+        case VAL_INT: tname = (v.i > INT_MAX || v.i < INT_MIN) ? "long" : "int"; break;
+        case VAL_FLOAT: tname = "float"; break;
+        case VAL_STRING: tname = "string"; break;
+        case VAL_CHAR: tname = "char"; break;
+        case VAL_BOOL: tname = "boolean"; break;
+        case VAL_POINTER: tname = "pointer"; break;
+        case VAL_BLOC: tname = "bloc"; break;
+        case VAL_BLOC_TYPE: tname = "bloc_type"; break;
+        case VAL_BOX: tname = "box"; break;
+        case VAL_LIST:
+        case VAL_DENSE_LIST: tname = "list"; break;
+        case VAL_MAP: tname = "map"; break;
+        case VAL_TEMPLATE: tname = "template"; break;
+        case VAL_DATA_TYPE: tname = "data_type"; break;
+        case VAL_NATIVE: tname = "native_function"; break;
+        case VAL_FUNCTION:
+        case VAL_CLOSURE:
+        case VAL_VM_CLOSURE: tname = "function"; break;
+        case VAL_NULL: tname = "null"; break;
+        case VAL_FILE: tname = "file"; break;
+        default: break;
+    }
+    return value_string(tname);
+}
+
+// Native implementation of int() for the VM.
+static Value lib_int(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "int() takes exactly 1 argument", "Use int(value)");
+        return value_null();
+    }
+    Value v = argv[0];
+    long long res = 0;
+    if (unsafe_runtime_is_pointer(v)) res = (long long)v.ptr;
+    else if (v.type == VAL_STRING && v.string) res = atoll(v.string->chars);
+    else if (v.type == VAL_FLOAT) res = (long long)v.f;
+    else if (v.type == VAL_INT) res = v.i;
+    else if (v.type == VAL_BOOL) res = v.b;
+    else if (v.type == VAL_CHAR) res = (long long)v.c;
+    return value_int(res);
+}
+
+// Native implementation of float() for the VM.
+static Value lib_float(int argc, Value *argv, Env *env) {
+    (void)env;
+    if (argc != 1) {
+        error_report(ERR_ARGUMENT, 0, 0, "float() takes exactly 1 argument", "Use float(value)");
+        return value_null();
+    }
+    Value v = argv[0];
+    if (!unsafe_runtime_check_cast(v, 1, 0)) {
+        return value_null();
+    }
+    double res = 0.0;
+    if (v.type == VAL_STRING && v.string) res = atof(v.string->chars);
+    else if (v.type == VAL_INT) res = (double)v.i;
+    else if (v.type == VAL_FLOAT) res = v.f;
+    else if (v.type == VAL_BOOL) res = v.b ? 1.0 : 0.0;
+    return value_float(res);
 }
 
 static Value lib_map_set(int argc, Value *argv, Env *env) {
@@ -190,6 +422,18 @@ void env_register_stdlib(Env *env) {
     
     // Core Utilities 
     env_def(env, intern_string("assert"), value_native(lib_assert));
+    env_def(env, intern_string("input"), value_native(lib_input));
+    env_def(env, intern_string("type"), value_native(lib_type));
+    env_def(env, intern_string("int"), value_native(lib_int));
+    env_def(env, intern_string("float"), value_native(lib_float));
+    env_def(env, intern_string("shape"), value_native(lib_shape));
+    env_def(env, intern_string("debug"), value_native(lib_debug));
+    env_def(env, intern_string("alloc"), value_native(lib_alloc));
+    env_def(env, intern_string("free"), value_native(lib_free));
+    env_def(env, intern_string("load"), value_native(lib_load));
+    env_def(env, intern_string("store"), value_native(lib_store));
+    env_def(env, intern_string("ptr_offset"), value_native(lib_ptr_offset));
+    env_def(env, intern_string("defer"), value_native(lib_defer));
     env_def(env, intern_string("map_set"), value_native(lib_map_set));
     env_def(env, intern_string("map_get"), value_native(lib_map_get));
     env_def(env, intern_string("map_has"), value_native(lib_map_has));

@@ -37,6 +37,8 @@ static void luna_mark_runtime_roots(void *ctx) {
     unsafe_runtime_gc_mark_roots(ctx);
 }
 
+static void register_definitions(Env *env, AstNode *n);
+
 // Helper to define global color constants in Luna
 void register_color_constants(Env *env) {
     (void)env;
@@ -212,7 +214,19 @@ void run_repl(Env *env) {
         parser_close(&parser);
 
         if (prog) {
-            interpret(prog, env);
+            // REPL statements execute on the bytecode VM.
+            register_definitions(env, prog);
+            LunaChunk *chunk = luna_compile_program(prog);
+            LunaVM vm;
+            luna_vm_init(&vm, luna_gc_runtime_heap());
+            vm.env = env;
+            luna_gc_runtime_set_root_marker(vm_gc_mark_roots, &vm);
+            Value ret = luna_vm_run(&vm, chunk);
+            value_free(ret);
+            luna_vm_free(&vm);
+            luna_gc_runtime_set_root_marker(luna_mark_runtime_roots, NULL);
+            /* chunk intentionally leaked: globals may hold closures that
+             * reference its subchunks. */
             if (prog->kind == NODE_BLOCK) {
                 nodelist_free(&prog->block.items);
             }
@@ -313,8 +327,10 @@ int main(int argc, char **argv) {
             env_free_global(global_env);
             return 1;
         }
-        // Execute the parsed program (top-level statements and definitions)
-        if (getenv("LUNA_USE_VM")) {
+        // Execute the parsed program on the bytecode VM.
+        if (getenv("LUNA_USE_INTERPRETER")) {
+            interpret(prog, global_env);
+        } else {
             register_definitions(global_env, prog);
             LunaChunk *chunk = luna_compile_program(prog);
             LunaVM vm;
@@ -323,12 +339,20 @@ int main(int argc, char **argv) {
             luna_gc_runtime_set_root_marker(vm_gc_mark_roots, &vm);
             Value ret = luna_vm_run(&vm, chunk);
             value_free(ret);
+
+            // Auto-call main() if defined and takes no arguments.
+            Value *main_val = env_get(global_env, intern_string("main"));
+            if (main_val && main_val->type == VAL_VM_CLOSURE && main_val->vm_closure &&
+                main_val->vm_closure->chunk->param_count == 0 &&
+                main_val->vm_closure->chunk->upvalue_count == 0) {
+                Value mret = luna_vm_run(&vm, main_val->vm_closure->chunk);
+                value_free(mret);
+            }
+
             luna_vm_free(&vm);
             luna_gc_runtime_set_root_marker(luna_mark_runtime_roots, NULL);
             luna_chunk_free(chunk);
             free(chunk);
-        } else {
-            interpret(prog, global_env);
         }
 
         ast_free(prog);

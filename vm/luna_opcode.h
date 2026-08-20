@@ -51,6 +51,11 @@ typedef enum {
     VM_OP_LIST_APPEND,    // VM_OP_LIST_APPEND list_reg, val_reg
     VM_OP_INDEX_GET,      // VM_OP_INDEX_GET dst_reg, target_reg, idx_reg
     VM_OP_INDEX_SET,      // VM_OP_INDEX_SET target_reg, idx_reg, val_reg
+    VM_OP_NEW_MAP,        // VM_OP_NEW_MAP dst_reg
+    VM_OP_MAP_SET,        // VM_OP_MAP_SET map_reg, key_const_idx_16bit, val_reg
+    VM_OP_BOX_ALLOC,      // VM_OP_BOX_ALLOC dst_reg, size_reg
+    VM_OP_ADDR_OF,        // VM_OP_ADDR_OF dst_reg, src_reg (address of local register)
+    VM_OP_ADDR_OF_GLOBAL, // VM_OP_ADDR_OF_GLOBAL dst_reg, name_const_idx_16bit
 
     // Fields / Properties
     VM_OP_FIELD_GET,      // VM_OP_FIELD_GET dst_reg, target_reg, name_const_idx_16bit
@@ -58,8 +63,20 @@ typedef enum {
 
     // Functions
     VM_OP_CALL,           // VM_OP_CALL dst_reg, func_reg, argc_8bit
+    VM_OP_CALL_NAMED,     // VM_OP_CALL_NAMED dst_reg, func_reg, argc_8bit, name_const_idx_16bit
+    VM_OP_DEFER,          // VM_OP_DEFER func_reg, argc_8bit (args in following registers)
+    VM_OP_HAS_ARG,        // VM_OP_HAS_ARG dst_reg, arg_idx_8bit (1 if caller passed arg)
     VM_OP_RETURN,         // VM_OP_RETURN val_reg
     VM_OP_CLOSURE,        // VM_OP_CLOSURE dst_reg, subchunk_idx_16bit
+
+    // Scopes (box lifetime), unsafe blocks
+    VM_OP_SCOPE_BEGIN,    // VM_OP_SCOPE_BEGIN
+    VM_OP_SCOPE_EXIT,     // VM_OP_SCOPE_EXIT
+    VM_OP_UNSAFE_BEGIN,   // VM_OP_UNSAFE_BEGIN
+    VM_OP_UNSAFE_END,     // VM_OP_UNSAFE_END
+
+    // Imports
+    VM_OP_IMPORT,         // VM_OP_IMPORT path_const_idx_16bit, name_count_8bit, [name_const_idx_16bit]*, is_module_use_8bit
 
     VM_OP_PRINT,          // VM_OP_PRINT src_reg
     VM_OP_SAFEPOINT       // VM_OP_SAFEPOINT

@@ -43,6 +43,15 @@ Value lib_str_len(int argc, Value *argv, Env *env) {
     else if (v.type == VAL_DENSE_LIST && v.dlist) {
         return value_int((long long)v.dlist->count);
     }
+    else if (v.type == VAL_MAP && v.map) {
+        return value_int((long long)v.map->count);
+    }
+    else if (v.type == VAL_BOX) {
+        return value_int((long long)value_box_len(v));
+    }
+    else if (v.type == VAL_TEMPLATE) {
+        return value_int((long long)value_template_len(v));
+    }
     else {
         error_report(ERR_TYPE, 0, 0, "len() cannot be used on this type", 
                      "len() works on strings and lists.");

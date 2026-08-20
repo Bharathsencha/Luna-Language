@@ -387,7 +387,11 @@ static void list_finalize(GCObject *obj) {
 
 static void dense_list_trace(GCObject *obj, void *ctx) {
     DenseListObj *list = (DenseListObj *)GC_PAYLOAD(obj);
-    if (list->data) gc_visit_ref(ctx, (void **)&list->data);
+    /* data may be a plain malloc buffer (e.g. vec_op_direct results);
+     * only visit it if it is actually a GC-managed payload. */
+    if (list->data && luna_gc_runtime_is_managed_payload(list->data)) {
+        gc_visit_ref(ctx, (void **)&list->data);
+    }
 }
 
 static void dense_list_finalize(GCObject *obj) {
