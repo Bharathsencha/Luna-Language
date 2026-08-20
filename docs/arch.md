@@ -3,16 +3,47 @@
 This document provides an exhaustive technical overview of the Luna project, detailing every file, module, and architectural decision.
 
 
-## 1. Core Interpreter (The Engine)
+## 1. Core Engine (Bytecode VM)
 
-The Luna core is a modular, high-performance tree-walking interpreter implemented in C.
+The Luna core is a modular C engine that compiles the AST to bytecode and executes it on a
+**bytecode virtual machine** with computed-goto dispatch. The tree-walking interpreter remains in
+the tree as a compatibility layer for the embedding API and native callbacks.
+
+### [VM Files (vm/)]
+
+- **vm/luna_compiler.c**: Translates the AST into `LunaChunk` bytecode. Supports every language
+  construct: field access, map literals, template strings, typed initialization (`Vec2(1, 2)`,
+  bloc constructors), box allocation, `input()`, C-style `for`, `for-in`, `switch`, `import`/`use`,
+  `unsafe` blocks, `and`/`or` short-circuit logic, default parameters, anonymous functions,
+  closures with upvalue capture, and `break`/`continue`. Top-level `let` and `func` bind to the
+  global environment so modules, imports, the REPL, and auto-call `main()` all see them.
+- **vm/luna_vm.c**: The bytecode VM itself. Executes chunks with computed-goto dispatch
+  (falling back to a switch loop on non-GCC compilers). Implements runtime scopes for box
+  lifetimes and deferred calls, unsafe-block store/escape checks, nested-VM module imports,
+  string-indexed container access, bloc/map/template field semantics, pointer comparison and
+  unsafe `address_of`, and vector operator overloading (`+`, `-`, `*`, `/` on lists).
+- **vm/luna_opcode.h**: The opcode set: constants, arithmetic, comparisons, control flow,
+  globals/upvalues, collection ops (`NEW_LIST`, `LIST_APPEND`, `INDEX_GET/SET`, `NEW_MAP`,
+  `MAP_SET`, `BOX_ALLOC`), fields, calls (`CALL`, `CALL_NAMED`, `DEFER`, `HAS_ARG`), closures,
+  scopes (`SCOPE_BEGIN/EXIT`), unsafe (`UNSAFE_BEGIN/END`), imports, and safepoints.
+- **vm/luna_chunk.c / luna_chunk.h**: Bytecode chunk storage: code buffer, line map, constant
+  pool, and subchunks for nested functions.
+- **vm/luna_vm_gc.c**: GC root marking for the VM. Maintains a registry of active VMs so nested
+  module-execution VMs keep the outer VM's stack, frames, upvalues, and deferred calls alive.
+  Module imports execute their compiled chunks in a child environment rooted at the importer's
+  root, then copy exported names into the importing environment.
 
 ### [Source Files (src/)]
 
-- **src/main.c**: The main entry point. Orchestrates the lifecycle of the interpreter, handles CLI arguments, initializes the global environment, and runs either the REPL or a script file. It also implements the "Auto-Main" feature which automatically executes a `main()` function if defined in the script.
+- **src/main.c**: The main entry point. Parses the CLI arguments, initializes the global
+  environment, compiles the program, and runs it on the VM. Handles the REPL (also VM-based) and
+  the "Auto-Main" feature, which executes a zero-argument `main()` after the top level finishes.
+  Set `LUNA_USE_INTERPRETER=1` to force the legacy tree-walker for debugging.
 - **src/lexer.c**: Implements the lexical scanner. It converts raw source text into a stream of tokens, handles multi-character operators, complex string literals with escape sequences, and both integer and floating-point numeric formats. Uses an inline 24-byte buffer in the `Token` struct to avoid heap allocation for the vast majority of tokens (operators, keywords, identifiers, numbers, char literals). Only long string literals fall through to `malloc`.
 - **src/parser.c**: A recursive-descent parser that builds the Abstract Syntax Tree (AST). It handles operator precedence (using Pratt-parsing logic for expressions), function definitions, anonymous function literals, control flow structures, block scoping, `use` module statements, legacy `import` compatibility, `export` declarations, `data` declarations, map literals such as `{"key": value}`, and template strings with embedded Luna expressions. Includes a constant folding pass that evaluates binary operations on literals at parse time, eliminating unnecessary AST nodes.
-- **src/interpreter.c**: The primary execution engine. It recursively evaluates the AST, managing function calls, variable resolution across scopes, closure values with captured scope snapshots, control flow signals (Return, Break, Continue), module loading, scope-level deferred cleanup calls, `data` constructor instantiation, map key indexing, and string interpolation on evaluated expressions. Includes tail-call optimization for self-recursive functions, converting O(n) stack growth into O(1) constant space.
+- **src/interpreter.c**: The legacy tree-walking interpreter. Still used by the embedding API in
+  `luna_runtime.c`, by `luna_call_value` for host-side native callbacks (it now dispatches
+  VM closures through `luna_vm_call_closure`), and by the `LUNA_USE_INTERPRETER` escape hatch.
 - **src/ast.c**: Defines the structure of AST nodes and provides constructors for various node types (Loops, Assignments, Calls, etc.). It works in tandem with the Memory Arena.
 - **src/arena.c**: Implements a contiguous **Memory Arena** for AST nodes. This allows for extremely fast `O(1)` allocations and a single-sweep `arena_reset()` that wipes millions of nodes instantly when the script finishes.
 - **src/intern.c**: Implements the global string-intern table. Parser, AST, environment, library registration, and map/data-tag paths all feed repeated identifier and key strings through this table so equal text reuses one canonical pointer. That cuts duplicate allocations and makes hot-path name/key comparisons pointer-fast after interning.
