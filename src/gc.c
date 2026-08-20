@@ -15,8 +15,11 @@ static unsigned long long max_pause_ns = 0;
 static unsigned long long pause_events = 0;
 static GCHeap *runtime_heap = NULL;
 
+#define GC_REMEMBER_SCAN_MAX 4096
+
 typedef struct {
     bool has_young_ref;
+    size_t scanned;
 } GCPromotedRememberCtx;
 
 static size_t gc_align_up(size_t n) {
@@ -123,20 +126,38 @@ static void gc_detect_young_ref(void *ctx, GCObject *child) {
     GCTraceCtx *trace = (GCTraceCtx *)ctx;
     GCPromotedRememberCtx *scan = (GCPromotedRememberCtx *)trace->userdata;
     if (!scan || !child || child->color == GC_DEAD) return;
+    scan->scanned++;
+    if (scan->scanned > GC_REMEMBER_SCAN_MAX) {
+        /* Too many children to scan cheaply: stop and remember the object
+         * unconditionally.  The next minor GC traces it with deadline slicing. */
+        trace->deadline_hit = true;
+        scan->has_young_ref = true;
+        return;
+    }
     if (child->generation == GC_GEN_YOUNG) {
         scan->has_young_ref = true;
     }
 }
 
-/* During minor GC sweep, ALL reachable young objects are promoted together,
- * so a promoted object cannot retain pointers to still-young objects.
- * Future old→young edges are captured by the write barrier
- * (luna_gc_runtime_remember).  The old approach of fully tracing each
- * promoted object here caused unbounded multi-ms pauses on large containers.
- * Now we simply skip the scan entirely. */
+/* Called when an object is promoted to OLD during minor sweep.  It may have
+ * been stored into while still YOUNG (so the write barrier did not remember
+ * it) with children that were allocated during the incremental sweep and
+ * therefore remain YOUNG.  Scan its children up to GC_REMEMBER_SCAN_MAX;
+ * larger containers are remembered unconditionally instead of being fully
+ * traced, which used to cause multi-ms pauses on huge list buffers. */
 static void gc_remember_if_points_to_young(GCHeap *heap, GCObject *obj) {
-    (void)heap;
-    (void)obj;
+    if (!heap || !obj || obj->generation != GC_GEN_OLD || !obj->trace) return;
+
+    GCPromotedRememberCtx scan = {0};
+    GCTraceCtx ctx = {
+        .heap = heap,
+        .visit = gc_detect_young_ref,
+        .userdata = &scan,
+    };
+    obj->trace(obj, &ctx);
+    if (scan.has_young_ref) {
+        gc_remembered_push(heap, obj);
+    }
 }
 
 static int gc_env_bool(const char *name, int default_value) {
