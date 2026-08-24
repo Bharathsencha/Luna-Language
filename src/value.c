@@ -67,7 +67,7 @@ struct TemplateObj {
 
 #define BOX_SLOT_MAX 4096
 #define VALUE_BOX_MAX_BYTES VALUE_BLOC_INLINE_MAX
-#define TEMPLATE_MIN_CHUNK_BYTES (16 * 1024)
+#define TEMPLATE_MIN_CHUNK_BYTES 64
 static BoxSlot box_slots[BOX_SLOT_MAX];
 static uint64_t box_high_water = 0; /* 1-based highest handle ever allocated */
 static int box_active_count = 0;    /* live (non-freed) boxes */
@@ -135,8 +135,9 @@ static size_t next_pow2_size(size_t n) {
 
 static size_t template_chunk_bytes_for_fields(int field_count) {
     size_t payload = sizeof(struct TemplateObj) + sizeof(Value) * (size_t)field_count;
-    if (payload < TEMPLATE_MIN_CHUNK_BYTES) return TEMPLATE_MIN_CHUNK_BYTES;
-    return next_pow2_size(payload);
+    size_t pow = next_pow2_size(payload);
+    if (pow < TEMPLATE_MIN_CHUNK_BYTES) pow = TEMPLATE_MIN_CHUNK_BYTES;
+    return pow;
 }
 
 static int bloc_find_field_index(const BlocTypeDesc *desc, const char *field) {
@@ -596,9 +597,26 @@ static void gc_note_owner_write_value(void *payload, const Value *value) {
             break;
     }
 
-    // Generational remembered-set hook for old containers pointing to young objects.
+    // Generational remembered-set hook: only remember the container when the
+    // stored child is young (old->old edges never need generational tracking).
     // payload is always a GC-managed container buffer here.
-    luna_gc_runtime_remember_trusted(payload);
+    void *child = NULL;
+    switch (value->type) {
+        case VAL_STRING:    child = value->string;    break;
+        case VAL_LIST:      child = value->list;      break;
+        case VAL_DENSE_LIST: child = value->dlist;    break;
+        case VAL_MAP:       child = value->map;       break;
+        case VAL_CLOSURE:   child = value->closure;   break;
+        case VAL_DATA_TYPE: child = value->dtype;     break;
+        case VAL_TEMPLATE:  child = value->template_obj; break;
+        default: break;
+    }
+    if (child) {
+        GCObject *co = GC_FROM_PAYLOAD(child);
+        if (co->generation == GC_GEN_YOUNG) {
+            luna_gc_runtime_remember_trusted(payload);
+        }
+    }
 }
 
 static void gc_note_value_overwrite(const Value *value) {

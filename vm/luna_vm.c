@@ -574,17 +574,22 @@ Value luna_vm_execute(LunaVM *vm) {
     case VM_OP_FMT:
     #endif
     {
-        /* Fused repeat(prefix, count) + to_string(int) in a single alloc. */
+        /* Fused string build: repeat(const,n) / const string parts followed by
+         * to_string(int) — the whole expression in a single allocation.
+         * Encoding: dst, src, part_count, then per part:
+         *   kind 0 = string const:  idx16
+         *   kind 1 = repeat:        prefix_idx16, count_idx16 */
         uint8_t dst = READ_BYTE();
         uint8_t src = READ_BYTE();
-        uint16_t prefix_idx = READ_SHORT();
-        uint16_t count_idx = READ_SHORT();
-        Value prefix_val = chunk->constants[prefix_idx];
-        Value count_val = chunk->constants[count_idx];
-        const char *p = (prefix_val.type == VAL_STRING && prefix_val.string &&
-                         prefix_val.string->chars) ? prefix_val.string->chars : "";
-        long long count = count_val.type == VAL_INT ? count_val.i : 0;
-        if (count < 0) count = 0;
+        uint8_t part_count = READ_BYTE();
+        uint8_t kinds[32];
+        uint16_t pa[32], pb[32];
+        int nparts = part_count < 32 ? part_count : 32;
+        for (int i = 0; i < nparts; i++) {
+            kinds[i] = READ_BYTE();
+            pa[i] = READ_SHORT();
+            pb[i] = kinds[i] == 1 ? READ_SHORT() : 0;
+        }
         Value sv = slots[src];
         char ibuf[24];
         int ilen = 0;
@@ -595,14 +600,39 @@ Value luna_vm_execute(LunaVM *vm) {
         } else {
             ilen = snprintf(ibuf, sizeof(ibuf), "0");
         }
-        size_t plen = strlen(p);
-        size_t total = plen * (size_t)count + (size_t)ilen;
+        size_t total = (size_t)ilen;
+        for (int i = 0; i < nparts; i++) {
+            Value cv = chunk->constants[pa[i]];
+            const char *p = (cv.type == VAL_STRING && cv.string && cv.string->chars) ? cv.string->chars : "";
+            size_t plen = strlen(p);
+            if (kinds[i] == 1) {
+                Value cntv = chunk->constants[pb[i]];
+                long long cnt = cntv.type == VAL_INT ? cntv.i : 0;
+                if (cnt < 0) cnt = 0;
+                total += plen * (size_t)cnt;
+            } else {
+                total += plen;
+            }
+        }
         Value res = value_string_len(NULL, total);
         if (res.type == VAL_STRING && res.string) {
             char *out = res.string->chars;
-            for (long long k = 0; k < count; k++) {
-                memcpy(out, p, plen);
-                out += plen;
+            for (int i = 0; i < nparts; i++) {
+                Value cv = chunk->constants[pa[i]];
+                const char *p = (cv.type == VAL_STRING && cv.string && cv.string->chars) ? cv.string->chars : "";
+                size_t plen = strlen(p);
+                if (kinds[i] == 1) {
+                    Value cntv = chunk->constants[pb[i]];
+                    long long cnt = cntv.type == VAL_INT ? cntv.i : 0;
+                    if (cnt < 0) cnt = 0;
+                    for (long long k = 0; k < cnt; k++) {
+                        memcpy(out, p, plen);
+                        out += plen;
+                    }
+                } else {
+                    memcpy(out, p, plen);
+                    out += plen;
+                }
             }
             memcpy(out, ibuf, (size_t)ilen);
             out[ilen] = '\0';

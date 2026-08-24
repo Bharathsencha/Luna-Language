@@ -211,6 +211,43 @@ static void end_scope(Compiler *c, int line) {
 }
 
 static int compile_expr(Compiler *c, AstNode *n, int target_reg);
+
+typedef struct {
+    uint8_t  kind;   /* 0 = string const, 1 = repeat(const, count) */
+    uint16_t idx_a;
+    uint16_t idx_b;
+} FmtPart;
+
+/* Collects string-const / repeat(const, N) parts of a concat chain for the
+ * fused FMT opcode.  Returns 0 on any non-matching node (caller falls back
+ * to normal compilation). */
+static int collect_fmt_parts(Compiler *c, AstNode *n, FmtPart *parts, int *count, int max) {
+    if (*count >= max) return 0;
+    if (n->kind == NODE_BINOP && n->binop.op == OP_ADD) {
+        if (!collect_fmt_parts(c, n->binop.left, parts, count, max)) return 0;
+        return collect_fmt_parts(c, n->binop.right, parts, count, max);
+    }
+    if (n->kind == NODE_STRING) {
+        parts[*count].kind = 0;
+        parts[*count].idx_a = (uint16_t)luna_chunk_add_constant(c->chunk, value_string(n->string.text));
+        (*count)++;
+        return 1;
+    }
+    if (n->kind == NODE_CALL && n->call.callee && n->call.callee->kind == NODE_IDENT &&
+        n->call.callee->ident.name == intern_string("repeat") &&
+        n->call.args.count == 2 &&
+        n->call.args.items[0]->kind == NODE_STRING &&
+        n->call.args.items[1]->kind == NODE_NUMBER) {
+        parts[*count].kind = 1;
+        parts[*count].idx_a = (uint16_t)luna_chunk_add_constant(c->chunk, value_string(n->call.args.items[0]->string.text));
+        parts[*count].idx_b = (uint16_t)luna_chunk_add_constant(c->chunk, value_int(n->call.args.items[1]->number.value));
+        (*count)++;
+        return 1;
+    }
+    return 0;
+}
+
+static int compile_expr(Compiler *c, AstNode *n, int target_reg);
 static void compile_stmt(Compiler *c, AstNode *n);
 
 static int compile_expr_to_any_reg(Compiler *c, AstNode *n) {
@@ -349,33 +386,27 @@ static int compile_expr(Compiler *c, AstNode *n, int target_reg) {
             return dst;
         }
         case NODE_BINOP: {
-            /* Fused repeat(const, N) + to_string(int): single allocation. */
+            /* Fused string build: <const/repeat parts> + to_string(int) in a
+             * single allocation. */
             if (n->binop.op == OP_ADD) {
-                AstNode *rep = NULL, *tos = NULL;
-                AstNode *l = n->binop.left, *r = n->binop.right;
-                if (l && r && l->kind == NODE_CALL && r->kind == NODE_CALL &&
-                    l->call.callee && r->call.callee &&
-                    l->call.callee->kind == NODE_IDENT && r->call.callee->kind == NODE_IDENT) {
-                    const char *ln = l->call.callee->ident.name;
-                    const char *rn = r->call.callee->ident.name;
-                    if (ln == intern_string("repeat") && rn == intern_string("to_string")) {
-                        rep = l; tos = r;
-                    } else if (rn == intern_string("repeat") && ln == intern_string("to_string")) {
-                        rep = r; tos = l;
-                    }
-                }
-                if (rep && tos && rep->call.args.count == 2 && tos->call.args.count == 1) {
-                    AstNode *prefix = rep->call.args.items[0];
-                    AstNode *count = rep->call.args.items[1];
-                    if (prefix->kind == NODE_STRING && count->kind == NODE_NUMBER) {
+                AstNode *tos = n->binop.right;
+                if (tos && tos->kind == NODE_CALL && tos->call.callee &&
+                    tos->call.callee->kind == NODE_IDENT &&
+                    tos->call.callee->ident.name == intern_string("to_string") &&
+                    tos->call.args.count == 1) {
+                    FmtPart parts[32];
+                    int part_count = 0;
+                    if (collect_fmt_parts(c, n->binop.left, parts, &part_count, 32) && part_count > 0) {
                         int src = compile_expr_to_any_reg(c, tos->call.args.items[0]);
                         c->next_reg = old_reg;
                         int dst = (target_reg != -1) ? target_reg : allocate_reg(c);
-                        int prefix_idx = luna_chunk_add_constant(c->chunk, value_string(prefix->string.text));
-                        int count_idx = luna_chunk_add_constant(c->chunk, value_int(count->number.value));
                         emit_3(c, VM_OP_FMT, dst, (uint8_t)src, line);
-                        emit_16(c, (uint16_t)prefix_idx, line);
-                        emit_16(c, (uint16_t)count_idx, line);
+                        emit_byte(c, (uint8_t)part_count, line);
+                        for (int i = 0; i < part_count; i++) {
+                            emit_byte(c, parts[i].kind, line);
+                            emit_16(c, parts[i].idx_a, line);
+                            if (parts[i].kind == 1) emit_16(c, parts[i].idx_b, line);
+                        }
                         if (target_reg == -1) {
                             c->next_reg = dst + 1;
                         }

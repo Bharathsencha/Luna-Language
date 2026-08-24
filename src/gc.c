@@ -252,9 +252,9 @@ static inline void gc_phase_end(GCHeap *heap, uint64_t start_ns, const char *pha
 }
 
 static size_t gc_compute_young_limit(size_t heap_limit, size_t bytes_live) {
-    size_t young = heap_limit / 4;
-    size_t min_young = 512 * 1024;   /* 512 KB — fewer minor GCs */
-    size_t max_young = 4 * 1024 * 1024; /* 4 MB — incremental drain handles large sets */
+    size_t young = heap_limit / 2;
+    size_t min_young = 1024 * 1024;  /* 1 MB — fewer minor GCs */
+    size_t max_young = 8 * 1024 * 1024; /* 8 MB — incremental drain handles large sets */
     (void)bytes_live;
 
     if (young < min_young) young = min_young;
@@ -263,10 +263,10 @@ static size_t gc_compute_young_limit(size_t heap_limit, size_t bytes_live) {
 }
 
 static size_t gc_compute_major_interval(size_t bytes_live, size_t heap_limit) {
-    if (heap_limit == 0) return 12;
-    if (bytes_live < heap_limit / 3) return 16;
-    if (bytes_live < (heap_limit * 2) / 3) return 12;
-    return 8;
+    if (heap_limit == 0) return 16;
+    if (bytes_live < heap_limit / 3) return 24;
+    if (bytes_live < (heap_limit * 2) / 3) return 16;
+    return 10;
 }
 
 static int gc_should_reclaim_empty_blocks_on_minor(const GCHeap *heap) {
