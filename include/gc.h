@@ -126,6 +126,8 @@ struct GCHeap {
     GCObject   **remembered_set;
     size_t       remembered_count;
     size_t       remembered_cap;
+    size_t       remember_cursor;    /* incremental scan of pre-existing entries */
+    size_t       remember_snapshot;  /* entries present when this minor GC started */
     ImixBlock   *sweep_cursor;
     size_t       sweep_block_budget;
     ImixBlock   *sweep_chain;      /* detached blocks being swept/reclaimed */

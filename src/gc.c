@@ -648,15 +648,37 @@ static void mark_roots(GCHeap *heap) {
         heap->root_marker(&ctx);
     }
 
-    if (heap->minor_collection) {
-        gc_remember_from_roots(heap);
-        /* All pre-existing old→young edges are now captured in the gray
-         * stack.  Reset the remembered set so it stays small; the write
-         * barrier will repopulate it with any new edges created during or
-         * after this collection. */
-        gc_reset_remembered_set(heap);
-    }
     gc_phase_end(heap, phase_ns, "mark_roots");
+}
+
+/* Pushes up to `limit` pre-existing remembered entries onto the gray stack.
+ * Returns 1 when the pre-existing set has been fully scanned (the caller may
+ * then compact the remembered set).  Entries added DURING the collection are
+ * left for the next collection. */
+static int gc_remember_scan_batch(GCHeap *heap, size_t limit) {
+    if (!heap) return 1;
+    size_t n = 0;
+    while (heap->remember_cursor < heap->remember_snapshot && n < limit) {
+        GCObject *obj = heap->remembered_set[heap->remember_cursor++];
+        if (obj && obj->color != GC_DEAD && obj->color != GC_GRAY) {
+            obj->color = GC_GRAY;
+            gray_push(heap, obj);
+        }
+        n++;
+    }
+    if (heap->remember_cursor >= heap->remember_snapshot) {
+        /* Compact: keep entries appended during this collection. */
+        size_t new_count = heap->remembered_count - heap->remember_snapshot;
+        if (new_count > 0 && heap->remember_snapshot > 0) {
+            memmove(heap->remembered_set, heap->remembered_set + heap->remember_snapshot,
+                    new_count * sizeof(GCObject *));
+        }
+        heap->remembered_count = new_count;
+        heap->remember_cursor = 0;
+        heap->remember_snapshot = 0;
+        return 1;
+    }
+    return 0;
 }
 
 static bool drain_gray(GCHeap *heap, size_t count) {
@@ -1108,6 +1130,8 @@ static void gc_heap_step_minor(GCHeap *heap) {
         heap->minor_collection = true;
         heap->minor_marked_old = false;
         heap->bytes_live = 0;
+        heap->remember_cursor = 0;
+        heap->remember_snapshot = heap->remembered_count;
     }
 
     if (!heap->mark_roots_done) {
@@ -1122,16 +1146,20 @@ static void gc_heap_step_minor(GCHeap *heap) {
     heap->mark_step_count++;
     size_t steps = gc_adaptive_steps(heap);
 
-    if (drain_gray(heap, steps)) {
-        heap->mark_step_count = 0;
-        if (heap->target_pause_ns > 0 && gc_now_ns() - start_ns >= heap->target_pause_ns) {
-            gc_heap_record_pause(heap, start_ns);
-            return;
+    /* Scan the pre-existing remembered set incrementally so mark_roots-style
+     * work never exceeds the pause target. */
+    if (gc_remember_scan_batch(heap, 1024)) {
+        if (drain_gray(heap, steps)) {
+            heap->mark_step_count = 0;
+            if (heap->target_pause_ns > 0 && gc_now_ns() - start_ns >= heap->target_pause_ns) {
+                gc_heap_record_pause(heap, start_ns);
+                return;
+            }
+            gc_prepare_sweep_phase(heap, true, gc_should_reclaim_empty_blocks_on_minor(heap));
+            gc_sweep_some_blocks(heap, heap->sweep_block_budget,
+                                 heap->target_pause_ns ? start_ns + heap->target_pause_ns : 0);
+            heap->young_limit = gc_compute_young_limit(heap->heap_limit, heap->bytes_live);
         }
-        gc_prepare_sweep_phase(heap, true, gc_should_reclaim_empty_blocks_on_minor(heap));
-        gc_sweep_some_blocks(heap, heap->sweep_block_budget,
-                             heap->target_pause_ns ? start_ns + heap->target_pause_ns : 0);
-        heap->young_limit = gc_compute_young_limit(heap->heap_limit, heap->bytes_live);
     }
 
     gc_heap_record_pause(heap, start_ns);
