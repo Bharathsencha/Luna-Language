@@ -137,6 +137,10 @@ struct GCHeap {
     bool         minor_marked_old; /* an OLD object was grayed during this minor GC */
     bool         pause_trace;
     double       pause_trace_threshold_ms;
+    ImixBlock  **block_index;      /* sorted block starts for O(log n) payload checks */
+    size_t       block_index_count;
+    size_t       block_index_cap;
+    bool         block_index_dirty;
 };
 
 GCHeap *gc_heap_create(size_t initial_limit);
@@ -179,6 +183,11 @@ void        luna_gc_runtime_set_root_marker(GCRootMarker marker, void *ctx);
 void        luna_gc_runtime_add_root(void *payload);
 void        luna_gc_runtime_remember(void *payload);
 void        luna_gc_runtime_write_barrier(void *payload);
+/* Trusted barrier variants: callers already know the payload is a
+ * GC-managed object (e.g. internal container stores), so the managed-payload
+ * check is skipped.  This removes an O(blocks) walk from every hot store. */
+void        luna_gc_runtime_remember_trusted(void *payload);
+void        luna_gc_runtime_write_barrier_trusted(void *payload);
 int         luna_gc_runtime_is_managed_payload(void *payload);
 
 #endif

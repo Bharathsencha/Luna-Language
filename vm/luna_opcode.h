@@ -16,6 +16,7 @@ typedef enum {
 
     // Binary operations
     VM_OP_ADD,            // VM_OP_ADD dst_reg, lhs_reg, rhs_reg
+    VM_OP_FMT,            // VM_OP_FMT dst_reg, src_reg, prefix_const_idx_16bit, count_const_idx_16bit
     VM_OP_SUB,            // VM_OP_SUB dst_reg, lhs_reg, rhs_reg
     VM_OP_MUL,            // VM_OP_MUL dst_reg, lhs_reg, rhs_reg
     VM_OP_DIV,            // VM_OP_DIV dst_reg, lhs_reg, rhs_reg

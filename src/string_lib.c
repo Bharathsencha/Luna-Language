@@ -612,6 +612,11 @@ Value lib_str_to_float(int argc, Value *argv, Env *env) {
 
 Value lib_str_to_string(int argc, Value *argv, Env *env) {
     if (argc != 1) return value_string("");
+    if (argv[0].type == VAL_INT) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%lld", argv[0].i);
+        return value_string(buf);
+    }
     char *s = value_to_string(argv[0]);
     Value v = value_string(s);
     free(s);

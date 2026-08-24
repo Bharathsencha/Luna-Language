@@ -21,6 +21,11 @@ typedef struct LunaChunk {
     size_t   const_len;
     size_t   const_cap;
 
+    /* Lazily filled interned-string cache for name constants (one entry per
+     * constant index) so global/field/map-key lookups skip re-interning. */
+    const char **const_intern_cache;
+    size_t       const_intern_cache_len;
+
     int      reg_count;      // max registers needed by this chunk's stack frame
     int      param_count;    // number of expected arguments
     int      upvalue_count;  // number of upvalues captured by this chunk

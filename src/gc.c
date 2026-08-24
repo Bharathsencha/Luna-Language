@@ -31,19 +31,59 @@ static size_t gc_object_total_size(size_t payload_size) {
     return gc_align_up(sizeof(GCObject) + payload_size);
 }
 
+/* Sorted block index: makes is_managed_payload O(log n) instead of O(blocks).
+ * Rebuilt lazily when the block list changes. */
+static int block_index_cmp(const void *a, const void *b) {
+    const ImixBlock *ba = *(const ImixBlock *const *)a;
+    const ImixBlock *bb = *(const ImixBlock *const *)b;
+    if (ba < bb) return -1;
+    if (ba > bb) return 1;
+    return 0;
+}
+
+static void gc_block_index_rebuild(GCHeap *heap) {
+    size_t count = 0;
+    for (ImixBlock *b = heap->blocks; b; b = b->next) count++;
+    for (ImixBlock *b = heap->sweep_chain; b; b = b->next) count++;
+    if (count > heap->block_index_cap) {
+        size_t new_cap = count ? count * 2 : 64;
+        ImixBlock **idx = (ImixBlock **)realloc(heap->block_index, new_cap * sizeof(ImixBlock *));
+        if (!idx) abort();
+        heap->block_index = idx;
+        heap->block_index_cap = new_cap;
+    }
+    size_t n = 0;
+    for (ImixBlock *b = heap->blocks; b; b = b->next) heap->block_index[n++] = b;
+    for (ImixBlock *b = heap->sweep_chain; b; b = b->next) heap->block_index[n++] = b;
+    qsort(heap->block_index, n, sizeof(ImixBlock *), block_index_cmp);
+    heap->block_index_count = n;
+    heap->block_index_dirty = false;
+}
+
+static void gc_block_index_mark_dirty(GCHeap *heap) {
+    if (heap) heap->block_index_dirty = true;
+}
+
 int gc_heap_is_managed_payload(GCHeap *heap, void *payload) {
     if (!heap || !payload) return 0;
 
     uint8_t *ptr = (uint8_t *)payload;
-    for (ImixBlock *block = heap->blocks; block; block = block->next) {
+
+    if (heap->block_index_dirty) gc_block_index_rebuild(heap);
+
+    /* Binary search over sorted block starts. */
+    size_t lo = 0, hi = heap->block_index_count;
+    while (lo < hi) {
+        size_t mid = (lo + hi) >> 1;
+        ImixBlock *block = heap->block_index[mid];
         uint8_t *start = block->data;
-        uint8_t *end = block->data + IMIX_BLOCK_SIZE;
-        if (ptr >= start && ptr < end) return 1;
-    }
-    for (ImixBlock *block = heap->sweep_chain; block; block = block->next) {
-        uint8_t *start = block->data;
-        uint8_t *end = block->data + IMIX_BLOCK_SIZE;
-        if (ptr >= start && ptr < end) return 1;
+        if (ptr < start) {
+            hi = mid;
+        } else if (ptr >= start + IMIX_BLOCK_SIZE) {
+            lo = mid + 1;
+        } else {
+            return 1;
+        }
     }
 
     for (GCObject *obj = heap->large_list; obj; obj = obj->next) {
@@ -468,6 +508,7 @@ void gc_heap_destroy(GCHeap *heap) {
     free(heap->gray_stack);
     free(heap->roots);
     free(heap->remembered_set);
+    free(heap->block_index);
     free(heap);
 }
 
@@ -501,6 +542,7 @@ void *gc_heap_alloc(GCHeap *heap, size_t size, GCTracer trace, GCFinalizer fin) 
             block->next = heap->blocks;
             heap->blocks = block;
             heap->current = block;
+            gc_block_index_mark_dirty(heap);
             obj = imix_bump_alloc(block, total);
         }
 
@@ -854,6 +896,7 @@ static void gc_prepare_sweep_phase(GCHeap *heap, bool minor, bool reclaim_empty)
     ImixBlock *fresh = imix_block_new();
     heap->blocks = fresh;
     heap->current = fresh;
+    gc_block_index_mark_dirty(heap);
 }
 
 static void gc_sweep_some_blocks(GCHeap *heap, size_t budget) {
@@ -896,9 +939,11 @@ static void gc_sweep_some_blocks(GCHeap *heap, size_t budget) {
                 block->bump = 0;
                 memset(block->line_mark, 0, sizeof(block->line_mark));
                 free(block);
+                gc_block_index_mark_dirty(heap);
             } else {
                 block->next = heap->blocks;
                 heap->blocks = block;
+                gc_block_index_mark_dirty(heap);
             }
 
             n++;
@@ -1186,6 +1231,16 @@ void luna_gc_runtime_remember(void *payload) {
 void luna_gc_runtime_write_barrier(void *payload) {
     if (!runtime_heap || !payload) return;
     if (!gc_heap_is_managed_payload(runtime_heap, payload)) return;
+    gc_heap_write_barrier(runtime_heap, GC_FROM_PAYLOAD(payload));
+}
+
+void luna_gc_runtime_remember_trusted(void *payload) {
+    if (!runtime_heap || !payload) return;
+    gc_remembered_push(runtime_heap, GC_FROM_PAYLOAD(payload));
+}
+
+void luna_gc_runtime_write_barrier_trusted(void *payload) {
+    if (!runtime_heap || !payload) return;
     gc_heap_write_barrier(runtime_heap, GC_FROM_PAYLOAD(payload));
 }
 

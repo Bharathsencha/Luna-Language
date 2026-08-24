@@ -69,6 +69,8 @@ struct TemplateObj {
 #define VALUE_BOX_MAX_BYTES VALUE_BLOC_INLINE_MAX
 #define TEMPLATE_MIN_CHUNK_BYTES (16 * 1024)
 static BoxSlot box_slots[BOX_SLOT_MAX];
+static uint64_t box_high_water = 0; /* 1-based highest handle ever allocated */
+static int box_active_count = 0;    /* live (non-freed) boxes */
 
 static BlocSlot *bloc_slot_from_handle(uint64_t handle) {
     if (handle == 0 || handle > BLOC_SLOT_MAX) return NULL;
@@ -106,6 +108,8 @@ static uint64_t box_alloc_slot(size_t size) {
         box_slots[i].len = size;
         box_slots[i].cap = size;
         box_slots[i].bytes = bytes;
+        if (i + 1 > box_high_water) box_high_water = i + 1;
+        box_active_count++;
         return i + 1;
     }
     return 0;
@@ -120,6 +124,7 @@ static void box_free_slot(BoxSlot *slot) {
     slot->freed = 1;
     slot->owned_by_template = 0;
     slot->scope_id = 0;
+    if (box_active_count > 0) box_active_count--;
 }
 
 static size_t next_pow2_size(size_t n) {
@@ -550,13 +555,13 @@ static MapEntry *alloc_map_entries_buffer(int capacity) {
 
 static void gc_note_owner_write(void *payload) {
     if (luna_gc_runtime_enabled() && payload) {
-        luna_gc_runtime_remember(payload);
+        luna_gc_runtime_remember_trusted(payload);
     }
 }
 
 static void gc_note_payload_overwrite(void *payload) {
     if (luna_gc_runtime_enabled() && payload) {
-        luna_gc_runtime_write_barrier(payload);
+        luna_gc_runtime_write_barrier_trusted(payload);
     }
 }
 
@@ -567,33 +572,33 @@ static void gc_note_owner_write_value(void *payload, const Value *value) {
     // shade the child so black->white edges are not lost.
     switch (value->type) {
         case VAL_STRING:
-            if (value->string) luna_gc_runtime_write_barrier(value->string);
+            if (value->string) luna_gc_runtime_write_barrier_trusted(value->string);
             break;
         case VAL_LIST:
-            if (value->list) luna_gc_runtime_write_barrier(value->list);
+            if (value->list) luna_gc_runtime_write_barrier_trusted(value->list);
             break;
         case VAL_DENSE_LIST:
-            if (value->dlist) luna_gc_runtime_write_barrier(value->dlist);
+            if (value->dlist) luna_gc_runtime_write_barrier_trusted(value->dlist);
             break;
         case VAL_MAP:
-            if (value->map) luna_gc_runtime_write_barrier(value->map);
+            if (value->map) luna_gc_runtime_write_barrier_trusted(value->map);
             break;
         case VAL_CLOSURE:
-            if (value->closure) luna_gc_runtime_write_barrier(value->closure);
+            if (value->closure) luna_gc_runtime_write_barrier_trusted(value->closure);
             break;
         case VAL_DATA_TYPE:
-            if (value->dtype) luna_gc_runtime_write_barrier(value->dtype);
+            if (value->dtype) luna_gc_runtime_write_barrier_trusted(value->dtype);
             break;
         case VAL_TEMPLATE:
-            if (value->template_obj) luna_gc_runtime_write_barrier(value->template_obj);
+            if (value->template_obj) luna_gc_runtime_write_barrier_trusted(value->template_obj);
             break;
         default:
             break;
     }
 
     // Generational remembered-set hook for old containers pointing to young objects.
-    if (!luna_gc_runtime_is_managed_payload(payload)) return;
-    luna_gc_runtime_remember(payload);
+    // payload is always a GC-managed container buffer here.
+    luna_gc_runtime_remember_trusted(payload);
 }
 
 static void gc_note_value_overwrite(const Value *value) {
@@ -601,25 +606,25 @@ static void gc_note_value_overwrite(const Value *value) {
 
     switch (value->type) {
         case VAL_STRING:
-            if (value->string) luna_gc_runtime_write_barrier(value->string);
+            if (value->string) luna_gc_runtime_write_barrier_trusted(value->string);
             break;
         case VAL_LIST:
-            if (value->list) luna_gc_runtime_write_barrier(value->list);
+            if (value->list) luna_gc_runtime_write_barrier_trusted(value->list);
             break;
         case VAL_DENSE_LIST:
-            if (value->dlist) luna_gc_runtime_write_barrier(value->dlist);
+            if (value->dlist) luna_gc_runtime_write_barrier_trusted(value->dlist);
             break;
         case VAL_MAP:
-            if (value->map) luna_gc_runtime_write_barrier(value->map);
+            if (value->map) luna_gc_runtime_write_barrier_trusted(value->map);
             break;
         case VAL_CLOSURE:
-            if (value->closure) luna_gc_runtime_write_barrier(value->closure);
+            if (value->closure) luna_gc_runtime_write_barrier_trusted(value->closure);
             break;
         case VAL_DATA_TYPE:
-            if (value->dtype) luna_gc_runtime_write_barrier(value->dtype);
+            if (value->dtype) luna_gc_runtime_write_barrier_trusted(value->dtype);
             break;
         case VAL_TEMPLATE:
-            if (value->template_obj) luna_gc_runtime_write_barrier(value->template_obj);
+            if (value->template_obj) luna_gc_runtime_write_barrier_trusted(value->template_obj);
             break;
         default:
             break;
@@ -630,7 +635,7 @@ static void map_init_storage(MapObj *map, int capacity) {
     map->capacity = next_pow2(capacity);
     map->entries = alloc_map_entries_buffer(map->capacity);
     if (luna_gc_runtime_enabled() && map->entries) {
-        luna_gc_runtime_write_barrier(map->entries);
+        luna_gc_runtime_write_barrier_trusted(map->entries);
     }
 }
 
@@ -656,7 +661,7 @@ static void map_grow(MapObj *map, int min_capacity) {
     map_init_storage(map, min_capacity);
     gc_note_owner_write(map);
     if (luna_gc_runtime_enabled() && map->entries) {
-        luna_gc_runtime_write_barrier(map->entries);
+        luna_gc_runtime_write_barrier_trusted(map->entries);
     }
 
     for (int i = 0; i < old_capacity; i++) {
@@ -885,8 +890,9 @@ void value_box_mark_scope(Value box, uint64_t scope_id) {
 }
 
 void value_box_release_scope(uint64_t scope_id) {
-    if (!scope_id) return;
-    for (int i = 0; i < BOX_SLOT_MAX; i++) {
+    if (!scope_id || box_active_count == 0 || box_high_water == 0) return;
+    /* Only scan up to the highest handle ever handed out. */
+    for (uint64_t i = 0; i < box_high_water && i < BOX_SLOT_MAX; i++) {
         BoxSlot *slot = &box_slots[i];
         if (!slot->in_use || slot->freed || slot->owned_by_template) continue;
         if (slot->scope_id == scope_id) box_free_slot(slot);
@@ -1716,7 +1722,7 @@ void value_list_append(Value *list, Value v) {
             list->list->items = grown;
             gc_note_owner_write(list->list);
             if (grown) {
-                luna_gc_runtime_write_barrier(grown);
+                luna_gc_runtime_write_barrier_trusted(grown);
             }
         } else {
             list->list->items = realloc(list->list->items, sizeof(Value) * (size_t)n);
@@ -1747,7 +1753,7 @@ void value_list_append_move(Value *list, Value *v) {
             list->list->items = grown;
             gc_note_owner_write(list->list);
             if (grown) {
-                luna_gc_runtime_write_barrier(grown);
+                luna_gc_runtime_write_barrier_trusted(grown);
             }
         } else {
             list->list->items = realloc(list->list->items, sizeof(Value) * (size_t)n);

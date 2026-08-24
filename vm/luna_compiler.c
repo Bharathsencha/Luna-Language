@@ -349,6 +349,41 @@ static int compile_expr(Compiler *c, AstNode *n, int target_reg) {
             return dst;
         }
         case NODE_BINOP: {
+            /* Fused repeat(const, N) + to_string(int): single allocation. */
+            if (n->binop.op == OP_ADD) {
+                AstNode *rep = NULL, *tos = NULL;
+                AstNode *l = n->binop.left, *r = n->binop.right;
+                if (l && r && l->kind == NODE_CALL && r->kind == NODE_CALL &&
+                    l->call.callee && r->call.callee &&
+                    l->call.callee->kind == NODE_IDENT && r->call.callee->kind == NODE_IDENT) {
+                    const char *ln = l->call.callee->ident.name;
+                    const char *rn = r->call.callee->ident.name;
+                    if (ln == intern_string("repeat") && rn == intern_string("to_string")) {
+                        rep = l; tos = r;
+                    } else if (rn == intern_string("repeat") && ln == intern_string("to_string")) {
+                        rep = r; tos = l;
+                    }
+                }
+                if (rep && tos && rep->call.args.count == 2 && tos->call.args.count == 1) {
+                    AstNode *prefix = rep->call.args.items[0];
+                    AstNode *count = rep->call.args.items[1];
+                    if (prefix->kind == NODE_STRING && count->kind == NODE_NUMBER) {
+                        int src = compile_expr_to_any_reg(c, tos->call.args.items[0]);
+                        c->next_reg = old_reg;
+                        int dst = (target_reg != -1) ? target_reg : allocate_reg(c);
+                        int prefix_idx = luna_chunk_add_constant(c->chunk, value_string(prefix->string.text));
+                        int count_idx = luna_chunk_add_constant(c->chunk, value_int(count->number.value));
+                        emit_3(c, VM_OP_FMT, dst, (uint8_t)src, line);
+                        emit_16(c, (uint16_t)prefix_idx, line);
+                        emit_16(c, (uint16_t)count_idx, line);
+                        if (target_reg == -1) {
+                            c->next_reg = dst + 1;
+                        }
+                        return dst;
+                    }
+                }
+            }
+
             /* Logical AND/OR with short-circuit semantics */
             if (n->binop.op == OP_AND || n->binop.op == OP_OR) {
                 int lhs = compile_expr_to_any_reg(c, n->binop.left);

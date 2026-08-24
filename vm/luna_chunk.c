@@ -15,6 +15,8 @@ void luna_chunk_init(LunaChunk *chunk) {
     chunk->constants = NULL;
     chunk->const_len = 0;
     chunk->const_cap = 0;
+    chunk->const_intern_cache = NULL;
+    chunk->const_intern_cache_len = 0;
     chunk->reg_count = 0;
     chunk->param_count = 0;
     chunk->upvalue_count = 0;
@@ -33,6 +35,7 @@ void luna_chunk_free(LunaChunk *chunk) {
         value_free(chunk->constants[i]);
     }
     if (chunk->constants) free(chunk->constants);
+    if (chunk->const_intern_cache) free(chunk->const_intern_cache);
 
     // Free subchunks
     for (int i = 0; i < chunk->subchunk_len; i++) {
@@ -75,6 +78,14 @@ int luna_chunk_add_constant(LunaChunk *chunk, Value val) {
     if (chunk->const_len >= chunk->const_cap) {
         chunk->const_cap = chunk->const_cap ? chunk->const_cap * 2 : 16;
         chunk->constants = realloc(chunk->constants, chunk->const_cap * sizeof(Value));
+        chunk->const_intern_cache = realloc(chunk->const_intern_cache,
+                                            chunk->const_cap * sizeof(const char *));
+    }
+    if (chunk->const_intern_cache) {
+        for (size_t i = chunk->const_intern_cache_len; i < chunk->const_cap; i++) {
+            chunk->const_intern_cache[i] = NULL;
+        }
+        chunk->const_intern_cache_len = chunk->const_cap;
     }
     chunk->constants[chunk->const_len] = val;
     return (int)(chunk->const_len++);

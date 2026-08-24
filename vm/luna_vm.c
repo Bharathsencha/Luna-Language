@@ -183,6 +183,22 @@ static int vm_name_in_list(const char *name, const char **names, int count) {
     return 0;
 }
 
+/* Returns the interned string for a name constant, caching per chunk. */
+static const char *vm_intern_const(LunaChunk *chunk, uint16_t idx) {
+    if (idx >= chunk->const_len) return NULL;
+    if (chunk->const_intern_cache && idx < chunk->const_intern_cache_len &&
+        chunk->const_intern_cache[idx]) {
+        return chunk->const_intern_cache[idx];
+    }
+    Value v = chunk->constants[idx];
+    const char *s = (v.type == VAL_STRING && v.string) ? v.string->chars : "";
+    const char *interned = intern_string(s);
+    if (chunk->const_intern_cache && idx < chunk->const_intern_cache_len) {
+        chunk->const_intern_cache[idx] = interned;
+    }
+    return interned;
+}
+
 static int vm_op_line(LunaChunk *chunk, uint8_t *ip) {
     size_t off = (size_t)(ip - chunk->code);
     if (off == 0 || chunk->line_len == 0) return 1;
@@ -339,7 +355,7 @@ Value luna_vm_execute(LunaVM *vm) {
     #ifdef __GNUC__
     static void* dispatch_table[] = {
         &&do_halt, &&do_load_int, &&do_load_float, &&do_load_const, &&do_load_true,
-        &&do_load_false, &&do_load_null, &&do_move, &&do_add, &&do_sub, &&do_mul,
+        &&do_load_false, &&do_load_null, &&do_move, &&do_add, &&do_fmt, &&do_sub, &&do_mul,
         &&do_div, &&do_mod, &&do_eq, &&do_neq, &&do_lt, &&do_lte, &&do_gt, &&do_gte,
         &&do_not, &&do_neg, &&do_jump, &&do_jump_if_true, &&do_jump_if_false,
         &&do_get_global, &&do_set_global, &&do_get_upval, &&do_set_upval,
@@ -528,6 +544,12 @@ Value luna_vm_execute(LunaVM *vm) {
             res = vec_add_values(l, r);
         } else if (l.type == VAL_INT && r.type == VAL_INT) {
             res = value_int(l.i + r.i);
+        } else if (l.type == VAL_STRING && r.type == VAL_STRING) {
+            /* Fast path: direct concat, no malloc round-trip. */
+            const char *lc = (l.string && l.string->chars) ? l.string->chars : "";
+            const char *rc = (r.string && r.string->chars) ? r.string->chars : "";
+            size_t ll = strlen(lc), rl = strlen(rc);
+            res = value_string_concat_raw(lc, ll, rc, rl);
         } else if (l.type == VAL_STRING || r.type == VAL_STRING) {
             char *sl = value_to_string(l);
             char *sr = value_to_string(r);
@@ -536,6 +558,54 @@ Value luna_vm_execute(LunaVM *vm) {
             free(sr);
         } else {
             res = value_float(value_to_double(l) + value_to_double(r));
+        }
+        value_free(slots[dst]);
+        slots[dst] = res;
+        #ifdef __GNUC__
+        DISPATCH();
+        #else
+        break;
+        #endif
+    }
+
+    #ifdef __GNUC__
+    do_fmt:
+    #else
+    case VM_OP_FMT:
+    #endif
+    {
+        /* Fused repeat(prefix, count) + to_string(int) in a single alloc. */
+        uint8_t dst = READ_BYTE();
+        uint8_t src = READ_BYTE();
+        uint16_t prefix_idx = READ_SHORT();
+        uint16_t count_idx = READ_SHORT();
+        Value prefix_val = chunk->constants[prefix_idx];
+        Value count_val = chunk->constants[count_idx];
+        const char *p = (prefix_val.type == VAL_STRING && prefix_val.string &&
+                         prefix_val.string->chars) ? prefix_val.string->chars : "";
+        long long count = count_val.type == VAL_INT ? count_val.i : 0;
+        if (count < 0) count = 0;
+        Value sv = slots[src];
+        char ibuf[24];
+        int ilen = 0;
+        if (sv.type == VAL_INT) {
+            ilen = snprintf(ibuf, sizeof(ibuf), "%lld", sv.i);
+        } else if (sv.type == VAL_FLOAT) {
+            ilen = snprintf(ibuf, sizeof(ibuf), "%.6g", sv.f);
+        } else {
+            ilen = snprintf(ibuf, sizeof(ibuf), "0");
+        }
+        size_t plen = strlen(p);
+        size_t total = plen * (size_t)count + (size_t)ilen;
+        Value res = value_string_len(NULL, total);
+        if (res.type == VAL_STRING && res.string) {
+            char *out = res.string->chars;
+            for (long long k = 0; k < count; k++) {
+                memcpy(out, p, plen);
+                out += plen;
+            }
+            memcpy(out, ibuf, (size_t)ilen);
+            out[ilen] = '\0';
         }
         value_free(slots[dst]);
         slots[dst] = res;
@@ -926,7 +996,7 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t dst = READ_BYTE();
         uint16_t name_idx = READ_SHORT();
         Value name_val = chunk->constants[name_idx];
-        const char *interned = intern_string(name_val.string->chars);
+        const char *interned = vm_intern_const(chunk, name_idx);
         #ifdef LUNA_VM_DEBUG
         printf("[GET_GLOBAL] Searching for %s (interned ptr: %p, constant chars ptr: %p)\n",
                name_val.string->chars, (void*)interned, (void*)name_val.string->chars);
@@ -964,7 +1034,7 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t src = READ_BYTE();
         int line = vm_op_line(chunk, ip);
         Value name_val = chunk->constants[name_idx];
-        const char *interned = intern_string(name_val.string->chars);
+        const char *interned = vm_intern_const(chunk, name_idx);
         if (unsafe_runtime_inside_block() && unsafe_runtime_is_pointer(slots[src]) &&
             !unsafe_runtime_check_escape(slots[src], line)) {
             #ifdef __GNUC__
@@ -1177,8 +1247,7 @@ Value luna_vm_execute(LunaVM *vm) {
         Value *map_val = &slots[map_reg];
         Value val = slots[val_reg];
         if (map_val->type == VAL_MAP && vm_ptr_store_ok(val, line)) {
-            Value key_val = chunk->constants[key_idx];
-            value_map_set(map_val, intern_string(key_val.string->chars), value_copy(val));
+            value_map_set(map_val, vm_intern_const(chunk, key_idx), value_copy(val));
         }
         #ifdef __GNUC__
         DISPATCH();
@@ -1251,7 +1320,7 @@ Value luna_vm_execute(LunaVM *vm) {
         uint16_t name_idx = READ_SHORT();
         int line = vm_op_line(chunk, ip);
         Value name_val = chunk->constants[name_idx];
-        const char *interned = intern_string(name_val.string->chars);
+        const char *interned = vm_intern_const(chunk, name_idx);
         Value *slot = env_get(vm->env, interned);
         if (!slot) {
             char msg[256];
@@ -1285,17 +1354,17 @@ Value luna_vm_execute(LunaVM *vm) {
         Value name_val = chunk->constants[name_idx];
         Value ret = value_null();
         if (target.type == VAL_MAP) {
-            const char *fname = intern_string(name_val.string->chars);
+            const char *fname = vm_intern_const(chunk, name_idx);
             Value *got = value_map_get(&target, fname);
             if (got) ret = value_copy(*got);
         } else if (target.type == VAL_TEMPLATE) {
             int found = 0;
-            ret = value_template_get_field(target, intern_string(name_val.string->chars), &found);
+            ret = value_template_get_field(target, vm_intern_const(chunk, name_idx), &found);
         } else if (target.type == VAL_BLOC) {
             int found = 0;
-            ret = value_bloc_get_field(target, intern_string(name_val.string->chars), &found);
+            ret = value_bloc_get_field(target, vm_intern_const(chunk, name_idx), &found);
         } else if (target.type == VAL_BOX) {
-            const char *f = intern_string(name_val.string->chars);
+            const char *f = vm_intern_const(chunk, name_idx);
             if (f == intern_string("len")) {
                 ret = value_int((long long)value_box_len(target));
             } else if (f == intern_string("cap")) {
