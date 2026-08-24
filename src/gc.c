@@ -446,7 +446,7 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->heap_limit = initial_limit ? initial_limit : (4 * 1024 * 1024);
     heap->growth_factor = 1.5;
     heap->increment_steps = 2048; /* drain more gray objects per step to keep up with fast allocators */
-    heap->sweep_block_budget = 16; /* sweep more blocks per step — each block is fast without remember-scan */
+    heap->sweep_block_budget = 8; /* bound each sweep step well below the pause target */
     heap->incremental_mode = true;
     heap->young_limit = gc_compute_young_limit(heap->heap_limit, 0);
     heap->major_interval = gc_compute_major_interval(0, heap->heap_limit);
@@ -464,7 +464,7 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->increment_steps = gc_env_size("LUNA_GC_INCREMENT_STEPS", heap->increment_steps, 1, 4096);
     heap->sweep_block_budget = gc_env_size("LUNA_GC_SWEEP_BUDGET", heap->sweep_block_budget, 1, 64);
     heap->large_sweep_budget = gc_env_size("LUNA_GC_LARGE_SWEEP_BUDGET", heap->large_sweep_budget, 1, 4096);
-    size_t pause_target_us = gc_env_size("LUNA_GC_PAUSE_TARGET_US", 250, 10, 1000000);
+    size_t pause_target_us = gc_env_size("LUNA_GC_PAUSE_TARGET_US", 125, 10, 1000000);
     heap->target_pause_ns = (uint64_t)pause_target_us * 1000ULL;
 
     heap->root_cap = 64;
