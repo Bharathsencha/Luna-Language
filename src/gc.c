@@ -446,7 +446,7 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->heap_limit = initial_limit ? initial_limit : (4 * 1024 * 1024);
     heap->growth_factor = 1.5;
     heap->increment_steps = 2048; /* drain more gray objects per step to keep up with fast allocators */
-    heap->sweep_block_budget = 8; /* bound each sweep step well below the pause target */
+    heap->sweep_block_budget = 6; /* bound each sweep step well below the pause target */
     heap->incremental_mode = true;
     heap->young_limit = gc_compute_young_limit(heap->heap_limit, 0);
     heap->major_interval = gc_compute_major_interval(0, heap->heap_limit);
@@ -491,6 +491,12 @@ void gc_heap_destroy(GCHeap *heap) {
         free(obj);
         obj = next;
     }
+    obj = heap->large_free_list;
+    while (obj) {
+        GCObject *next = obj->next;
+        free(obj);
+        obj = next;
+    }
 
     ImixBlock *block = heap->blocks;
     while (block) {
@@ -527,10 +533,26 @@ void *gc_heap_alloc(GCHeap *heap, size_t size, GCTracer trace, GCFinalizer fin) 
     GCObject *obj = NULL;
 
     if (total > IMIX_BLOCK_SIZE) {
-        obj = (GCObject *)malloc(total);
+        /* Reuse a dead large object of the same size to avoid munmap/free
+         * storms during sweep (which could not be deadline-interrupted). */
+        GCObject **prev = &heap->large_free_list;
+        GCObject *cur = heap->large_free_list;
+        while (cur) {
+            if (gc_object_total_size(cur->size) == total) {
+                *prev = cur->next;
+                heap->large_free_bytes -= total;
+                obj = cur;
+                break;
+            }
+            prev = &cur->next;
+            cur = cur->next;
+        }
         if (!obj) {
-            fprintf(stderr, "gc: large alloc failed\n");
-            abort();
+            obj = (GCObject *)malloc(total);
+            if (!obj) {
+                fprintf(stderr, "gc: large alloc failed\n");
+                abort();
+            }
         }
         obj->next = heap->large_list;
         heap->large_list = obj;
@@ -688,7 +710,7 @@ static bool drain_gray(GCHeap *heap, size_t count) {
             return heap->gray_top == 0;
         }
 
-        if (deadline_ns > 0 && (processed & 63) == 0) {
+        if (deadline_ns > 0 && (processed & 15) == 0) {
             if (gc_now_ns() >= deadline_ns) {
                 gc_phase_end(heap, phase_ns, "drain");
                 return heap->gray_top == 0;
@@ -812,7 +834,13 @@ static void sweep_large_one(GCHeap *heap) {
             heap->young_bytes_allocated -= total;
         }
         uint32_t sz = obj->size;
-        free(obj);
+        if (heap->large_free_bytes < (64u << 20)) {
+            obj->next = heap->large_free_list;
+            heap->large_free_list = obj;
+            heap->large_free_bytes += total;
+        } else {
+            free(obj);
+        }
         if (heap->pause_trace && t0) {
             double ms = (double)(gc_now_ns() - t0) / 1000000.0;
             if (ms >= heap->pause_trace_threshold_ms) {
@@ -899,10 +927,9 @@ static void gc_prepare_sweep_phase(GCHeap *heap, bool minor, bool reclaim_empty)
     gc_block_index_mark_dirty(heap);
 }
 
-static void gc_sweep_some_blocks(GCHeap *heap, size_t budget) {
+static void gc_sweep_some_blocks(GCHeap *heap, size_t budget, uint64_t deadline) {
     if (!heap || !heap->sweep_in_progress) return;
     uint64_t phase_ns = gc_phase_begin(heap);
-    uint64_t deadline = heap->target_pause_ns ? gc_now_ns() + heap->target_pause_ns : 0;
 
     /* Pass 1: sweep blocks in the detached chain. */
     size_t swept = 0;
@@ -981,7 +1008,7 @@ void gc_heap_collect(GCHeap *heap) {
     mark_roots(heap);
     drain_gray(heap, 0);
     gc_prepare_sweep_phase(heap, false, true);
-    gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+    gc_sweep_some_blocks(heap, heap->sweep_block_budget, 0);
     gc_heap_record_pause(heap, start_ns);
 }
 
@@ -1006,7 +1033,8 @@ void gc_heap_step(GCHeap *heap) {
     uint64_t start_ns = gc_now_ns();
 
     if (heap->sweep_in_progress) {
-        gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        gc_sweep_some_blocks(heap, heap->sweep_block_budget,
+                             heap->target_pause_ns ? gc_now_ns() + heap->target_pause_ns : 0);
         gc_heap_record_pause(heap, start_ns);
         return;
     }
@@ -1040,7 +1068,8 @@ void gc_heap_step(GCHeap *heap) {
             return;
         }
         gc_prepare_sweep_phase(heap, false, true);
-        gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        gc_sweep_some_blocks(heap, heap->sweep_block_budget,
+                             heap->target_pause_ns ? start_ns + heap->target_pause_ns : 0);
         heap->young_limit = gc_compute_young_limit(heap->heap_limit, heap->bytes_live);
     }
 
@@ -1058,7 +1087,7 @@ static void gc_heap_collect_minor(GCHeap *heap) {
     mark_roots(heap);
     drain_gray(heap, 0);
     gc_prepare_sweep_phase(heap, true, gc_should_reclaim_empty_blocks_on_minor(heap));
-    gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+    gc_sweep_some_blocks(heap, heap->sweep_block_budget, 0);
     gc_heap_record_pause(heap, start_ns);
 }
 
@@ -1066,7 +1095,8 @@ static void gc_heap_step_minor(GCHeap *heap) {
     uint64_t start_ns = gc_now_ns();
 
     if (heap->sweep_in_progress) {
-        gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        gc_sweep_some_blocks(heap, heap->sweep_block_budget,
+                             heap->target_pause_ns ? gc_now_ns() + heap->target_pause_ns : 0);
         gc_heap_record_pause(heap, start_ns);
         return;
     }
@@ -1099,7 +1129,8 @@ static void gc_heap_step_minor(GCHeap *heap) {
             return;
         }
         gc_prepare_sweep_phase(heap, true, gc_should_reclaim_empty_blocks_on_minor(heap));
-        gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        gc_sweep_some_blocks(heap, heap->sweep_block_budget,
+                             heap->target_pause_ns ? start_ns + heap->target_pause_ns : 0);
         heap->young_limit = gc_compute_young_limit(heap->heap_limit, heap->bytes_live);
     }
 
@@ -1111,7 +1142,8 @@ void gc_heap_maybe_collect(GCHeap *heap) {
 
     if (heap->sweep_in_progress) {
         uint64_t start_ns = gc_now_ns();
-        gc_sweep_some_blocks(heap, heap->sweep_block_budget);
+        gc_sweep_some_blocks(heap, heap->sweep_block_budget,
+                             heap->target_pause_ns ? start_ns + heap->target_pause_ns : 0);
         gc_heap_record_pause(heap, start_ns);
         /* one sweep step per safepoint; the next collection (if any) starts
          * on a later safepoint so pauses stay bounded */

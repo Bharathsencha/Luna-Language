@@ -96,6 +96,8 @@ struct GCHeap {
     size_t       gray_top;
     size_t       gray_cap;
     GCObject    *large_list;
+    GCObject    *large_free_list;  /* dead large objects reused on next alloc */
+    size_t       large_free_bytes;
     GCObject   **roots;
     size_t       root_count;
     size_t       root_cap;
