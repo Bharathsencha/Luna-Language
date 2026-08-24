@@ -1,0 +1,228 @@
+// road.lu — procedural closed-loop track.
+// Bakes the whole circuit into one OBJ (+MTL colors) at startup, loads it
+// through the normal asset pipeline (load_model), and exposes spline
+// helpers for gameplay. All mutable data lives in the returned RD list;
+// every helper takes RD explicitly (no hidden module state).
+
+use { TRACK_N, TRACK_OBJ, TRACK_MTL, ROAD_HALF } from "config.lu"
+
+let PI = 3.14159265
+
+export func wrap(RD, s) {
+    let n = RD[0]
+    let m = s % n
+    if (m < 0) { m = m + n }
+    return m
+}
+
+// RD layout:
+// 0=n 1..4 xs,ys,zs,cs(curvature) 5..8 txs,tys,tzs,rxs 9 rzs
+// 10=mesh_id 11=tree_x 12=tree_z 13=tree_y 14=tree_s
+export func build_track() {
+    let n = TRACK_N
+    let xs = []
+    let ys = []
+    let zs = []
+    let txs = []
+    let tys = []
+    let tzs = []
+    let rxs = []
+    let rzs = []
+    let cs = []
+
+    // centerline: perturbed circle with gentle hills
+    let i = 0
+    while (i < n) {
+        let t = 2.0 * PI * i / n
+        let r = 70.0 + 14.0 * sin(3.0 * t) + 9.0 * sin(7.0 * t + 1.3) + 5.0 * sin(11.0 * t + 0.5)
+        list_append(xs, r * cos(t))
+        list_append(ys, 2.2 * sin(2.0 * t) + 1.4 * sin(5.0 * t + 0.8))
+        list_append(zs, r * sin(t))
+        i = i + 1
+    }
+
+    // tangents (central difference) + right vector + curvature
+    i = 0
+    while (i < n) {
+        let ip = (i + n - 1) % n
+        let inx = (i + 1) % n
+        let ddx = xs[inx] - xs[ip]
+        let ddy = ys[inx] - ys[ip]
+        let ddz = zs[inx] - zs[ip]
+        let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+        list_append(txs, ddx / dl)
+        list_append(tys, ddy / dl)
+        list_append(tzs, ddz / dl)
+        // right = normalize(cross(T, up)) = (-tz, 0, tx)/len
+        let rl = sqrt(ddx * ddx + ddz * ddz)
+        list_append(rxs, -ddz / rl)
+        list_append(rzs, ddx / rl)
+        list_append(cs, 0.0)
+        i = i + 1
+    }
+
+    // signed horizontal curvature per segment (heading change / arc length)
+    i = 0
+    while (i < n) {
+        let inx = (i + 1) % n
+        let cross = txs[i] * tzs[inx] - tzs[i] * txs[inx]
+        let dot = txs[i] * txs[inx] + tzs[i] * tzs[inx]
+        let ang = atan2(cross, dot)
+        let seg = sqrt((xs[inx] - xs[i]) * (xs[inx] - xs[i]) + (zs[inx] - zs[i]) * (zs[inx] - zs[i]))
+        cs[i] = ang / (seg + 0.001)
+        i = i + 1
+    }
+
+    bake_obj(xs, ys, zs, rxs, rzs, n)
+
+    let mesh = load_model(TRACK_OBJ)
+    if (mesh < 0) {
+        print("racer: track model failed to load!")
+    }
+
+    // deterministic roadside trees
+    let tree_x = []
+    let tree_z = []
+    let tree_y = []
+    let tree_s = []
+    i = 0
+    while (i < n) {
+        if (i % 9 == 0) {
+            let side = 1.0
+            if ((i / 9) % 2 == 0) { side = -1.0 }
+            let off = side * (ROAD_HALF + 2.6 + (i % 3) * 1.8)
+            list_append(tree_x, xs[i] + rxs[i] * off)
+            list_append(tree_z, zs[i] + rzs[i] * off)
+            list_append(tree_y, ys[i])
+            list_append(tree_s, 0.85 + (i % 5) * 0.22)
+        }
+        i = i + 1
+    }
+
+    return [n, xs, ys, zs, cs, txs, tys, tzs, rxs, rzs, mesh, tree_x, tree_z, tree_y, tree_s]
+}
+
+func fmt(v) {
+    return to_string(to_int(v * 1000.0) / 1000.0)
+}
+
+// Bake road surface + edge stripes + center dashes into assets/cache.
+func bake_obj(xs, ys, zs, rxs, rzs, n) {
+    let half = ROAD_HALF
+    let v = []       // obj text lines
+    let base = 1     // running vertex index base (obj is 1-indexed)
+
+    // materials
+    let mtl = ""
+    mtl = mtl + "newmtl asphalt\nKd 0.16 0.16 0.19\nd 1.0\n\n"
+    mtl = mtl + "newmtl stripe_red\nKd 0.80 0.14 0.12\nd 1.0\n\n"
+    mtl = mtl + "newmtl stripe_white\nKd 0.88 0.88 0.86\nd 1.0\n\n"
+    mtl = mtl + "newmtl dash\nKd 0.95 0.82 0.25\nd 1.0\n"
+    let mf = open(TRACK_MTL, "w")
+    write(mf, mtl)
+    close(mf)
+
+    list_append(v, "mtllib track.mtl")
+
+    let i = 0
+    while (i < n) {
+        let j = (i + 1) % n
+
+        // edge points for strip i..j
+        let ax = xs[i] - rxs[i] * half
+        let az = zs[i] - rzs[i] * half
+        let bx = xs[i] + rxs[i] * half
+        let bz = zs[i] + rzs[i] * half
+        let cx = xs[j] + rxs[j] * half
+        let cz = zs[j] + rzs[j] * half
+        let dx = xs[j] - rxs[j] * half
+        let dz = zs[j] - rzs[j] * half
+
+        // flat face normal (upward)
+        let e1x = bx - ax
+        let e1z = bz - az
+        let e2x = dx - ax
+        let e2z = dz - az
+        let nx = 0.0
+        let nyv = e2x * e1z - e2z * e1x
+        let nz = 0.0
+        if (nyv < 0.0) { nyv = -nyv }
+
+        list_append(v, "v " + fmt(ax) + " " + fmt(ys[i]) + " " + fmt(az))
+        list_append(v, "v " + fmt(bx) + " " + fmt(ys[i]) + " " + fmt(bz))
+        list_append(v, "v " + fmt(cx) + " " + fmt(ys[j]) + " " + fmt(cz))
+        list_append(v, "v " + fmt(dx) + " " + fmt(ys[j]) + " " + fmt(dz))
+        list_append(v, "vn 0 " + fmt(nyv) + " 0")
+        list_append(v, "usemtl asphalt")
+        let b = base
+        list_append(v, "f " + to_string(b) + "//" + to_string(b + 4) + " " + to_string(b + 1) + "//" + to_string(b + 4) + " " + to_string(b + 2) + "//" + to_string(b + 4) + " " + to_string(b + 3) + "//" + to_string(b + 4))
+
+        // edge stripes: thin quads on both rims, alternating red/white blocks
+        if (i % 10 < 5) {
+            emit_stripe(v, xs, ys, zs, rxs, rzs, i, j, half, 0.45, 0.02, base + 4, "stripe_red")
+        } else {
+            emit_stripe(v, xs, ys, zs, rxs, rzs, i, j, half, 0.45, 0.02, base + 4, "stripe_white")
+        }
+
+        // center dashes
+        if (i % 6 < 3) {
+            emit_stripe(v, xs, ys, zs, rxs, rzs, i, j, 0.0, 0.14, 0.03, base + 8, "dash")
+        }
+
+        base = base + 12   // 4 road verts + 4 left stripe + 4 dash
+        i = i + 1
+    }
+
+    let of = open(TRACK_OBJ, "w")
+    write(of, join(v, "\n"))
+    close(of)
+}
+
+// One thin quad between samples i..j at lateral center `lat`, width w,
+// lifted `lift` above the road, using material `mat`.
+// Vertex numbering continues from `vb` (4 verts, 1 shared vn slot assumed).
+func emit_stripe(v, xs, ys, zs, rxs, rzs, i, j, lat, w, lift, vb, mat) {
+    let ax = xs[i] + rxs[i] * (lat - w)
+    let az = zs[i] + rzs[i] * (lat - w)
+    let bx = xs[i] + rxs[i] * (lat + w)
+    let bz = zs[i] + rzs[i] * (lat + w)
+    let cx = xs[j] + rxs[j] * (lat + w)
+    let cz = zs[j] + rzs[j] * (lat + w)
+    let dx = xs[j] + rxs[j] * (lat - w)
+    let dz = zs[j] + rzs[j] * (lat - w)
+
+    list_append(v, "v " + fmt(ax) + " " + fmt(ys[i] + lift) + " " + fmt(az))
+    list_append(v, "v " + fmt(bx) + " " + fmt(ys[i] + lift) + " " + fmt(bz))
+    list_append(v, "v " + fmt(cx) + " " + fmt(ys[j] + lift) + " " + fmt(cz))
+    list_append(v, "v " + fmt(dx) + " " + fmt(ys[j] + lift) + " " + fmt(dz))
+    list_append(v, "vn 0 1 0")
+    list_append(v, "usemtl " + mat)
+    list_append(v, "f " + to_string(vb) + "//" + to_string(vb + 4) + " " + to_string(vb + 1) + "//" + to_string(vb + 4) + " " + to_string(vb + 2) + "//" + to_string(vb + 4) + " " + to_string(vb + 3) + "//" + to_string(vb + 4))
+}
+
+// Position on the road: sample s (float, wraps), lateral offset lat.
+export func point_at(RD, sf, lat) {
+    let n = RD[0]
+    let xs = RD[1]
+    let ys = RD[2]
+    let zs = RD[3]
+    let rxs = RD[8]
+    let rzs = RD[9]
+    let i = to_int(sf) % n
+    return [xs[i] + rxs[i] * lat, ys[i], zs[i] + rzs[i] * lat]
+}
+
+export func tangent_at(RD, sf) {
+    let n = RD[0]
+    let txs = RD[5]
+    let tys = RD[6]
+    let tzs = RD[7]
+    let i = to_int(sf) % n
+    return [txs[i], tys[i], tzs[i]]
+}
+
+export func curvature_at(RD, sf) {
+    let n = RD[0]
+    let cs = RD[4]
+    return cs[to_int(sf) % n]
+}

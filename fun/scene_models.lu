@@ -1,0 +1,46 @@
+// Smoke test: OBJ model loading + drawing (colors baked from MTL Kd).
+// Runs ~300 frames then exits cleanly.
+
+let cam = create_camera_3d([0.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 1.0, 0.0], 60)
+
+init_window(960, 600, "Luna 3D — model loading smoke test")
+set_fps(60)
+
+create_light(LIGHT_DIRECTIONAL, [5.0, 10.0, 4.0], [0.0, -1.0, -0.5], rgb(255, 248, 230))
+set_ambient_light(rgb(70, 70, 90))
+
+let car = load_model("assets/models/test/cube.obj")
+if (car < 0) {
+    print("model failed to load")
+}
+
+let t = 0.0
+let frames = 0
+
+while (window_open() && frames < 300) {
+    t = t + get_delta_time()
+    frames = frames + 1
+
+    update_camera_orbit(cam, [0.0, 0.5, 0.0], 3.5, t * 40.0, 20.0)
+
+    begin_drawing()
+    clear_background(rgb(20, 22, 30))
+
+    begin_mode_3d(cam)
+    draw_grid(10, 1.0)
+
+    if (car >= 0) {
+        draw_model(car, [0.0, 0.5, 0.0], 1.0, [0.0, t * 50.0, 0.0], rgb(255, 255, 255))
+        draw_model(car, [-2.0, 0.25, 1.0], 0.5, [t * 30.0, t * 70.0, 0.0], rgb(255, 255, 255))
+    } else {
+        draw_cube([0.0, 0.5, 0.0], [1.0, 1.0, 1.0], rgb(220, 90, 70))
+    }
+
+    end_mode_3d()
+
+    draw_text_default("obj pipeline test — red body / blue glass faces", 12, 12, rgb(240, 240, 240))
+    end_drawing()
+}
+
+if (car >= 0) { unload_model(car) }
+close_window()

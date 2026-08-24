@@ -1,2 +1,2 @@
-import "test/import_helper.lu"
+import "import_helper.lu"
 private_func()

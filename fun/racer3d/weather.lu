@@ -1,0 +1,98 @@
+// weather.lu — season particle systems (petals / heat motes / leaves / snow).
+// W list layout (owned by main): 0=px[] 1=py[] 2=pz[] 3=phase[]
+// Particles live in a box around the camera and wrap when they leave it.
+
+use { P_PETALS, P_HEAT, P_LEAVES, P_SNOW } from "seasons.lu"
+
+let BOX = 46.0
+let COUNT = 130
+
+export func new_weather() {
+    let px = []
+    let py = []
+    let pz = []
+    let ph = []
+    let i = 0
+    while (i < COUNT) {
+        list_append(px, 0.0)
+        list_append(py, 0.0)
+        list_append(pz, 0.0)
+        list_append(ph, i * 1.7)
+        i = i + 1
+    }
+    // scatter immediately on first update
+    return [px, py, pz, ph, 0]
+}
+
+func respawn(W, i, cx, cz, first) {
+    let px = W[0]
+    let py = W[1]
+    let pz = W[2]
+    let ph = W[3]
+    px[i] = cx + ((i % 13) / 13.0 - 0.5 + sin(ph[i]) * 0.5) * BOX
+    pz[i] = cz + (((i * 7) % 17) / 17.0 - 0.5 + cos(ph[i] * 1.3) * 0.5) * BOX
+    if (first == 1) {
+        py[i] = 1.0 + (i % 11) / 11.0 * 14.0
+    } else {
+        py[i] = 15.0
+    }
+}
+
+// mode comes from the blended palette (snapped int at index len-1)
+export func update_weather(W, cam_pos, mode, dt) {
+    let px = W[0]
+    let py = W[1]
+    let pz = W[2]
+    let ph = W[3]
+    let cx = cam_pos[0]
+    let cz = cam_pos[2]
+
+    let fall_speed = 2.2
+    let sway = 1.4
+    if (mode == P_SNOW) {
+        fall_speed = 1.6
+        sway = 0.8
+    }
+    if (mode == P_LEAVES) {
+        fall_speed = 2.8
+        sway = 2.6
+    }
+    if (mode == P_PETALS) {
+        fall_speed = 1.9
+        sway = 2.2
+    }
+    if (mode == P_HEAT) {
+        fall_speed = -0.7
+        sway = 0.5
+    }
+
+    let i = 0
+    while (i < COUNT) {
+        ph[i] = ph[i] + dt * 1.9
+        py[i] = py[i] - fall_speed * dt
+        px[i] = px[i] + sin(ph[i]) * sway * dt
+        pz[i] = pz[i] + cos(ph[i] * 0.8) * sway * dt
+
+        // recycle when below ground or drifted too far from the camera
+        let far = (px[i] - cx) * (px[i] - cx) + (pz[i] - cz) * (pz[i] - cz)
+        if (py[i] < 0.05 || far > (BOX * 0.75) * (BOX * 0.75)) {
+            if (mode == P_HEAT && py[i] < 12.0) {
+                py[i] = 0.5   // heat motes rise from the ground
+            } else {
+                respawn(W, i, cx, cz, 0)
+            }
+        }
+        i = i + 1
+    }
+}
+
+export func draw_weather(W, palette_prop_color) {
+    let px = W[0]
+    let py = W[1]
+    let pz = W[2]
+    let i = 0
+    while (i < COUNT) {
+        draw_particle_3d([px[i], py[i], pz[i]], 0.16, [255, 255, 255, 210])
+        i = i + 1
+    }
+}

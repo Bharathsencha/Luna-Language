@@ -7,6 +7,7 @@
 #include "gl_backend.h"
 #include "audio_backend.h"
 #include "gui_lib.h"
+#include "gui_lib_3d.h"
 #include "../include/intern.h"
 #include "../include/value.h"
 #include "../include/env.h"
@@ -203,6 +204,7 @@ Value lib_gui_window_open(int argc, Value *argv, struct Env *env) {
 
 Value lib_gui_close_window(int argc, Value *argv, struct Env *env) {
     gl_close_window();
+    lib_gui_3d_reset_runtime();
     return value_null();
 }
 

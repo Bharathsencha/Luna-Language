@@ -27,6 +27,8 @@ Value lib_sand_init(int argc, Value *argv, Env *env);
 Value lib_sand_set(int argc, Value *argv, Env *env);
 Value lib_sand_get(int argc, Value *argv, Env *env);
 Value lib_sand_update(int argc, Value *argv, Env *env);
+Value lib_sand_draw(int argc, Value *argv, Env *env);
+Value lib_sand_brush(int argc, Value *argv, Env *env);
 
 // Helper: Local truthiness check for assert
 // (This logic mirrors the interpreter's is_truthy to keep modules decoupled)
@@ -625,28 +627,64 @@ void env_register_stdlib(Env *env) {
     // 3D GUI API
     env_def(env, intern_string("create_camera_3d"), value_native(lib_gui_create_camera_3d));
     env_def(env, intern_string("update_camera_3d"), value_native(lib_gui_update_camera_3d));
+    env_def(env, intern_string("update_camera_orbit"), value_native(lib_gui_update_camera_orbit));
+    env_def(env, intern_string("get_camera_position"), value_native(lib_gui_get_camera_position));
+    env_def(env, intern_string("set_camera_projection"), value_native(lib_gui_set_camera_projection));
     env_def(env, intern_string("update_camera_free"), value_native(lib_gui_update_camera_free));
     env_def(env, intern_string("set_camera_fov"), value_native(lib_gui_set_camera_fov));
     env_def(env, intern_string("capture_cursor"), value_native(lib_gui_capture_cursor));
     env_def(env, intern_string("begin_mode_3d"), value_native(lib_gui_begin_mode_3d));
     env_def(env, intern_string("end_mode_3d"), value_native(lib_gui_end_mode_3d));
     env_def(env, intern_string("get_camera_forward"), value_native(lib_gui_get_camera_forward));
-    
+
+    env_def(env, intern_string("push_matrix"), value_native(lib_gui_push_matrix));
+    env_def(env, intern_string("pop_matrix"), value_native(lib_gui_pop_matrix));
+    env_def(env, intern_string("reset_matrix"), value_native(lib_gui_reset_matrix));
+    env_def(env, intern_string("translate_3d"), value_native(lib_gui_translate_3d));
+    env_def(env, intern_string("rotate_3d"), value_native(lib_gui_rotate_3d));
+    env_def(env, intern_string("scale_3d"), value_native(lib_gui_scale_3d));
+
     env_def(env, intern_string("draw_cube"), value_native(lib_gui_draw_cube));
+    env_def(env, intern_string("draw_cube_pro"), value_native(lib_gui_draw_cube_pro));
     env_def(env, intern_string("draw_cube_wires"), value_native(lib_gui_draw_cube_wires));
     env_def(env, intern_string("draw_sphere"), value_native(lib_gui_draw_sphere));
+    env_def(env, intern_string("draw_sphere_pro"), value_native(lib_gui_draw_sphere_pro));
     env_def(env, intern_string("draw_plane"), value_native(lib_gui_draw_plane));
+    env_def(env, intern_string("draw_plane_pro"), value_native(lib_gui_draw_plane_pro));
     env_def(env, intern_string("draw_cylinder"), value_native(lib_gui_draw_cylinder));
+    env_def(env, intern_string("draw_cylinder_pro"), value_native(lib_gui_draw_cylinder_pro));
+    env_def(env, intern_string("draw_particle_3d"), value_native(lib_gui_draw_particle_3d));
     env_def(env, intern_string("draw_grid"), value_native(lib_gui_draw_grid));
     env_def(env, intern_string("draw_line_3d"), value_native(lib_gui_draw_line_3d));
     env_def(env, intern_string("draw_triangle_3d"), value_native(lib_gui_draw_triangle_3d));
-    
+
     env_def(env, intern_string("create_light"), value_native(lib_gui_create_light));
     env_def(env, intern_string("set_light_enabled"), value_native(lib_gui_set_light_enabled));
     env_def(env, intern_string("set_light_color"), value_native(lib_gui_set_light_color));
     env_def(env, intern_string("set_light_position"), value_native(lib_gui_set_light_position));
+    env_def(env, intern_string("set_light_target"), value_native(lib_gui_set_light_target));
     env_def(env, intern_string("set_light_intensity"), value_native(lib_gui_set_light_intensity));
+    env_def(env, intern_string("set_light_cone"), value_native(lib_gui_set_light_cone));
     env_def(env, intern_string("set_ambient_light"), value_native(lib_gui_set_ambient_light));
+
+    env_def(env, intern_string("set_material"), value_native(lib_gui_set_material));
+    env_def(env, intern_string("set_fog"), value_native(lib_gui_set_fog));
+    env_def(env, intern_string("set_gamma"), value_native(lib_gui_set_gamma));
+
+    env_def(env, intern_string("get_mouse_ray"), value_native(lib_gui_get_mouse_ray));
+    env_def(env, intern_string("ray_hits_box"), value_native(lib_gui_ray_hits_box));
+    env_def(env, intern_string("ray_plane_distance"), value_native(lib_gui_ray_plane_distance));
+
+    env_def(env, intern_string("load_model"), value_native(lib_gui_load_model));
+    env_def(env, intern_string("draw_model"), value_native(lib_gui_draw_model));
+    env_def(env, intern_string("unload_model"), value_native(lib_gui_unload_model));
+
+    // 3D enums
+    env_def(env, intern_string("LIGHT_DIRECTIONAL"), value_int(0));
+    env_def(env, intern_string("LIGHT_POINT"), value_int(1));
+    env_def(env, intern_string("LIGHT_SPOT"), value_int(2));
+    env_def(env, intern_string("PROJECTION_PERSPECTIVE"), value_int(0));
+    env_def(env, intern_string("PROJECTION_ORTHOGRAPHIC"), value_int(1));
     
     env_def(env, intern_string("check_collision_boxes"), value_native(lib_gui_check_collision_boxes));
     env_def(env, intern_string("check_collision_spheres"), value_native(lib_gui_check_collision_spheres));
@@ -672,6 +710,8 @@ void env_register_stdlib(Env *env) {
     env_def(env, intern_string("sand_set"), value_native(lib_sand_set));
     env_def(env, intern_string("sand_get"), value_native(lib_sand_get));
     env_def(env, intern_string("sand_update"), value_native(lib_sand_update));
+    env_def(env, intern_string("sand_draw"), value_native(lib_sand_draw));
+    env_def(env, intern_string("sand_brush"), value_native(lib_sand_brush));
 
     // Render Textures
     env_def(env, intern_string("load_render_texture"), value_native(lib_gui_load_render_texture));

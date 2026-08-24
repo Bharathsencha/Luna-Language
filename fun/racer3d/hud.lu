@@ -1,0 +1,98 @@
+// hud.lu — 2D overlay: speed bar, season, lap, minimap.
+// Pure draw functions; reads state passed from main. No module state.
+
+use { WIDTH, HEIGHT } from "config.lu"
+
+let MM_X = WIDTH - 210
+let MM_Y = 24
+let MM_SIZE = 180
+
+// Precompute normalized minimap points once (returns [pts_x[], pts_z[]]).
+export func build_minimap(RD) {
+    let xs = RD[1]
+    let zs = RD[3]
+    let n = RD[0]
+
+    let minx = xs[0]
+    let maxx = xs[0]
+    let minz = zs[0]
+    let maxz = zs[0]
+    let i = 1
+    while (i < n) {
+        if (xs[i] < minx) { minx = xs[i] }
+        if (xs[i] > maxx) { maxx = xs[i] }
+        if (zs[i] < minz) { minz = zs[i] }
+        if (zs[i] > maxz) { maxz = zs[i] }
+        i = i + 1
+    }
+    let spanx = maxx - minx
+    let spanz = maxz - minz
+    let span = spanx
+    if (spanz > span) { span = spanz }
+
+    let mxs = []
+    let mzs = []
+    i = 0
+    while (i < n) {
+        list_append(mxs, to_int((xs[i] - minx - (span - spanx) * 0.5) / span * (MM_SIZE - 16)) + 8)
+        list_append(mzs, to_int((zs[i] - minz - (span - spanz) * 0.5) / span * (MM_SIZE - 16)) + 8)
+        i = i + 1
+    }
+    return [mxs, mzs]
+}
+
+export func draw_hud(RD, P, palette, season_label, mm, traffic_C, fps_now, max_kmh) {
+    // speed bar
+    let kmh = abs(P[2]) * 3.6
+    let frac = kmh / max_kmh
+    if (frac > 1.0) { frac = 1.0 }
+
+    draw_rectangle_rec([24, HEIGHT - 92, 320, 54], [12, 14, 20, 190])
+    draw_text_default("SPEED", 36, HEIGHT - 84, 18, [200, 205, 215, 255])
+    let bar_w = to_int(frac * 280.0)
+    let bar_col = [90, 220, 120, 255]
+    if (frac > 0.75) { bar_col = [240, 90, 60, 255] } else {
+        if (frac > 0.5) { bar_col = [240, 190, 70, 255] }
+    }
+    if (bar_w > 4) {
+        draw_rectangle_rec([36, HEIGHT - 58, bar_w, 16], bar_col)
+    }
+    draw_rectangle_lines(36, HEIGHT - 58, 280, 16, [230, 230, 235, 160])
+    draw_text_default(to_string(to_int(kmh)) + " km/h", 150, HEIGHT - 86, 22, [245, 245, 250, 255])
+
+    // season + lap panel
+    draw_rectangle_rec([24, 24, 240, 84], [12, 14, 20, 190])
+    draw_text_default(season_label, 38, 34, 26, [to_int(palette[17]), to_int(palette[18]), to_int(palette[19]), 255])
+    draw_text_default("Lap " + to_string(P[5]), 38, 68, 22, [235, 235, 240, 255])
+
+    // crash flash
+    if (P[4] > 0.0) {
+        draw_rectangle_rec([0, 0, WIDTH, HEIGHT], [255, 40, 30, to_int(P[4] * 45.0)])
+    }
+
+    // minimap frame + track outline (precomputed points)
+    draw_rectangle_rec([MM_X - 8, MM_Y - 8, MM_SIZE + 8, MM_SIZE + 8], [10, 12, 18, 170])
+    let mxs = mm[0]
+    let mzs = mm[1]
+    let n = RD[0]
+    let i = 0
+    while (i < n) {
+        if (i % 3 == 0) {
+            draw_rectangle_rec([MM_X + mxs[i], MM_Y + mzs[i], 2, 2], [150, 155, 165, 140])
+        }
+        i = i + 1
+    }
+    // traffic dots
+    let ss = traffic_C[0]
+    i = 0
+    while (i < len(ss)) {
+        let mi = to_int(ss[i]) % n
+        draw_rectangle_rec([MM_X + mxs[mi] - 1, MM_Y + mzs[mi] - 1, 4, 4], [235, 120, 80, 220])
+        i = i + 1
+    }
+    // player dot
+    let pi = to_int(P[0]) % n
+    draw_rectangle_rec([MM_X + mxs[pi] - 2, MM_Y + mzs[pi] - 2, 6, 6], [110, 235, 150, 255])
+
+    draw_text_default("FPS " + to_string(fps_now), MM_X - 8, MM_Y + MM_SIZE + 2, 16, [180, 185, 195, 200])
+}

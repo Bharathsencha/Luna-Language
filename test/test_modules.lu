@@ -1,0 +1,23 @@
+// Module system test: script-relative resolution, single-execution cache,
+// cross-module constants inside exported functions, module-local mutable
+// state, and circular-import detection.
+
+print("Testing Modules...")
+
+use { BASE, scale, bump } from "modules_fixtures/math_mod.lu"
+use { scaled, bump_twice } from "modules_fixtures/sub/wrapper.lu"
+
+// constants and pure functions
+assert(BASE == 10)
+assert(scale(4) == 40)
+
+// constant referenced INSIDE an imported function called from here
+assert(scaled(4) == 41)
+
+// module state persists across calls (and through the wrapper's import)
+assert(bump() == 1)
+assert(bump() == 2)
+assert(bump_twice() == 4)
+assert(bump() == 5)
+
+print("Modules Tests Passed!")

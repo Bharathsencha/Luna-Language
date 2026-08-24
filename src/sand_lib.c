@@ -8,6 +8,7 @@
 #include <time.h>
 #include "value.h"
 #include "env.h"
+#include "gl_backend.h"
 
 // Define Grid Dimensions
 #define GRID_W 200
@@ -48,6 +49,58 @@ Value lib_sand_get(int argc, Value *argv, Env *env) {
         return value_int(sand_grid[y * GRID_W + x]);
     }
     return value_int(3); // STONE (Border)
+}
+
+// Draw the whole grid as quads directly into the GL batch renderer.
+// sand_draw(cell_size, origin_x, origin_y)
+Value lib_sand_draw(int argc, Value *argv, Env *env) {
+    int cell = argc > 0 ? (int)(argv[0].i) : 4;
+    int ox = argc > 1 ? (int)(argv[1].i) : 0;
+    int oy = argc > 2 ? (int)(argv[2].i) : 0;
+    if (cell <= 0) cell = 4;
+
+    static const GColor type_colors[6] = {
+        {10, 10, 10, 255},      // EMPTY (never drawn)
+        {235, 200, 100, 255},   // SAND
+        {50, 100, 250, 200},    // WATER
+        {120, 120, 120, 255},   // STONE
+        {100, 255, 50, 220},    // ACID
+        {255, 80, 10, 255},     // FIRE
+    };
+
+    for (int y = 0; y < GRID_H; y++) {
+        const int *row = &sand_grid[y * GRID_W];
+        int py = oy + y * cell;
+        for (int x = 0; x < GRID_W; x++) {
+            int t = row[x];
+            if (t == 0 || t > 5) continue;
+            gl_draw_rect((GRect){ox + x * cell, py, cell, cell}, type_colors[t]);
+        }
+    }
+    return value_int(1);
+}
+
+// Stamp a circular brush in one native call.
+// sand_brush(gx, gy, radius, type, density_pct)
+Value lib_sand_brush(int argc, Value *argv, Env *env) {
+    if (argc < 4) return value_int(0);
+    int gx = (int)(argv[0].i);
+    int gy = (int)(argv[1].i);
+    int r = (int)(argv[2].i);
+    int type = (int)(argv[3].i);
+    int pct = argc > 4 ? (int)(argv[4].i) : 100;
+
+    for (int by = -r; by <= r; by++) {
+        int y = gy + by;
+        if (y < 0 || y >= GRID_H) continue;
+        for (int bx = -r; bx <= r; bx++) {
+            int x = gx + bx;
+            if (x < 0 || x >= GRID_W) continue;
+            if (pct < 100 && (rand() % 100) >= pct) continue;
+            sand_grid[y * GRID_W + x] = type;
+        }
+    }
+    return value_int(1);
 }
 
 // Update Loop (FAST C Implementation)

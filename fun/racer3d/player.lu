@@ -1,0 +1,79 @@
+// player.lu — on-rails arcade driving model.
+// P list layout (mutated in place, owned by main):
+// 0=s 1=lat 2=speed 3=steer_smooth 4=crash_timer 5=lap
+
+use { ROAD_HALF, MAX_SPEED, ACCEL, BRAKE, DRAG, OFFROAD_DRAG } from "config.lu"
+use { STEER_RATE, CURVE_PUSH, CAR_HALF_W, CRASH_TIME } from "config.lu"
+use { wrap, curvature_at } from "road.lu"
+
+let KEY_UP = 265
+let KEY_DOWN = 264
+let KEY_LEFT = 263
+let KEY_RIGHT = 262
+
+export func new_player() {
+    return [0.0, 0.0, 0.0, 0.0, 0.0, 0]
+}
+
+export func update_player(P, RD, dt) {
+    let s = P[0]
+    let lat = P[1]
+
+    // throttle / brake / drag
+    if (is_key_down(KEY_UP)) {
+        P[2] = P[2] + ACCEL * dt
+    }
+    if (is_key_down(KEY_DOWN)) {
+        P[2] = P[2] - BRAKE * dt
+        if (P[2] < -MAX_SPEED * 0.35) { P[2] = -MAX_SPEED * 0.35 }
+    } else {
+        P[2] = P[2] - P[2] * DRAG * dt
+        if (P[2] < 0.0) { P[2] = 0.0 }
+    }
+    if (P[2] > MAX_SPEED) { P[2] = MAX_SPEED }
+
+    // steering (stronger with speed)
+    let steer = 0.0
+    if (is_key_down(KEY_LEFT)) { steer = steer - 1.0 }
+    if (is_key_down(KEY_RIGHT)) { steer = steer + 1.0 }
+    P[3] = P[3] + (steer - P[3]) * min(1.0, dt * 9.0)
+    lat = lat + P[3] * STEER_RATE * dt * (0.25 + 0.75 * abs(P[2]) / MAX_SPEED)
+
+    // centrifugal push outward on curves
+    lat = lat - curvature_at(RD, s) * P[2] * CURVE_PUSH * 60.0 * dt
+
+    // advance along track (spline samples are ~1m apart)
+    P[0] = wrap(RD, s + P[2] * dt * 1.05)
+
+    // lap counting: crossed the start line going forward
+    if (s > RD[0] * 0.8 && P[0] < RD[0] * 0.2) {
+        P[5] = P[5] + 1
+    }
+
+    // off-road shoulder: heavy drag then hard clamp at the barrier
+    let limit = ROAD_HALF - CAR_HALF_W + 0.9
+    if (abs(lat) > limit) {
+        P[2] = P[2] - OFFROAD_DRAG * dt * (abs(P[2]) / MAX_SPEED + 0.4)
+        let hard = limit + 2.2
+        if (abs(lat) > hard) {
+            if (lat < 0.0) { lat = -hard } else { lat = hard }
+            P[2] = P[2] * 0.985   // scraping the wall
+        }
+    }
+
+    // crash timer decay
+    if (P[4] > 0.0) { P[4] = P[4] - dt }
+
+    P[1] = lat
+}
+
+export func player_speed_kmh(P) {
+    return abs(P[2]) * 3.6
+}
+
+export func player_crash(P, strength) {
+    if (P[4] <= 0.0) {
+        P[2] = P[2] * strength
+        P[4] = CRASH_TIME
+    }
+}

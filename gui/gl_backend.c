@@ -714,20 +714,23 @@ void gl_end_drawing(void) {
     flush_batch();
     glfwSwapBuffers(g_window);
 
-    // Frame rate limiting
+    // Frame rate limiting. Vsync (SwapInterval) is the primary pacer; only
+    // apply a software cap when the swap returned early — i.e. the monitor
+    // refresh is higher than the requested fps. This avoids two independent
+    // limiters phase-drifting against each other.
     if (g_target_fps > 0) {
         double target_time = 1.0 / (double)g_target_fps;
         double elapsed = glfwGetTime() - g_last_time;
-        while (elapsed < target_time) {
-            // Busy wait for precision (could use nanosleep for part of it)
+        if (elapsed < target_time) {
             double remaining = target_time - elapsed;
-            if (remaining > 0.002) {
+            if (remaining > 0.003) {
                 struct timespec ts;
                 ts.tv_sec = 0;
-                ts.tv_nsec = (long)((remaining - 0.001) * 1e9);
+                ts.tv_nsec = (long)((remaining - 0.002) * 1e9);
                 nanosleep(&ts, NULL);
             }
-            elapsed = glfwGetTime() - g_last_time;
+            // Short spin for sub-ms precision on the final stretch
+            while (glfwGetTime() - g_last_time < target_time - 0.0002) { }
         }
     }
 }

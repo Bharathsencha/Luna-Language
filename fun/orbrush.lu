@@ -1,0 +1,297 @@
+// Orb Rush — first-person arcade shooter showcasing the Luna 3D engine:
+// captured-mouse free camera, screen-center ray picking, follow spot light,
+// fog depth, tracer lines, particle bursts, sorted translucency.
+//
+// Controls: WASD move, Q/E down/up, Shift sprint, Left-click shoot,
+//           R restart after the round ends. Collect orbs before time runs out.
+
+let W = 1280
+let H = 720
+
+let ORB_N = 9
+let ROUND_TIME = 45.0
+let ARENA = 21.0
+let HIT_R = 0.65
+
+let KEY_R = 82
+
+let ORB_COLORS = [
+    [255, 90, 90, 255], [90, 200, 255, 255], [255, 210, 80, 255],
+    [140, 255, 120, 255], [230, 130, 255, 255]
+]
+
+// burst particle pool (parallel lists)
+let P_MAX = 96
+let px = []
+let py = []
+let pz = []
+let pvx = []
+let pvy = []
+let pvz = []
+let plife = []
+let pcol = []
+
+// orbs (parallel lists)
+let ox = []
+let oy = []
+let oz = []
+let ophase = []
+let ocol = []
+
+func rand_pos() {
+    return (rand(to_int(ARENA * 2 - 2)) - (ARENA - 1)) * 1.0
+}
+
+func respawn_orb(i) {
+    ox[i] = rand_pos()
+    oz[i] = rand_pos()
+    oy[i] = 1.3 + rand(15) / 10.0
+    ophase[i] = rand(60) / 10.0
+    ocol[i] = i % len(ORB_COLORS)
+}
+
+func init_particles() {
+    px = []
+    py = []
+    pz = []
+    pvx = []
+    pvy = []
+    pvz = []
+    plife = []
+    pcol = []
+    let i = 0
+    while (i < P_MAX) {
+        list_append(px, 0.0)
+        list_append(py, 0.0)
+        list_append(pz, 0.0)
+        list_append(pvx, 0.0)
+        list_append(pvy, 0.0)
+        list_append(pvz, 0.0)
+        list_append(plife, 0.0)
+        list_append(pcol, 0)
+        i = i + 1
+    }
+}
+
+func spawn_burst(x, y, z, col_idx) {
+    let made = 0
+    let i = 0
+    while (i < P_MAX && made < 18) {
+        if (plife[i] <= 0.0) {
+            let a = rand(628) / 100.0
+            let sp = 2.0 + rand(30) / 10.0
+            px[i] = x
+            py[i] = y
+            pz[i] = z
+            pvx[i] = cos(a) * sp
+            pvz[i] = sin(a) * sp
+            pvy[i] = 2.0 + rand(25) / 10.0
+            plife[i] = 0.7 + rand(40) / 100.0
+            pcol[i] = col_idx
+            made = made + 1
+        }
+        i = i + 1
+    }
+}
+
+func update_draw_particles(dt) {
+    let i = 0
+    while (i < P_MAX) {
+        if (plife[i] > 0.0) {
+            plife[i] = plife[i] - dt
+            pvx[i] = pvx[i] * 0.96
+            pvz[i] = pvz[i] * 0.96
+            pvy[i] = pvy[i] - 6.5 * dt
+            px[i] = px[i] + pvx[i] * dt
+            py[i] = py[i] + pvy[i] * dt
+            pz[i] = pz[i] + pvz[i] * dt
+            let a = to_int(plife[i] / 1.1 * 255.0)
+            if (a > 255) { a = 255 }
+            let bc = ORB_COLORS[pcol[i]]
+            draw_particle_3d([px[i], py[i], pz[i]], 0.13, [bc[0], bc[1], bc[2], a])
+        }
+        i = i + 1
+    }
+}
+
+func draw_orb(i) {
+    let bob = sin(clock() * 2.2 + ophase[i]) * 0.3
+    let y = oy[i] + bob
+    let col = ORB_COLORS[ocol[i]]
+    // glowing core (unlit), wire cage spinning around it, soft billboard halo
+    draw_sphere_pro([ox[i], y, oz[i]], 0.42, [0.0, 0.0, 0.0], col, 0)
+    draw_cube_wires([ox[i], y, oz[i]], [1.25, 1.25, 1.25], col)
+    draw_particle_3d([ox[i], y, oz[i]], 1.35, [col[0], col[1], col[2], 46])
+}
+
+func draw_arena() {
+    draw_plane([0.0, 0.0, 0.0], ARENA * 2.4, [34, 36, 48, 255])
+    draw_grid(24, 2.0)
+
+    // perimeter pillars with warm caps
+    let k = 0
+    while (k < 16) {
+        let a = 6.28318 * k / 16.0
+        let gx = cos(a) * ARENA
+        let gz = sin(a) * ARENA
+        let tall = 2.6 + (k % 3) * 0.9
+        draw_cylinder_pro([gx, tall / 2.0, gz], 0.22, 0.3, tall, [0.0, 0.0, 0.0], [52, 55, 72, 255])
+        draw_sphere_pro([gx, tall + 0.25, gz], 0.32, [0.0, 0.0, 0.0], [255, 190, 110, 255], 0)
+        k = k + 1
+    }
+}
+
+func main() {
+    init_window(W, H, "Luna 3D — Orb Rush")
+    set_fps(60)
+
+    let cam = create_camera_3d([0.0, 2.0, 12.0], [0.0, 1.5, 0.0], [0.0, 1.0, 0.0], 70)
+    capture_cursor(1)
+
+    create_light(LIGHT_DIRECTIONAL, [30.0, 40.0, 20.0], [-0.4, -1.0, -0.3], [120, 130, 160, 255])
+    let torch = create_light(LIGHT_SPOT, [0.0, 2.0, 12.0], [0.0, -0.5, -1.0], [255, 235, 200, 255])
+    set_light_cone(torch, 21.0, 33.0)
+    set_light_intensity(torch, 1.6)
+    set_ambient_light([46, 50, 66, 255])
+    set_fog(1, [16, 17, 26, 255], 0.028)
+    clear_background([16, 17, 26, 255])
+
+    let score = 0
+    let time_left = ROUND_TIME
+    let playing = true
+    let hit_flash = 0.0
+    let tracer_from = [0.0, 0.0, 0.0]
+    let tracer_to = [0.0, 0.0, 0.0]
+    let tracer_life = 0.0
+
+    init_particles()
+
+    let i = 0
+    while (i < ORB_N) {
+        respawn_orb(i)
+        i = i + 1
+    }
+
+    while (window_open()) {
+        let dt = get_delta_time()
+
+        if (playing) {
+            time_left = time_left - dt
+            if (time_left <= 0.0) {
+                time_left = 0.0
+                playing = false
+                capture_cursor(0)
+            }
+        }
+
+        if (is_key_pressed(KEY_R) && !playing) {
+            score = 0
+            time_left = ROUND_TIME
+            playing = true
+            hit_flash = 0.0
+            tracer_life = 0.0
+            init_particles()
+            capture_cursor(1)
+            let r = 0
+            while (r < ORB_N) {
+                respawn_orb(r)
+                r = r + 1
+            }
+        }
+
+        update_camera_free(cam, 8.0, 0.0028)
+
+        // shooting: ray through cursor (locked to screen center)
+        if (playing && is_mouse_button_pressed(MOUSE_LEFT_BUTTON)) {
+            let ray = get_mouse_ray(cam)
+            let found = -1
+            let j = 0
+            while (j < ORB_N && found < 0) {
+                let bob = sin(clock() * 2.2 + ophase[j]) * 0.3
+                let cy = oy[j] + bob
+                let mn = [ox[j] - HIT_R, cy - HIT_R, oz[j] - HIT_R]
+                let mx = [ox[j] + HIT_R, cy + HIT_R, oz[j] + HIT_R]
+                if (ray_hits_box(ray, [mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]])) {
+                    found = j
+                }
+                j = j + 1
+            }
+            if (found >= 0) {
+                score = score + 1
+                hit_flash = 0.18
+                spawn_burst(ox[found], oy[found], oz[found], ocol[found])
+                tracer_from = [ray[0], ray[1], ray[2]]
+                tracer_to = [ox[found], oy[found], oz[found]]
+                tracer_life = 0.09
+                respawn_orb(found)
+            } else {
+                tracer_from = [ray[0], ray[1], ray[2]]
+                tracer_to = [ray[0] + ray[3] * 40.0, ray[1] + ray[4] * 40.0, ray[2] + ray[5] * 40.0]
+                tracer_life = 0.05
+            }
+        }
+
+        if (hit_flash > 0.0) { hit_flash = hit_flash - dt }
+        if (tracer_life > 0.0) { tracer_life = tracer_life - dt }
+
+        // torch follows camera aim
+        let cp = get_camera_position(cam)
+        let fwd = get_camera_forward(cam)
+        set_light_position(torch, [cp[0], cp[1] + 0.4, cp[2]])
+        set_light_target(torch, [cp[0] + fwd[0] * 12.0, cp[1] + fwd[1] * 12.0, cp[2] + fwd[2] * 12.0])
+
+        begin_drawing()
+        begin_mode_3d(cam)
+
+        draw_arena()
+
+        i = 0
+        while (i < ORB_N) {
+            draw_orb(i)
+            i = i + 1
+        }
+
+        if (tracer_life > 0.0) {
+            draw_line_3d(tracer_from, tracer_to, [255, 240, 180, 220])
+        }
+
+        update_draw_particles(dt)
+
+        end_mode_3d()
+
+        // HUD: crosshair
+        draw_rectangle_rec([W / 2 - 11, H / 2 - 1, 8, 2], [240, 240, 245, 210])
+        draw_rectangle_rec([W / 2 + 3, H / 2 - 1, 8, 2], [240, 240, 245, 210])
+        draw_rectangle_rec([W / 2 - 1, H / 2 - 11, 2, 8], [240, 240, 245, 210])
+        draw_rectangle_rec([W / 2 - 1, H / 2 + 3, 2, 8], [240, 240, 245, 210])
+        if (hit_flash > 0.0) {
+            draw_rectangle_rec([W / 2 - 14, H / 2 - 1, 28, 2], [140, 255, 150, 230])
+            draw_rectangle_rec([W / 2 - 1, H / 2 - 14, 2, 28], [140, 255, 150, 230])
+        }
+
+        // panels
+        draw_rectangle_rec([20, 20, 210, 74], [10, 11, 18, 175])
+        draw_text_default("SCORE  " + to_string(score), 34, 30, 26, [250, 250, 255, 255])
+        draw_text_default("ORBS   " + to_string(ORB_N), 34, 62, 18, [170, 175, 190, 255])
+
+        let tcol = [250, 220, 120, 255]
+        if (time_left < 10.0 && playing) { tcol = [255, 90, 80, 255] }
+        let tstr = "TIME " + to_string(to_int(time_left))
+        let tw = str_len(tstr) * 22
+        draw_text_default(tstr, W / 2 - tw / 2, 22, 40, tcol)
+
+        if (!playing) {
+            draw_rectangle_rec([W / 2 - 260, H / 2 - 110, 520, 220], [8, 9, 15, 215])
+            draw_rectangle_lines(W / 2 - 260, H / 2 - 110, 520, 220, [255, 210, 110, 180])
+            draw_text_default("TIME UP", W / 2 - 100, H / 2 - 84, 44, [255, 215, 120, 255])
+            draw_text_default("Orbs collected:  " + to_string(score), W / 2 - 128, H / 2 - 16, 28, [240, 240, 248, 255])
+            draw_text_default("Press R to play again", W / 2 - 118, H / 2 + 42, 24, [165, 172, 190, 255])
+        }
+
+        end_drawing()
+    }
+
+    close_window()
+}
+
+main()

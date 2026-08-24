@@ -13,9 +13,10 @@
 #include "luna_vm.h"
 #include "value.h"
 #include "mystr.h"
-#include "env.h"     
-#include "library.h" 
+#include "env.h"
+#include "library.h"
 #include "luna_error.h"
+#include "module_runtime.h"
 #include "intern.h"
 #include "unsafe_runtime.h"
 #include "data_runtime.h"
@@ -553,7 +554,10 @@ tco_restart:
 
 Value luna_call_value(Env *caller_env, Value callee, int argc, Value *argv, int line) {
     if (callee.type == VAL_VM_CLOSURE && callee.vm_closure) {
-        return luna_vm_call_closure(luna_gc_runtime_heap(), caller_env, callee.vm_closure, argc, argv, line);
+        // Execute with the closure's own defining globals so module
+        // functions resolve their module's names, not the caller's.
+        Env *call_env = callee.vm_closure->env ? callee.vm_closure->env : caller_env;
+        return luna_vm_call_closure(luna_gc_runtime_heap(), call_env, callee.vm_closure, argc, argv, line);
     }
     if (callee.type == VAL_CLOSURE || callee.type == VAL_FUNCTION) {
         return call_user_function_with_args(caller_env, callee, argc, argv, line);
@@ -1932,8 +1936,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
         }
 
         case NODE_IMPORT: {
-            char *src = read_file(n->import_stmt.path);
-            if (!src) {
+            char *canon = module_runtime_resolve(n->import_stmt.path);
+            if (!canon) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Could not import file '%s'", n->import_stmt.path);
                 error_report_with_context(ERR_NAME, n->line, 0, msg,
@@ -1941,7 +1945,66 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 return value_null();
             }
 
-            error_init(src, n->import_stmt.path);
+            if (module_runtime_is_loading(canon)) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Circular import detected: '%s' is already loading", n->import_stmt.path);
+                error_report_with_context(ERR_NAME, n->line, 0, msg,
+                    "Modules must not import each other in a cycle; move shared code to a third module");
+                free(canon);
+                return value_null();
+            }
+
+            Env *cached_env = module_cache_get(canon);
+            if (cached_env) {
+                int exported_count = 0;
+                const char **exported = module_cache_get_exports(canon, &exported_count);
+                const char **names = n->import_stmt.name_count > 0 ? n->import_stmt.names : NULL;
+                int name_count = n->import_stmt.name_count;
+                if (name_count > 0) {
+                    for (int i = 0; i < name_count; i++) {
+                        const char *req = names[i];
+                        Value *slot = env_get_local(cached_env, intern_string(req));
+                        int found = 0;
+                        for (int j = 0; j < exported_count; j++) {
+                            if (exported[j] == intern_string(req)) { found = 1; break; }
+                        }
+                        if (!found) {
+                            char msg2[256];
+                            snprintf(msg2, sizeof(msg2), "Module '%s' does not export '%s'", n->import_stmt.path, req);
+                            error_report_with_context(ERR_NAME, n->line, 0, msg2,
+                                "Export names explicitly in the module before using them");
+                            break;
+                        }
+                        if (!slot) {
+                            char msg2[256];
+                            snprintf(msg2, sizeof(msg2), "Export '%s' is missing from module '%s'", req, n->import_stmt.path);
+                            error_report_with_context(ERR_NAME, n->line, 0, msg2,
+                                "Make sure the exported value is defined at module top level");
+                            break;
+                        }
+                        env_def(e, req, *slot);
+                    }
+                } else {
+                    for (int i = 0; i < exported_count; i++) {
+                        Value *slot = env_get_local(cached_env, exported[i]);
+                        if (slot) env_def(e, exported[i], *slot);
+                    }
+                }
+                free(canon);
+                return value_null();
+            }
+
+            char *src = read_file(canon);
+            if (!src) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Could not import file '%s'", canon);
+                error_report_with_context(ERR_NAME, n->line, 0, msg,
+                    "Check that the import path exists and ends with .lu");
+                free(canon);
+                return value_null();
+            }
+
+            error_init(src, canon);
             Parser parser;
             parser_init(&parser, src);
             AstNode *prog = parser_parse_program(&parser);
@@ -1953,6 +2016,12 @@ static Value exec_stmt(Env *e, AstNode *n) {
 
                 Env *module_parent = env_root(e);
                 Env *module_env = env_create(module_parent);
+
+                if (!module_runtime_push_file(canon)) {
+                    free(canon);
+                    return value_null();
+                }
+
                 if (prog->kind == NODE_BLOCK) {
                     for (int i = 0; i < prog->block.items.count; i++) {
                         exec_stmt(module_env, prog->block.items.items[i]);
@@ -1963,6 +2032,8 @@ static Value exec_stmt(Env *e, AstNode *n) {
                     exec_stmt(module_env, prog);
                     gc_safe_point();
                 }
+
+                module_runtime_pop_file();
 
                 if (!luna_had_error) {
                     const char **names = n->import_stmt.name_count > 0 ? n->import_stmt.names : exported_names;
@@ -1985,14 +2056,20 @@ static Value exec_stmt(Env *e, AstNode *n) {
                         }
                         env_def(e, names[i], *slot);
                     }
+                    // Cache the populated env; ownership of exported_names transfers
+                    module_cache_put(canon, module_env, exported_names, exported_count);
+                } else {
+                    free((void *)exported_names);
                 }
 
                 deferred_calls_run_scope(module_env);
-                env_free(module_env);
-                free((void *)exported_names);
+                if (luna_had_error) {
+                    env_free(module_env); // not cached; release it
+                }
                 nodelist_free(&prog->block.items);
             }
             free(src);
+            free(canon);
             return value_null();
         }
         case NODE_UNSAFE: {

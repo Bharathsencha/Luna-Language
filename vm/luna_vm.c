@@ -15,6 +15,7 @@
 #include "unsafe_runtime.h"
 #include "luna_compiler.h"
 #include "vec_lib.h"
+#include "module_runtime.h"
 
 void luna_vm_init(LunaVM *vm, GCHeap *heap) {
     vm->frame_count = 0;
@@ -205,6 +206,41 @@ static int vm_op_line(LunaChunk *chunk, uint8_t *ip) {
     return chunk->line_map[off - 1];
 }
 
+// Copy a module's requested exports into the importing environment.
+// name_count == 0 means "import every export".
+static void vm_copy_module_exports(LunaVM *vm, Env *module_env, const char *path,
+                                   const uint16_t *name_idxs, uint8_t name_count,
+                                   const char **exported, int exported_count, int line) {
+    LunaChunk *chunk = vm->frames[vm->frame_count - 1].chunk;
+    if (name_count > 0) {
+        for (int i = 0; i < name_count; i++) {
+            Value name_val = chunk->constants[name_idxs[i]];
+            const char *name = intern_string(name_val.string->chars);
+            if (!vm_name_in_list(name, exported, exported_count)) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Module '%s' does not export '%s'", path, name);
+                error_report_with_context(ERR_NAME, line, 0, msg,
+                    "Export names explicitly in the module before using them");
+                break;
+            }
+            Value *slot = env_get_local(module_env, name);
+            if (!slot) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Export '%s' is missing from module '%s'", name, path);
+                error_report_with_context(ERR_NAME, line, 0, msg,
+                    "Make sure the exported value is defined at module top level");
+                break;
+            }
+            env_def(vm->env, name, *slot);
+        }
+    } else {
+        for (int i = 0; i < exported_count; i++) {
+            Value *slot = env_get_local(module_env, exported[i]);
+            if (slot) env_def(vm->env, exported[i], *slot);
+        }
+    }
+}
+
 static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_idxs,
                           uint8_t name_count, int line) {
     LunaChunk *chunk = vm->frames[vm->frame_count - 1].chunk;
@@ -212,8 +248,9 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
     const char *path = path_val.type == VAL_STRING ? path_val.string->chars : NULL;
     if (!path) return;
 
-    char *src = read_file(path);
-    if (!src) {
+    // Resolve relative to the importing script's directory
+    char *canon = module_runtime_resolve(path);
+    if (!canon) {
         char msg[256];
         snprintf(msg, sizeof(msg), "Could not import file '%s'", path);
         error_report_with_context(ERR_NAME, line, 0, msg,
@@ -221,7 +258,37 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
         return;
     }
 
-    error_init(src, path);
+    if (module_runtime_is_loading(canon)) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Circular import detected: '%s' is already loading", path);
+        error_report_with_context(ERR_NAME, line, 0, msg,
+            "Modules must not import each other in a cycle; move shared code to a third module");
+        free(canon);
+        return;
+    }
+
+    // Cache hit: reuse the module's already-populated environment
+    Env *cached = module_cache_get(canon);
+    if (cached) {
+        int exported_count = 0;
+        const char **exported = module_cache_get_exports(canon, &exported_count);
+        vm_copy_module_exports(vm, cached, path, name_idxs, name_count,
+                               exported, exported_count, line);
+        free(canon);
+        return;
+    }
+
+    char *src = read_file(canon);
+    if (!src) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Could not import file '%s'", canon);
+        error_report_with_context(ERR_NAME, line, 0, msg,
+            "Check that the import path exists and ends with .lu");
+        free(canon);
+        return;
+    }
+
+    error_init(src, canon);
     Parser parser;
     parser_init(&parser, src);
     AstNode *prog = parser_parse_program(&parser);
@@ -229,6 +296,7 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
 
     if (!prog) {
         free(src);
+        free(canon);
         return;
     }
 
@@ -239,46 +307,31 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
     Env *module_env = env_create(env_root(vm->env));
     LunaChunk *module_chunk = luna_compile_program(prog);
 
+    if (!module_runtime_push_file(canon)) {
+        free(canon);
+        return;
+    }
+
     LunaVM module_vm;
     luna_vm_init(&module_vm, vm->heap);
     module_vm.env = module_env;
     luna_vm_run(&module_vm, module_chunk);
 
-    if (!luna_had_error) {
-        if (name_count > 0) {
-            for (int i = 0; i < name_count; i++) {
-                Value name_val = chunk->constants[name_idxs[i]];
-                const char *name = intern_string(name_val.string->chars);
-                if (!vm_name_in_list(name, exported, exported_count)) {
-                    char msg[256];
-                    snprintf(msg, sizeof(msg), "Module '%s' does not export '%s'", path, name);
-                    error_report_with_context(ERR_NAME, line, 0, msg,
-                        "Export names explicitly in the module before using them");
-                    break;
-                }
-                Value *slot = env_get_local(module_env, name);
-                if (!slot) {
-                    char msg[256];
-                    snprintf(msg, sizeof(msg), "Export '%s' is missing from module '%s'", name, path);
-                    error_report_with_context(ERR_NAME, line, 0, msg,
-                        "Make sure the exported value is defined at module top level");
-                    break;
-                }
-                env_def(vm->env, name, *slot);
-            }
-        } else {
-            for (int i = 0; i < exported_count; i++) {
-                Value *slot = env_get_local(module_env, exported[i]);
-                if (slot) env_def(vm->env, exported[i], *slot);
-            }
-        }
-    }
+    module_runtime_pop_file();
 
-    free((void *)exported);
+    if (!luna_had_error) {
+        vm_copy_module_exports(vm, module_env, path, name_idxs, name_count,
+                               exported, exported_count, line);
+        module_cache_put(canon, module_env, exported, exported_count);
+        // cache now owns the exports array; keep canon as the key
+    } else {
+        free((void *)exported);
+        free(canon);
+    }
     if (prog->kind == NODE_BLOCK) nodelist_free(&prog->block.items);
     free(src);
-    /* module_chunk intentionally leaked: closures exported from the module
-     * still reference its subchunks. */
+    /* canon and module_chunk intentionally leaked: the cache key and any
+     * closures exported from the module still reference them. */
 }
 
 Value luna_vm_run(LunaVM *vm, LunaChunk *chunk) {
@@ -308,37 +361,52 @@ Value luna_vm_run(LunaVM *vm, LunaChunk *chunk) {
     return luna_vm_execute(vm);
 }
 
-Value luna_vm_call_closure(GCHeap *heap, Env *env, VMClosureObj *closure,
-                           int argc, Value *argv, int line) {
-    (void)line;
-    LunaVM vm;
-    luna_vm_init(&vm, heap);
-    vm.env = env;
-
+// Set up a closure frame on an already-initialized VM and execute it.
+static Value vm_execute_closure(LunaVM *vm, VMClosureObj *closure,
+                                int argc, const Value *argv) {
     if (argc > 255) argc = 255;
-    VMCallFrame *frame = &vm.frames[vm.frame_count++];
+    VMCallFrame *frame = &vm->frames[vm->frame_count++];
     frame->chunk = closure->chunk;
     frame->ip = closure->chunk->code;
-    frame->slots = vm.stack;
+    frame->slots = vm->stack;
     frame->upvalues = closure->upvalues;
     frame->argc = (uint8_t)argc;
     frame->ret_dst = 0;
     frame->scope_base = 0;
 
     for (int i = 0; i < argc; i++) {
-        vm.stack[i] = value_copy(argv[i]);
+        vm->stack[i] = value_copy(argv[i]);
     }
     for (int i = argc; i < closure->chunk->reg_count; i++) {
-        vm.stack[i] = value_null();
+        vm->stack[i] = value_null();
     }
-    vm.stack_top = vm.stack + closure->chunk->reg_count;
+    vm->stack_top = vm->stack + closure->chunk->reg_count;
 
-    Value ret = luna_vm_execute(&vm);
+    Value ret = luna_vm_execute(vm);
 
     for (int i = 0; i < closure->chunk->reg_count; i++) {
-        value_free(vm.stack[i]);
+        value_free(vm->stack[i]);
     }
     return ret;
+}
+
+// Run a closure that belongs to a different module environment: it must
+// execute on its own VM so its globals resolve against its defining env.
+static Value vm_call_cross_env(GCHeap *heap, VMClosureObj *closure,
+                               int argc, const Value *argv) {
+    LunaVM vm;
+    luna_vm_init(&vm, heap);
+    if (closure->env) vm.env = closure->env;
+    return vm_execute_closure(&vm, closure, argc, argv);
+}
+
+Value luna_vm_call_closure(GCHeap *heap, Env *env, VMClosureObj *closure,
+                           int argc, Value *argv, int line) {
+    (void)line;
+    LunaVM vm;
+    luna_vm_init(&vm, heap);
+    vm.env = env;
+    return vm_execute_closure(&vm, closure, argc, argv);
 }
 
 Value luna_vm_execute(LunaVM *vm) {
@@ -1455,6 +1523,13 @@ Value luna_vm_execute(LunaVM *vm) {
         if (callee.type == VAL_VM_CLOSURE) {
             VMClosureObj *closure = callee.vm_closure;
             LunaChunk *sub = closure->chunk;
+            if (closure->env && closure->env != vm->env) {
+                // Foreign module function: run on its own environment.
+                Value ret = vm_call_cross_env(vm->heap, closure, argc, slots + callee_reg + 1);
+                value_free(slots[dst]);
+                slots[dst] = ret;
+                DISPATCH();
+            }
             if (vm->frame_count >= FRAMES_MAX) {
                 fprintf(stderr, "VM Error: stack overflow\n");
                 abort();
@@ -1558,6 +1633,13 @@ Value luna_vm_execute(LunaVM *vm) {
         if (callee.type == VAL_VM_CLOSURE) {
             VMClosureObj *closure = callee.vm_closure;
             LunaChunk *sub = closure->chunk;
+            if (closure->env && closure->env != vm->env) {
+                // Foreign module function: run on its own environment.
+                Value ret = vm_call_cross_env(vm->heap, closure, argc, slots + callee_reg + 1);
+                value_free(slots[dst]);
+                slots[dst] = ret;
+                DISPATCH();
+            }
             if (vm->frame_count >= FRAMES_MAX) {
                 fprintf(stderr, "VM Error: stack overflow\n");
                 abort();
@@ -1719,6 +1801,7 @@ Value luna_vm_execute(LunaVM *vm) {
 
         Value closure = value_vm_closure(sub, sub->upvalue_count);
         VMClosureObj *cl = closure.vm_closure;
+        cl->env = vm->env; // remember the defining context's globals
 
         // Capture upvalues
         for (int i = 0; i < sub->upvalue_count; i++) {

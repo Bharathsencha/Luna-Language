@@ -1072,6 +1072,7 @@ Value value_vm_closure(struct LunaChunk *chunk, int upvalue_count) {
     v.vm_closure->ref_count = 0;
     v.vm_closure->chunk = chunk;
     v.vm_closure->upvalue_count = upvalue_count;
+    v.vm_closure->env = NULL;
     if (upvalue_count > 0) {
         v.vm_closure->upvalues = calloc(upvalue_count, sizeof(VMUpvalue*));
     } else {

@@ -97,6 +97,9 @@ int   gl_check_collision_point_rect(GVec2 point, GRect rect);
 #define GKEY_LEFT            263
 #define GKEY_DOWN            264
 #define GKEY_UP              265
+#define GKEY_LEFT_SHIFT      340
+#define GKEY_LEFT_CONTROL    341
+#define GKEY_RIGHT_SHIFT     344
 
 // A-Z keys (GLFW uses ASCII for letters)
 #define GKEY_A               65

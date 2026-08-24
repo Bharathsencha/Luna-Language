@@ -1,0 +1,15 @@
+newmtl asphalt
+Kd 0.16 0.16 0.19
+d 1.0
+
+newmtl stripe_red
+Kd 0.80 0.14 0.12
+d 1.0
+
+newmtl stripe_white
+Kd 0.88 0.88 0.86
+d 1.0
+
+newmtl dash
+Kd 0.95 0.82 0.25
+d 1.0

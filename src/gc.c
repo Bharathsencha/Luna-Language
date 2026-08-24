@@ -446,7 +446,7 @@ GCHeap *gc_heap_create(size_t initial_limit) {
     heap->heap_limit = initial_limit ? initial_limit : (4 * 1024 * 1024);
     heap->growth_factor = 1.5;
     heap->increment_steps = 2048; /* drain more gray objects per step to keep up with fast allocators */
-    heap->sweep_block_budget = 2; /* bound each sweep step well below the pause target */
+    heap->sweep_block_budget = 16; /* deadline stops the step before the budget does */
     heap->incremental_mode = true;
     heap->young_limit = gc_compute_young_limit(heap->heap_limit, 0);
     heap->major_interval = gc_compute_major_interval(0, heap->heap_limit);

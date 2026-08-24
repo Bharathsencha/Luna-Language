@@ -1,0 +1,209 @@
+// main.lu — Seasonal Drift: procedural closed-loop racer demo.
+// Showcases the Luna 3D engine end to end: runtime-baked OBJ track through
+// the asset pipeline, chase camera, transform-stack car, lights/fog blending
+// between four seasonal palettes, weather particles, traffic AI, 2D HUD.
+
+use { WIDTH, HEIGHT, SEASON_SECONDS, MAX_SPEED, TRAFFIC_N } from "config.lu"
+use { SPRING, season_name, season_palette, blend_palettes } from "seasons.lu"
+use { build_track, point_at, tangent_at, wrap } from "road.lu"
+use { new_player, update_player } from "player.lu"
+use { new_traffic, update_traffic, draw_traffic_car } from "traffic.lu"
+use { new_weather, update_weather, draw_weather } from "weather.lu"
+use { build_minimap, draw_hud } from "hud.lu"
+
+let KEY_UP = 265
+let KEY_DOWN = 264
+let KEY_LEFT = 263
+let KEY_RIGHT = 262
+let KEY_R = 82
+
+func fmt_time(t) {
+    if (t <= 0.0) { return "--:--.-" }
+    let m = to_int(t / 60.0)
+    let s = t - m * 60
+    let ss = to_int(s)
+    let tenths = to_int((s - ss) * 10.0)
+    let out = ""
+    if (m < 10) { out = "0" + to_string(m) } else { out = to_string(m) }
+    out = out + ":"
+    if (ss < 10) { out = out + "0" + to_string(ss) } else { out = out + to_string(ss) }
+    return out + "." + to_string(tenths)
+}
+
+func draw_car(P, RD) {
+    let p = point_at(RD, P[0], P[1])
+    let t = tangent_at(RD, P[0])
+    let yaw = atan2(t[0], t[2]) * 57.29578
+    let tilt = -P[3] * min(1.0, abs(P[2]) / MAX_SPEED) * 7.0
+    let body_col = [225, 60, 55, 255]
+    if (P[4] > 0.0 && clock() * 12.0 - to_int(clock() * 12.0) > 0.5) {
+        body_col = [255, 220, 210, 255]
+    }
+    // body + cabin + spoiler, composed on the transform stack
+    push_matrix()
+    translate_3d(p)
+    rotate_3d([0.0, yaw, 0.0])
+    rotate_3d([0.0, 0.0, tilt])
+    draw_cube_pro([0.0, 0.45, 0.0], [1.7, 0.6, 3.6], [0.0, 0.0, 0.0], body_col)
+    draw_cube_pro([0.0, 0.98, -0.25], [1.35, 0.5, 1.8], [0.0, 0.0, 0.0], [32, 36, 46, 255])
+    draw_cube_pro([0.0, 0.95, -1.65], [1.75, 0.09, 0.4], [0.0, 0.0, 0.0], [24, 26, 32, 255])
+    pop_matrix()
+}
+
+// apply the animated palette to ambient light / sun / fog
+func apply_palette(p) {
+    set_ambient_light([to_int(p[6]), to_int(p[7]), to_int(p[8]), 255])
+    set_light_color(0, [to_int(p[9]), to_int(p[10]), to_int(p[11]), 255])
+    set_light_intensity(0, p[15])
+    set_fog(0, [to_int(p[12]), to_int(p[13]), to_int(p[14]), 255], p[15])
+}
+
+func draw_scenery(RD, p) {
+    let txs = RD[11]
+    let tzs = RD[12]
+    let tys = RD[13]
+    let tss = RD[14]
+    let prop = [to_int(p[17]), to_int(p[18]), to_int(p[19]), 255]
+    let trunk = [110, 84, 60, 255]
+    let i = 0
+    while (i < len(txs)) {
+        let s = tss[i]
+        push_matrix()
+        translate_3d([txs[i], tys[i], tzs[i]])
+        draw_cylinder_pro([0.0, s * 1.1, 0.0], s * 0.16, s * 0.2, s * 2.2, [0.0, 0.0, 0.0], trunk)
+        draw_sphere_pro([0.0, s * 2.4, 0.0], s * 1.05, [0.0, 0.0, 0.0], prop)
+        pop_matrix()
+        i = i + 1
+    }
+}
+
+func main() {
+    init_window(WIDTH, HEIGHT, "Luna 3D — Seasonal Drift (procedural racer)")
+    set_fps(60)
+
+    create_light(0, [60.0, 80.0, 40.0], [-0.35, -1.0, -0.22], [255, 246, 228, 255])
+
+    print("baking track...")
+    let RD = build_track()
+    let P = new_player()
+    let C = new_traffic(RD)
+    let W = new_weather()
+    let mm = build_minimap(RD)
+
+    let cam = create_camera_3d([-70.0, 8.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], 62)
+
+    // smoothed palette starts at spring
+    let cur = season_palette(SPRING)
+    let season_idx = SPRING
+    let season_clock = 0.0
+
+    // race state: 3.5s countdown, live lap timing, best-lap tracking
+    let countdown = 3.5
+    let go_flash = 1.0
+    let lap_time = 0.0
+    let best_lap = 0.0
+    let last_lap = 0.0
+
+    while (window_open()) {
+        let dt = get_delta_time()
+
+        // season cycling with smooth palette blending
+        season_clock = season_clock + dt
+        if (season_clock >= SEASON_SECONDS) {
+            season_clock = 0.0
+            season_idx = (season_idx + 1) % 4
+        }
+        let target = season_palette(season_idx)
+        let blend_t = season_clock / 4.0
+        if (blend_t > 1.0) { blend_t = 1.0 }
+        cur = blend_palettes(cur, target, blend_t)
+
+        clear_background([to_int(cur[0]), to_int(cur[1]), to_int(cur[2]), 255])
+        apply_palette(cur)
+
+        let prev_lap = P[5]
+        if (countdown > 0.0) {
+            countdown = countdown - dt
+            P[2] = 0.0
+        } else {
+            update_player(P, RD, dt)
+            lap_time = lap_time + dt
+            if (P[5] != prev_lap && prev_lap >= 0) {
+                last_lap = lap_time
+                if (best_lap <= 0.0 || lap_time < best_lap) { best_lap = lap_time }
+                lap_time = 0.0
+            }
+        }
+        if (is_key_pressed(KEY_R)) {
+            P[0] = 0.0
+            P[1] = 0.0
+            P[2] = 0.0
+            P[4] = 0.0
+            P[5] = 0
+            countdown = 3.5
+            go_flash = 1.0
+            lap_time = 0.0
+            best_lap = 0.0
+            last_lap = 0.0
+        }
+
+        // chase camera: behind the car, looking ahead along the spline;
+        // FOV widens with speed for a sense of velocity
+        let cam_pos = point_at(RD, wrap(RD, P[0] - 7.5), P[1] * 0.55)
+        cam_pos = [cam_pos[0], cam_pos[1] + 3.4, cam_pos[2]]
+        let cam_tgt = point_at(RD, wrap(RD, P[0] + 9.0), P[1] * 0.85)
+        cam_tgt = [cam_tgt[0], cam_tgt[1] + 1.2, cam_tgt[2]]
+        update_camera_3d(cam, cam_pos, cam_tgt)
+        set_camera_fov(cam, 62.0 + abs(P[2]) / MAX_SPEED * 14.0)
+
+        begin_drawing()
+        begin_mode_3d(cam)
+
+        if (RD[10] >= 0) {
+            draw_model(RD[10], [0.0, 0.0, 0.0], 1.0, [0.0, 0.0, 0.0], [255, 255, 255, 255])
+        }
+        draw_grid(20, 5.0)
+        draw_scenery(RD, cur)
+        draw_car(P, RD)
+
+        let ti = 0
+        while (ti < TRAFFIC_N) {
+            update_traffic(C, RD, P, dt, ti)
+            draw_traffic_car(C, RD, ti)
+            ti = ti + 1
+        }
+
+        update_weather(W, cam_pos, cur[len(cur) - 1], dt)
+        draw_weather(W, cur)
+
+        end_mode_3d()
+        let fps_now = to_int(1.0 / max(dt, 0.0001))
+        draw_hud(RD, P, cur, season_name(season_idx), mm, C, fps_now, MAX_SPEED * 3.6)
+
+        // race panel: current / last / best lap
+        draw_rectangle_rec([24, 118, 240, 96], [12, 14, 20, 190])
+        draw_text_default("Lap   " + fmt_time(lap_time), 38, 128, 22, [245, 245, 250, 255])
+        draw_text_default("Last  " + fmt_time(last_lap), 38, 158, 20, [200, 205, 215, 255])
+        draw_text_default("Best  " + fmt_time(best_lap), 38, 186, 20, [140, 235, 160, 255])
+
+        // countdown / GO overlay
+        if (countdown > 0.0) {
+            let n = to_int(countdown) + 1
+            let ns = to_string(n)
+            let nw = str_len(ns) * 46
+            draw_text_default(ns, WIDTH / 2 - nw / 2, HEIGHT / 2 - 90, 92, [255, 220, 110, 255])
+            draw_text_default("GET READY", WIDTH / 2 - 130, HEIGHT / 2 + 10, 30, [240, 240, 246, 255])
+        } else {
+            if (go_flash > 0.0) {
+                go_flash = go_flash - dt
+                draw_text_default("GO!", WIDTH / 2 - 62, HEIGHT / 2 - 80, 76, [140, 255, 150, 255])
+            }
+        }
+
+        end_drawing()
+    }
+
+    close_window()
+}
+
+main()

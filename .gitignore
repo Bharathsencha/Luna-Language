@@ -15,6 +15,11 @@ build/
 *~
 *.swp
 *.log
+gc.log.*
+hs_err_pid*.log
+gmon.out
+/out/
+java/out/
 .vscode/
 .idea/
 .DS_Store

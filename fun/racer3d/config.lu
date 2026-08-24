@@ -1,0 +1,28 @@
+// config.lu — shared tunables for the seasonal racer demo.
+// Read-only constants: safe to import from any module (no module state writes).
+
+export let WIDTH = 1280
+export let HEIGHT = 720
+
+// Track spline
+export let TRACK_N = 440          // samples around the closed loop
+export let ROAD_HALF = 4.0        // half road width (meters)
+export let TRACK_OBJ = "assets/cache/track.obj"
+export let TRACK_MTL = "assets/cache/track.mtl"
+
+// Physics
+export let MAX_SPEED = 46.0       // m/s
+export let ACCEL = 22.0
+export let BRAKE = 38.0
+export let DRAG = 0.55            // natural decel per second at speed
+export let OFFROAD_DRAG = 26.0    // extra decel when off tarmac
+export let STEER_RATE = 5.2       // lateral m/s at full lock
+export let CURVE_PUSH = 0.028     // centrifugal push per unit curvature*speed
+export let CAR_HALF_W = 1.1
+export let CRASH_TIME = 1.1
+
+// Traffic
+export let TRAFFIC_N = 9
+
+// Season cycling
+export let SEASON_SECONDS = 26.0  // real seconds per season

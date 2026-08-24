@@ -30,7 +30,8 @@ SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
        src/unsafe_runtime.c src/luna_runtime.c src/luna_test.c \
        src/sand_lib.c src/arena.c src/intern.c src/data_runtime.c \
        gui/gui_lib.c gui/gl_backend.c gui/audio_backend.c \
-       gui/gl_backend_3d.c gui/gui_lib_3d.c \
+       gui/gl_backend_3d.c gui/gui_lib_3d.c gui/model_backend.c \
+       src/module_runtime.c \
        vm/luna_chunk.c vm/luna_compiler.c vm/luna_vm.c vm/luna_vm_gc.c
 
 # Object files
@@ -47,6 +48,7 @@ OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
        $(OBJDIR)/intern.o $(OBJDIR)/data_runtime.o $(OBJDIR)/gui_lib.o \
        $(OBJDIR)/gl_backend.o $(OBJDIR)/audio_backend.o \
        $(OBJDIR)/gl_backend_3d.o $(OBJDIR)/gui_lib_3d.o \
+       $(OBJDIR)/model_backend.o $(OBJDIR)/module_runtime.o \
        $(OBJDIR)/luna_chunk.o $(OBJDIR)/luna_compiler.o \
        $(OBJDIR)/luna_vm.o $(OBJDIR)/luna_vm_gc.o
 DEPS = $(OBJS:.o=.d)
@@ -246,6 +248,11 @@ test-gc-three: $(BINDIR)/$(TARGET)
 	@mkdir -p stress_test
 	@python3 stress_test/stress_bench.py
 
+# Java (G1) vs Luna GC benchmark, 3 runs; CSV in java/
+test-java-gc: $(BINDIR)/$(TARGET)
+	@mkdir -p java/out
+	@python3 stress_test/java_bench.py
+
 test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo "==> GC stress+verify: test/test_gc_safety.lu"
 	@env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 ./$(BINDIR)/$(TARGET) test/test_gc_safety.lu
@@ -265,4 +272,4 @@ vm:
 vm-run: vm
 	./vm/luna_vm vm/sample.luvm
 
-.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-gc-safety zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run
+.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-java-gc test-gc-safety zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run

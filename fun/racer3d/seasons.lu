@@ -1,0 +1,69 @@
+// seasons.lu — palette tables + smooth blending between seasons.
+// Palettes are flat lists (read-only module data, safe cross-VM):
+// [sky_r,g,b,  grass_r,g,b,  ambient_r,g,b,  sun_r,g,b,  fog_r,g,b,
+//  fog_density, sun_intensity, prop_r,g,b, particle_mode]
+
+export let SPRING = 0
+export let SUMMER = 1
+export let AUTUMN = 2
+export let WINTER = 3
+
+// particle modes
+export let P_NONE = 0
+export let P_PETALS = 1
+export let P_HEAT = 2
+export let P_LEAVES = 3
+export let P_SNOW = 4
+
+func pal(sky, grass, amb, sun, fog, fdens, sint, prop, pmode) {
+    return [sky[0], sky[1], sky[2],
+            grass[0], grass[1], grass[2],
+            amb[0], amb[1], amb[2],
+            sun[0], sun[1], sun[2],
+            fog[0], fog[1], fog[2],
+            fdens, sint,
+            prop[0], prop[1], prop[2],
+            pmode]
+}
+
+export let SEASON_DATA = [
+    pal([135, 206, 235], [ 92, 168,  72], [110, 110, 125], [255, 244, 220], [200, 220, 240], 0.020, 1.00, [255, 170, 200], P_PETALS),
+    pal([ 90, 170, 250], [116, 190,  80], [130, 130, 120], [255, 250, 225], [180, 210, 245], 0.010, 1.15, [ 40, 150,  60], P_HEAT),
+    pal([235, 160,  95], [176, 128,  60], [115, 100,  95], [255, 210, 160], [230, 175, 120], 0.038, 0.95, [220, 120,  40], P_LEAVES),
+    pal([168, 186, 205], [235, 240, 246], [140, 145, 165], [220, 232, 250], [205, 215, 228], 0.055, 0.85, [200, 214, 226], P_SNOW)
+]
+
+export let SEASON_NAMES = ["Spring", "Summer", "Autumn", "Winter"]
+
+export func season_count() {
+    return len(SEASON_NAMES)
+}
+
+export func season_name(i) {
+    return SEASON_NAMES[i % season_count()]
+}
+
+export func season_palette(i) {
+    return SEASON_DATA[i % season_count()]
+}
+
+// Mix two palettes: lerp(a, b, t) -> new flat list, same layout.
+export func blend_palettes(a, b, t) {
+    let out = []
+    let i = 0
+    let n = len(a)
+    while (i < n) {
+        // last entry is an integer mode: snap instead of blend
+        if (i == n - 1) {
+            if (t < 0.5) { list_append(out, a[i]) } else { list_append(out, b[i]) }
+        } else {
+            list_append(out, a[i] + (b[i] - a[i]) * t)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+export func rgb_of(pal3) {
+    return [to_int(pal3[0]), to_int(pal3[1]), to_int(pal3[2]), 255]
+}

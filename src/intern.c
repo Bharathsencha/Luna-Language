@@ -36,6 +36,28 @@ void intern_init(void) {
     global_intern_table.strings = calloc(global_intern_table.capacity, sizeof(const char *));
 }
 
+/* Grow the open-addressing table by 2x and rehash when load factor
+ * exceeds 70%, so hot programs can intern arbitrarily many strings. */
+static void intern_grow(void) {
+    int old_cap = global_intern_table.capacity;
+    const char **old_strings = global_intern_table.strings;
+    int new_cap = old_cap * 2;
+
+    global_intern_table.capacity = new_cap;
+    global_intern_table.strings = calloc((size_t)new_cap, sizeof(const char *));
+
+    for (int i = 0; i < old_cap; i++) {
+        const char *str = old_strings[i];
+        if (!str) continue;
+        unsigned int h = intern_hash(str) & (unsigned int)(new_cap - 1);
+        while (global_intern_table.strings[h] != NULL) {
+            h = (h + 1) & (unsigned int)(new_cap - 1);
+        }
+        global_intern_table.strings[h] = str;
+    }
+    free(old_strings);
+}
+
 // Core O(1) String to Memory Resolution function
 const char *intern_string(const char *str) {
     if (!str) return NULL;
@@ -63,10 +85,26 @@ const char *intern_string(const char *str) {
         
         // Table is fully saturated
         if (h == start_index) {
-            // Note: A true dynamic array would resize here, but 8192 unique strings
-            // in a single script is massively overkill for the initial implementation.
             fprintf(stderr, "Fatal Error: String Intern Table Capacity Exceeded (%d)\n", global_intern_table.capacity);
             exit(1); 
+        }
+    }
+
+    // Grow before inserting when the table is getting crowded.
+    if ((global_intern_table.count + 1) * 10 >= global_intern_table.capacity * 7) {
+        intern_grow();
+        h = intern_hash(str) & (global_intern_table.capacity - 1);
+        start_index = h;
+        while (global_intern_table.strings[h] != NULL) {
+            if (global_intern_table.strings[h] == str) return str;
+            if (strcmp(global_intern_table.strings[h], str) == 0) {
+                return global_intern_table.strings[h];
+            }
+            h = (h + 1) & (global_intern_table.capacity - 1);
+            if (h == start_index) {
+                fprintf(stderr, "Fatal Error: String Intern Table Capacity Exceeded (%d)\n", global_intern_table.capacity);
+                exit(1);
+            }
         }
     }
 

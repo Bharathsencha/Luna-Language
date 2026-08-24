@@ -1,0 +1,13 @@
+// helper module: exports math functions + proves single execution
+print("helper module loading...")
+
+let calls = 0
+
+export func add(a, b) {
+    calls = calls + 1
+    return a + b
+}
+
+export func get_calls() {
+    return calls
+}

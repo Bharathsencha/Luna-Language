@@ -1,0 +1,15 @@
+// Fixture: exports a constant, a pure function, and stateful counter ops.
+// Verifies module-level constants are readable inside exported functions
+// (cross-environment closure globals) and that state persists per module.
+export let BASE = 10
+
+let calls = 0
+
+export func scale(x) {
+    return x * BASE
+}
+
+export func bump() {
+    calls = calls + 1
+    return calls
+}

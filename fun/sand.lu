@@ -16,11 +16,9 @@ let TYPE_FIRE = 5
 
 # Colors
 let C_BG = [10, 10, 10, 255]
-let C_SAND = [235, 200, 100, 255]
-let C_WATER = [50, 100, 250, 200]
-let C_STONE = [120, 120, 120, 255]
-let C_ACID = [100, 255, 50, 220]
-let C_FIRE = [255, 80, 10, 255]
+let C_UI_BAR = [0, 0, 0, 200]
+let C_TEXT = [255, 255, 255, 255]
+let C_TEXT_DIM = [150, 150, 150, 255]
 
 let current_type = TYPE_SAND
 let brush_size = 2
@@ -52,36 +50,14 @@ func main() {
             let m = get_mouse_position()
             let gx = to_int(m[0] / CELL_SIZE)
             let gy = to_int(m[1] / CELL_SIZE)
-            
-            let r = brush_size
-            let by = -r
-            while (by <= r) {
-                let bx = -r
-                while (bx <= r) {
-                    if (rand(100) < 50) { 
-                        sand_set(gx + bx, gy + by, current_type)
-                    }
-                    bx = bx + 1
-                }
-                by = by + 1
-            }
+            sand_brush(gx, gy, brush_size, current_type, 50)
         }
         
         if (is_mouse_button_down(MOUSE_RIGHT_BUTTON)) {
             let m = get_mouse_position()
             let gx = to_int(m[0] / CELL_SIZE)
             let gy = to_int(m[1] / CELL_SIZE)
-            
-            let r = brush_size + 2
-            let by = -r
-            while (by <= r) {
-                let bx = -r
-                while (bx <= r) {
-                    sand_set(gx + bx, gy + by, TYPE_EMPTY)
-                    bx = bx + 1
-                }
-                by = by + 1
-            }
+            sand_brush(gx, gy, brush_size + 2, TYPE_EMPTY, 100)
         }
         
         # Update Logic 
@@ -90,36 +66,19 @@ func main() {
         # Draw
         begin_drawing()
         clear_background(C_BG)
-        
-        let dy = 0
-        while (dy < GRID_H) {
-            let dx = 0
-            while (dx < GRID_W) {
-                let type = sand_get(dx, dy)
-                if (type != 0) {
-                    let col = C_STONE
-                    if (type == 1) { col = C_SAND }
-                    if (type == 2) { col = C_WATER }
-                    if (type == 4) { col = C_ACID }
-                    if (type == 5) { col = C_FIRE }
-                    
-                    draw_rectangle(dx * CELL_SIZE, dy * CELL_SIZE, CELL_SIZE, CELL_SIZE, col)
-                }
-                dx = dx + 1
-            }
-            dy = dy + 1
-        }
+        sand_draw(CELL_SIZE, 0, 0)
         
         # UI
-        draw_rectangle(0, 0, SCREEN_WIDTH, 40, [0, 0, 0, 200])
+        draw_rectangle(0, 0, SCREEN_WIDTH, 40, C_UI_BAR)
         let tool = "SAND"
         if (current_type == 2) { tool = "WATER" }
         if (current_type == 3) { tool = "STONE" }
         if (current_type == 4) { tool = "ACID" }
         if (current_type == 5) { tool = "FIRE" }
         
-        draw_text_default("Tool: " + tool + " (Tab)", 10, 10, 20, [255, 255, 255, 255])
-        draw_text_default("Left Click: Draw | Right Click: Erase | R: Reset", 300, 10, 20, [150, 150, 150, 255])
+        let tool_label = "Tool: " + tool + " (Tab)"
+        draw_text_default(tool_label, 10, 10, 20, C_TEXT)
+        draw_text_default("Left Click: Draw | Right Click: Erase | R: Reset", 300, 10, 20, C_TEXT_DIM)
         
         end_drawing()
     }

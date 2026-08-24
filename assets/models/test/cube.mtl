@@ -1,0 +1,7 @@
+newmtl body_red
+Kd 0.85 0.30 0.20
+d 1.0
+
+newmtl glass_blue
+Kd 0.25 0.55 0.90
+d 1.0

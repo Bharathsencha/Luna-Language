@@ -1,0 +1,6 @@
+// nested module: imports its sibling via a script-relative path
+use { add } from "../helper.lu"
+
+export func times_two(x) {
+    return add(x, x)
+}

@@ -88,6 +88,7 @@ typedef struct {
     struct LunaChunk *chunk;
     struct VMUpvalue **upvalues;
     int upvalue_count;
+    struct Env *env; // globals of the context that defined this closure
 } VMClosureObj;
 
 typedef struct {

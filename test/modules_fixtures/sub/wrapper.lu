@@ -1,0 +1,12 @@
+// Fixture: imports a sibling module via a script-relative path and wraps it,
+// exercising the module cache (math_mod.lu must execute exactly once).
+use { scale, bump } from "../math_mod.lu"
+
+export func scaled(x) {
+    return scale(x) + 1
+}
+
+export func bump_twice() {
+    bump()
+    return bump()
+}

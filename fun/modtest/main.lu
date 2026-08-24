@@ -1,0 +1,11 @@
+// main: script-relative imports from a different working directory.
+// Run from repo root: luna fun/modtest/main.lu
+// helper.lu must load exactly ONCE (cache), and "../helper.lu"
+// inside sub/nested.lu must resolve relative to the module's own dir.
+
+use { add, get_calls } from "helper.lu"
+use { times_two } from "sub/nested.lu"
+
+print(add(2, 3))          // 5
+print(times_two(10))      // 20
+print(get_calls())        // 2 (both calls went through the same cached module)

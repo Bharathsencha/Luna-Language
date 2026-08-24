@@ -21,6 +21,17 @@ let C_TEXT = [255, 255, 255, 255]
 let C_NEON_Line = [255, 0, 255, 255]
 let C_SELECT = [255, 255, 0, 255] 
 let C_NIGHTMARE = [255, 0, 0, 255]
+let C_PLAYER_GLOW = [0, 255, 255, 50]
+let C_ENEMY_GLOW = [255, 0, 0, 100]
+
+# Pre-baked grid fade colors (index = alpha/10). Avoids allocating fresh
+# color lists every frame inside the draw loop.
+let GRID_FADE = [
+    [40, 0, 80, 0],   [40, 0, 80, 10],  [40, 0, 80, 20],
+    [40, 0, 80, 30],  [40, 0, 80, 40],  [40, 0, 80, 50],
+    [40, 0, 80, 60],  [40, 0, 80, 70],  [40, 0, 80, 80],
+    [40, 0, 80, 90],  [40, 0, 80, 100]
+]
 
 # State
 let STATE_MENU = 0
@@ -55,6 +66,10 @@ let t_lane = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 let t_active = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 let spawn_timer = 0.0
+
+# Cached score HUD string (rebuilt only when the integer value changes)
+let shown_score = -1
+let score_str = ""
 
 
 func check_collision(px, py, pw, ph, ex, ey, ew, eh) {
@@ -343,12 +358,13 @@ func main() {
         # Draw Grid
         let gy = grid_offset
         while (gy < SCREEN_HEIGHT) {
-            let alpha = to_int((gy / SCREEN_HEIGHT) * 100)
-            draw_line(0, to_int(gy), SCREEN_WIDTH, to_int(gy), [C_GRID[0], C_GRID[1], C_GRID[2], alpha])
+            let fade = to_int((gy / SCREEN_HEIGHT) * 10)
+            if (fade > 10) { fade = 10 }
+            draw_line(0, to_int(gy), SCREEN_WIDTH, to_int(gy), GRID_FADE[fade])
             gy = gy + 40.0
         }
-        draw_line(0, SCREEN_HEIGHT, to_int(SCREEN_WIDTH/2 - 50), 0, [C_GRID[0], C_GRID[1], C_GRID[2], 50])
-        draw_line(SCREEN_WIDTH, SCREEN_HEIGHT, to_int(SCREEN_WIDTH/2 + 50), 0, [C_GRID[0], C_GRID[1], C_GRID[2], 50])
+        draw_line(0, SCREEN_HEIGHT, to_int(SCREEN_WIDTH/2 - 50), 0, GRID_FADE[5])
+        draw_line(SCREEN_WIDTH, SCREEN_HEIGHT, to_int(SCREEN_WIDTH/2 + 50), 0, GRID_FADE[5])
 
         # Draw Road
         draw_rectangle(to_int(ROAD_X), 0, to_int(ROAD_WIDTH), SCREEN_HEIGHT, C_ROAD)
@@ -435,7 +451,7 @@ func main() {
             let px = to_int(player_x)
             let py = to_int(player_y)
             draw_rectangle_lines(px, py, CAR_WIDTH, CAR_HEIGHT, C_PLAYER)
-            draw_rectangle(px + 10, py + 20, CAR_WIDTH - 20, 20, [0, 255, 255, 50])
+            draw_rectangle(px + 10, py + 20, CAR_WIDTH - 20, 20, C_PLAYER_GLOW)
             draw_line(px, py + CAR_HEIGHT, px + 10, py + CAR_HEIGHT + 10, C_PLAYER)
             draw_line(px + CAR_WIDTH, py + CAR_HEIGHT, px + CAR_WIDTH - 10, py + CAR_HEIGHT + 10, C_PLAYER)
 
@@ -447,12 +463,17 @@ func main() {
                     let ty = to_int(t_y[i])
                     
                     draw_rectangle_lines(tx, ty, CAR_WIDTH, CAR_HEIGHT, C_ENEMY)
-                    draw_rectangle(tx + 10, ty + 60, CAR_WIDTH - 20, 10, [255, 0, 0, 100])
+                    draw_rectangle(tx + 10, ty + 60, CAR_WIDTH - 20, 10, C_ENEMY_GLOW)
                 }
                 i = i + 1
             }
             
-            draw_text_default("SCORE: " + to_string(to_int(score)), 20, 20, 30, C_TEXT)
+            let cur_score = to_int(score)
+            if (cur_score != shown_score) {
+                shown_score = cur_score
+                score_str = "SCORE: " + to_string(cur_score)
+            }
+            draw_text_default(score_str, 20, 20, 30, C_TEXT)
             if (current_state == STATE_PLAY) {
                 draw_text_default("ESC: MENU", 20, 60, 20, [150, 150, 150, 255])
             }

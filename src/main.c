@@ -21,6 +21,7 @@
 #include "unsafe_runtime.h"
 #include "gc.h"
 #include "luna_vm.h"
+#include "module_runtime.h"
 #include "luna_compiler.h"
 
 #define MAX_INPUT 1024
@@ -306,9 +307,9 @@ int main(int argc, char **argv) {
         char *src = read_file(argv[1]);
         if (!src) {
             fprintf(stderr, "Could not read file: %s\n", argv[1]);
-            env_free_global(global_env);
             return 1;
         }
+        module_runtime_set_main_script(argv[1]);
 
         // Initialize error system with file source
         error_init(src, argv[1]);

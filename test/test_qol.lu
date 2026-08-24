@@ -1,6 +1,6 @@
 print("=== Running QoL Tests ===")
 
-import "test/util.lu"
+import "util.lu"
 assert(util_ping() == "util-ok")
 assert(util_module_loaded == "module-loaded")
 

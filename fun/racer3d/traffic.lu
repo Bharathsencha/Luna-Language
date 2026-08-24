@@ -1,0 +1,70 @@
+// traffic.lu — AI cars cruising the loop at their own speeds.
+// Parallel lists owned by main; helpers mutate them in place.
+// C layout: 0=s[] 1=lane[] 2=speed[]
+
+use { TRAFFIC_N, ROAD_HALF, MAX_SPEED, CAR_HALF_W } from "config.lu"
+use { player_crash } from "player.lu"
+use { wrap, point_at, tangent_at } from "road.lu"
+
+let KEY_COLORS = [
+    [210, 60, 50, 255], [60, 120, 220, 255], [235, 190, 60, 255],
+    [90, 200, 120, 255], [230, 230, 235, 255], [40, 40, 48, 255]
+]
+
+export func new_traffic(RD) {
+    let s = []
+    let lane = []
+    let speed = []
+    let n = RD[0]
+    let i = 0
+    while (i < TRAFFIC_N) {
+        list_append(s, n * (i + 1) / (TRAFFIC_N + 1))
+        list_append(lane, -1.8 + (i % 3) * 1.8)
+        list_append(speed, MAX_SPEED * (0.35 + (i % 4) * 0.11))
+        i = i + 1
+    }
+    return [s, lane, speed]
+}
+
+export func traffic_color(i) {
+    return KEY_COLORS[i % len(KEY_COLORS)]
+}
+
+// Returns true when this car collided with the player this frame.
+export func update_traffic(C, RD, P, dt, i) {
+    let ss = C[0]
+    let lane = C[1]
+    let speed = C[2]
+
+    // gentle speed wobble keeps the pack from locking into a metronome
+    speed[i] = speed[i] + sin(i * 2.1 + ss[i] * 0.05) * 0.6 * dt
+    if (speed[i] < MAX_SPEED * 0.3) { speed[i] = MAX_SPEED * 0.3 }
+    if (speed[i] > MAX_SPEED * 0.85) { speed[i] = MAX_SPEED * 0.85 }
+
+    ss[i] = wrap(RD, ss[i] + speed[i] * dt * 1.05)
+
+    // collision with player: close on spline AND overlapping laterally
+    let n = RD[0] * 1.0
+    let ds = abs(ss[i] - P[0])
+    if (ds > n * 0.5) { ds = n - ds }
+    if (ds < 3.2 && abs(lane[i] - P[1]) < CAR_HALF_W * 2.0) {
+        player_crash(P, 0.35)
+        // bounce the AI car too so it doesn't sit inside you
+        speed[i] = speed[i] * 0.5
+        return true
+    }
+    return false
+}
+
+export func draw_traffic_car(C, RD, i) {
+    let ss = C[0]
+    let lane = C[1]
+    let p = point_at(RD, ss[i], lane[i])
+    let t = tangent_at(RD, ss[i])
+    let yaw = atan2(t[0], t[2]) * 57.29578
+    let col = traffic_color(i)
+    // body + cabin
+    draw_cube_pro(p, [0.9, 0.55, 1.9], [0.0, yaw, 0.0], col)
+    let cab = [p[0] + t[0] * 0.15, p[1] + 0.75, p[2] + t[2] * 0.15]
+    draw_cube_pro(cab, [0.7, 0.45, 1.0], [0.0, yaw, 0.0], [30, 34, 42, 255])
+}
