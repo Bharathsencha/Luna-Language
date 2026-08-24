@@ -134,25 +134,26 @@ python3 benchmark/env_native.py
 
 ## Benchmark Results GO vs Luna
 
-Measured by `test_gc/gc_bench.py` (3-run averages). Luna runs on the bytecode VM.
+Measured by `make test-gc-three` (3-run averages; summary CSV in `stress_test/stress_results.csv`).
+Luna runs on the bytecode VM.
 
-| Benchmark | Language | User Time (s) | Max RSS (MB) | GC Total (ms) | GC Max Pause (ms) |
+| Benchmark | Language | User Time (s) | GC Max Pause (ms) | GC Total (ms) | Max RSS (MB) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **alloc_heavy** | Luna | 25.50 | 204.78 | 48.19 | **0.274** |
-| | Go | 0.117 | 41.30 | — | 0.024 |
-| **long_live** | Luna | 2.27 | 123.64 | 27.78 | **0.263** |
-| | Go | 0.060 | 14.67 | — | 0.042 |
-| **cycles** | Luna | 23.32 | 427.12 | 0.68 | **0.138** |
-| | Go | 0.000 | 4.01 | — | 0.000 |
-| **strings** | Luna | 15.45 | 240.90 | 26.40 | **0.275** |
-| | Go | 0.083 | 64.89 | — | 0.041 |
+| **alloc_heavy** | Luna | 0.270 | **0.122** | 14.4 | 96.9 |
+| | Go | 0.227 | 0.033 | 0.3 | 47.7 |
+| **long_live** | Luna | 0.150 | **0.136** | 8.8 | 59.8 |
+| | Go | 0.110 | 0.057 | 0.3 | 15.1 |
+| **cycles** | Luna | 0.030 | **0.119** | 2.6 | 16.5 |
+| | Go | 0.000 | 0.000 | 0.0 | 4.0 |
+| **strings** | Luna | 0.200 | **0.108** | 8.5 | 83.4 |
+| | Go | 0.163 | 0.037 | 0.3 | 65.0 |
 
 ### Reading the numbers
 
-- **GC pauses**: Luna's worst-case pause is sub-ms on every workload (0.14–0.27ms) — the same
-  league as Go (0.02–0.04ms), with fewer collection events.
-- **User time**: Luna is still ~200–400× Go on the allocation-heavy workloads. That gap is raw
-  execution cost (per-iteration string building, write barriers, environment lookups), not GC —
-  GC totals are tens of milliseconds against tens of seconds of user time. This is the next
-  optimization target: O(blocks) write-barrier walks, string-path malloc round-trips, and
-  multi-allocation string expressions are the known hotspots.
+- **GC pauses**: Luna's worst-case pause is ~0.1–0.15ms on every workload — the same
+  league as Go (0.03–0.06ms).
+- **User time**: allocation-heavy workloads are within ~1.2–1.4x of Go (was 200–400x before
+  the bytecode VM + hot-path work: fused string allocations, O(1) write barriers, cached
+  interned names, O(1) box scope release).
+- **GC total**: not directly comparable — Luna counts every incremental step; Go's gctrace
+  totals only its two STW stop points per cycle.

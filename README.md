@@ -30,7 +30,7 @@ Most scripting languages make you choose between ease of use and performance. Lu
 
 - **Bare-metal performance** — SIMD-accelerated `vec_mul` / `mat_mul` match or beat NumPy. The parser uses a bump-allocated memory arena for O(1) AST allocation, constant folding at parse time, O(1) variable lookups via a djb2 hash table, string interning for pointer-fast name comparisons, and tail-call optimization for self-recursive functions.
 
-- **Sub-ms garbage collector** — incremental tri-color tracing GC with SATB write barriers, young/old generation tracking, and remembered-set support. Max pause is under 1ms across all shipped benchmark workloads. AST and `unsafe` memory are intentionally kept outside the collector's domain.
+- **Sub-ms garbage collector** — incremental tri-color tracing GC with SATB write barriers, young/old generation tracking, remembered-set support, and deadline-bounded incremental marking/sweeping. Worst-case pause is **~0.1–0.15ms** across all shipped benchmark workloads (Go's GC measures 0.03–0.06ms on the same tests). AST and `unsafe` memory are intentionally kept outside the collector's domain.
 
 - **2D/3D graphics and audio** — custom OpenGL 3.3 Core Profile renderer on statically linked GLFW with a 65,536-vertex batch renderer, full 2D shape primitives, FBO render-to-texture, `stb_truetype` font atlas, and Blinn-Phong lit 3D scenes (cameras, lights, meshes, grids). Audio via miniaudio with streaming, one-shot SFX, and real-time FFT. Zero runtime graphics dependencies beyond system OpenGL and X11.
 
@@ -277,10 +277,10 @@ unsafe {
 
 ## Architecture
 
-Luna is a modular tree-walking interpreter. The main layers:
+Luna compiles to bytecode and runs on a register-based VM:
 
 - **Lexer → Parser → AST** — recursive-descent parser with Pratt-style expression precedence and a constant-folding pass at parse time
-- **Interpreter** — recursive AST evaluator with closure capture, tail-call optimization, and module loading
+- **Bytecode compiler + VM** — the AST compiles to a custom 50+ opcode bytecode executed with computed-goto dispatch; includes opcode fusion (`repeat(...) + to_string(i)` builds in a single allocation), per-chunk interned-name caching, closures with upvalue capture, module imports via nested VMs, and scoped `defer`
 - **Arena** — slab allocator for all AST nodes; single `arena_reset()` tears down the parse tree instantly
 - **GC** — incremental tracing collector; strings, lists, maps, closures, and dense arrays are GC-managed
 - **Unsafe runtime** — Rust static library (`libluna_memory_rt.a`) that enforces 12 pointer-safety rules before the C side performs any memory operation
@@ -292,12 +292,24 @@ Luna is a modular tree-walking interpreter. The main layers:
 ## Testing
 
 ```bash
-make test        # Luna script tests with assert() and golden output
-make zig-test    # Host-side Zig tests: lexer, parser, AST shape, error line/column
-make test-gc     # GC benchmark suite with pause profiling
+make test          # Luna script tests with assert() and golden output
+make zig-test      # Host-side Zig tests: lexer, parser, AST shape, error line/column
+make test-gc       # GC benchmark suite with pause profiling
+make test-gc-three # Go vs Luna GC benchmark, 3-run averages (stress_test/stress_results.csv)
 ```
 
 Luna has two complementary test layers. The Luna script tests verify observable language behavior. The Zig suite calls internal C APIs directly to pinpoint exactly which subsystem regressed and on which line.
+
+## GC vs Go (3-run averages)
+
+| Benchmark | Luna user | Go user | Luna GC max | Go GC max | Luna GC total |
+|---|---|---|---|---|---|
+| alloc_heavy | 0.270s | 0.227s | **0.122ms** | 0.033ms | 14.4ms |
+| long_live | 0.150s | 0.110s | **0.136ms** | 0.057ms | 8.8ms |
+| cycles | 0.030s | 0.000s | **0.119ms** | 0.000ms | 2.6ms |
+| strings | 0.200s | 0.163s | **0.108ms** | 0.037ms | 8.5ms |
+
+Luna's worst pause is ~0.1–0.15ms — the same league as Go — while allocation-heavy user time is within ~1.2–1.4x of Go. Regenerate with `make test-gc-three`.
 
 ---
 

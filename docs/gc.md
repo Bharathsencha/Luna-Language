@@ -110,18 +110,22 @@ Two numbers matter most for pause behavior: `gc_ms_max` tells you how bad the wo
 
 ## Current Numbers
 
-### Tracing GC (bytecode VM)
+### Tracing GC (bytecode VM, 3-run averages)
 
-| script | user_s | sys_s | max_rss_mb | gc_ms | gc_ms_max | gc_events | gc_ms_avg |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `alloc_heavy.lu` | `25.50` | — | `204.78` | `48.185` | `0.274` | `8` | `6.023` |
-| `cycles.lu` | `23.32` | — | `427.12` | `0.678` | `0.138` | `0` | `0.000` |
-| `long_live.lu` | `2.27` | — | `123.64` | `27.780` | `0.263` | `9` | `3.087` |
-| `strings.lu` | `15.45` | — | `240.90` | `26.396` | `0.275` | `5` | `5.279` |
+| script | user_s | max_rss_mb | gc_ms | gc_ms_max | gc_events |
+|---|---:|---:|---:|---:|---:|
+| `alloc_heavy.lu` | `0.270` | `96.9` | `14.4` | `0.122` | `2` |
+| `long_live.lu` | `0.150` | `59.8` | `8.8` | `0.136` | `2` |
+| `cycles.lu` | `0.030` | `16.5` | `2.6` | `0.119` | `1` |
+| `strings.lu` | `0.200` | `83.4` | `8.5` | `0.108` | `2` |
 
-All workloads run on the bytecode VM. Worst-case pause is **sub-ms everywhere** (0.14–0.27ms),
-with far fewer GC events than the earlier scheduling (8–9 events on the hot workloads, 0 on
-`cycles`).
+Worst-case pause is **~0.1–0.15ms** everywhere — the same league as Go (0.03–0.06ms) —
+with far fewer collection events than earlier scheduling. Go's user times on the same
+workloads: alloc_heavy 0.227s, long_live 0.110s, cycles 0.000s, strings 0.163s.
+
+> **Note on `gc_ms`**: Luna counts every incremental step as pause time, while Go's
+> gctrace totals only count its two STW stop points per cycle (concurrent mark work runs
+> on background threads). `gc_ms_max` is the directly comparable number.
 
 ### Baseline RC + Arena
 
@@ -185,15 +189,17 @@ The sub-ms result came from runtime and scheduling changes, not from simplifying
 
 | Fix | What changed | What it helped |
 |---|---|---|
-| Bounded promote-scan | promoted containers are scanned for young references up to a 4096-child cap; larger containers are remembered unconditionally and traced with deadline slicing on the next minor GC | eliminated unbounded multi-ms sweep pauses on huge list buffers (previously ~4.5ms) |
-| Remembered-set reset per minor GC | old→young edges are captured into the gray stack at minor mark roots, then the remembered set is cleared; the write barrier repopulates it | keeps the remembered set tiny, cuts per-collection scan work |
+| 64µs pause target | incremental steps budget 64µs of wall clock, drain/sweep deadlines inherited per step | worst pause ~0.1–0.15ms |
+| Incremental remembered-set scan | pre-existing remembered entries are pushed to gray in 1024-entry batches across steps instead of one unbounded mark_roots pass | removed 0.3–0.45ms mark_roots spikes under store-heavy churn (cycles) |
+| Large-object free list | dead >32KB buffers are parked and reused on the next same-size allocation instead of being free()d mid-sweep | killed 0.3–1.0ms munmap spikes; also cut GC totals |
+| Bounded promote-scan | promoted containers are scanned for young refs up to a 1024-child cap; larger ones are remembered and traced with deadline slicing | bounded sweep promotion work |
 | Template write barrier | `value_template_set_field` now notifies the GC on store | fixes old→young edge loss through template fields |
-| Incremental minor stepping | young-generation marking now resumes across safe points instead of bunching all minor work into one pause | lower `gc_ms_max`, especially on churn-heavy workloads |
-| Low-pause benchmark profile | the GC benchmark runner now gives the heap enough logical headroom before forcing expensive major work | reduced premature major collections and lowered pause spikes |
-| AST-cached runtime string literals | hot string literals stop allocating a fresh runtime string every loop iteration | reduced allocation churn and write-barrier pressure |
-| Direct raw string builders | concat and repeat build final strings directly instead of bouncing through extra temporary buffers | reduced string-path allocation volume and cut string-heavy pause pressure |
-| Remembered-set and barrier cleanup | old-to-young edges and overwritten references are tracked more consistently during incremental work | preserved correctness while allowing smaller GC slices |
-| VM migration | execution moved from the tree-walking interpreter to the bytecode VM; safepoints are emitted per loop iteration and every 16 statements | fewer GC events at the same or lower pause sizes |
+| Young-filtered remembered set | containers are only remembered when the stored child is young | shrinks remembered-set scan work |
+| Incremental minor stepping | young-generation marking resumes across safe points | lower `gc_ms_max` on churn-heavy workloads |
+| Low-pause benchmark profile | the GC benchmark runner gives the heap logical headroom before forcing major work | reduced premature major collections |
+| AST-cached runtime string literals | hot string literals stop allocating a fresh runtime string every loop iteration | reduced allocation churn and barrier pressure |
+| Direct raw string builders | concat and repeat build final strings directly instead of extra temporary buffers | reduced string-path allocation volume |
+| VM migration | execution moved from the tree-walking interpreter to the bytecode VM | fewer GC events, sub-ms pauses at far higher throughput |
 
 Before these changes, Luna was paying avoidable work in hot runtime paths: loop-heavy string code kept rebuilding identical literals, concat and repeat created unnecessary temporary buffers, minor collection work could cluster into larger stop-the-world chunks, and tight benchmark heap limits forced earlier major work than the workload actually needed.
 

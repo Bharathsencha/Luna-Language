@@ -241,6 +241,11 @@ run-comp: $(BINDIR)/$(TARGET)
 test-gc: $(BINDIR)/$(TARGET)
 	@python3 test_gc/gc_bench.py
 
+# 3-run Luna vs Go stress benchmark; summary CSV in stress_test/
+test-gc-three: $(BINDIR)/$(TARGET)
+	@mkdir -p stress_test
+	@python3 stress_test/stress_bench.py
+
 test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo "==> GC stress+verify: test/test_gc_safety.lu"
 	@env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 ./$(BINDIR)/$(TARGET) test/test_gc_safety.lu
@@ -260,4 +265,4 @@ vm:
 vm-run: vm
 	./vm/luna_vm vm/sample.luvm
 
-.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-safety zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run
+.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-gc-safety zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run

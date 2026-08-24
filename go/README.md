@@ -2,53 +2,50 @@
 
 This directory contains the Go implementation of the Luna GC benchmarks. The goal is to compare the performance and memory efficiency of Luna's generational Immix-style tracing GC against Go's highly optimized concurrent mark-and-sweep GC.
 
-Luna programs run on the **bytecode VM** (AST → `vm/luna_compiler.c` → `vm/luna_vm.c` computed-goto dispatch). Benchmarks are driven by `test_gc/gc_bench.py` (3-run averages).
+Luna programs run on the **bytecode VM** (AST → `vm/luna_compiler.c` → `vm/luna_vm.c` computed-goto dispatch). Results below are 3-run averages; regenerate with `make test-gc-three` (summary CSV in `stress_test/stress_results.csv`).
 
 ## Benchmark Results
 
-| Benchmark | Language | User Time (s) | Max RSS (MB) | GC Total (ms) | GC Max Pause (ms) |
+| Benchmark | Language | User Time (s) | GC Max Pause (ms) | GC Total (ms) | Max RSS (MB) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **alloc_heavy** | Luna | 25.50 | 204.78 | 48.19 | **0.274** |
-| | Go | 0.117 | 41.30 | — | 0.024 |
-| **long_live** | Luna | 2.27 | 123.64 | 27.78 | **0.263** |
-| | Go | 0.060 | 14.67 | — | 0.042 |
-| **cycles** | Luna | 23.32 | 427.12 | 0.68 | **0.138** |
-| | Go | 0.000 | 4.01 | — | 0.000 |
-| **strings** | Luna | 15.45 | 240.90 | 26.40 | **0.275** |
-| | Go | 0.083 | 64.89 | — | 0.041 |
+| **alloc_heavy** | Luna | 0.270 | **0.122** | 14.4 | 96.9 |
+| | Go | 0.227 | 0.033 | 0.3 | 47.7 |
+| **long_live** | Luna | 0.150 | **0.136** | 8.8 | 59.8 |
+| | Go | 0.110 | 0.057 | 0.3 | 15.1 |
+| **cycles** | Luna | 0.030 | **0.119** | 2.6 | 16.5 |
+| | Go | 0.000 | 0.000 | 0.0 | 4.0 |
+| **strings** | Luna | 0.200 | **0.108** | 8.5 | 83.4 |
+| | Go | 0.163 | 0.037 | 0.3 | 65.0 |
 
 ### Metric Definitions
-- **User Time (s)**: The total time the CPU spent executing the program's code itself (user-mode).
-- **Max RSS (MB)**: The maximum "Resident Set Size," which represents the peak physical memory occupied by the process during its execution.
-- **GC Total (ms)**: Total stop-the-world GC pause bill across the whole run (Luna only; Go does not expose this at the same granularity).
-- **GC Max Pause (ms)**: Worst single recorded pause. For Go this is the largest STW pause from `GODEBUG=gctrace=1`.
+- **User Time (s)**: Total CPU time executing the program's own code (user-mode).
+- **GC Max Pause (ms)**: Worst single recorded pause. For Go this is the largest STW pause from `GODEBUG=gctrace=1` (the A and C stop points); Luna records every incremental step.
+- **GC Total (ms)**: Total pause bill across the run. Luna counts every incremental step; Go counts its STW stop points (A + C) only — Go's concurrent mark work runs on background threads and is not pause time, so this column is not directly comparable.
+- **Max RSS (MB)**: Peak resident set size.
 
 ## Analysis
 
 ### 1. GC Pauses
-Luna now holds **sub-millisecond worst-case pauses on every workload** (0.14–0.27ms) — the same
-league as Go (0.02–0.04ms), with fewer collection events. The sub-ms result comes from:
+Luna's worst-case pause is **~0.1–0.15ms** across all workloads — the same league as Go
+(0.03–0.06ms). The pause profile comes from:
 
-- a bounded promote-scan (4096-child cap) replacing unbounded container traces during sweep
-- remembered-set reset per minor GC
-- a template-field write barrier
-- incremental minor stepping and pause-target tuning
+- a 64µs incremental pause target with deadline-bounded drain and sweep steps
+- incremental remembered-set scanning (1024-entry batches) so mark-roots work never spikes
+- dead large objects reused via a per-heap free list (no munmap storms mid-sweep)
+- a bounded promote-scan (1024 children) replacing unbounded container traces
 
 ### 2. Execution Time (User Time)
-Go is still ~200–400x faster on allocation-heavy workloads. This gap is **not GC** — Luna's GC
-totals are tens of milliseconds against tens of seconds of user time. The remaining cost is
-execution overhead in the bytecode VM's hot paths:
+Allocation-heavy workloads are now within ~1.2–1.4x of Go (was 200-400x). The wins came
+from moving to the bytecode VM and then cutting its hot paths:
 
-- write-barrier managed-payload checks that walk the whole block list (O(blocks) per append)
-- string-path malloc round-trips (`value_to_string` + `free` in `+`)
-- multiple GC allocations per string expression (`repeat` + `to_string` + concat)
-- environment hash lookups for globals per opcode
-
-These are the known targets for the next optimization pass.
+- write barriers skip the O(blocks) managed-payload walk (trusted variants + O(log n) index)
+- `repeat(const, N) + to_string(int)` chains fuse into a single allocation (VM_OP_FMT)
+- box scope release is O(1) when no boxes are live (high-water mark)
+- interned names cached per chunk; `to_string(int)` and two-string concat fast paths
 
 ### 3. Memory Usage (Max RSS)
-Luna uses more memory than Go (3x-8x). The generational Immix-style collector trades memory
-density for pause control; block reuse/compaction is a known open item.
+Luna uses ~1.5–4x Go's RSS. The generational Immix-style collector trades memory density
+for pause control; block reuse/compaction is a known open item.
 
 ## Methodology Validation
 
@@ -56,12 +53,9 @@ Both Luna and Go benchmarks use equivalent workloads and measurement approaches:
 
 - **Workload parity**: each Go file mirrors a corresponding Luna benchmark script
   in `test_gc/` (same iteration counts, same data structures, same allocation patterns)
-- **Wall-clock timing**: Go uses `time.Now()` / `time.Since()`, Luna uses `clock()`
-- **RSS measurement**: both are measured externally via `/usr/bin/time -v`
-- **GC stats**: Luna additionally reports internal GC metrics (event count, pause
-  times) which Go does not expose at the same granularity
+- **Timing/RSS**: both measured externally via `/usr/bin/time -v`
+- **GC stats**: Luna reports internal GC metrics; Go's come from `GODEBUG=gctrace=1`
 
 ## Conclusion
-Luna's GC now achieves honest sub-ms worst pauses across the whole shipped benchmark profile,
-comparable to Go's pause behavior. The remaining gap is interpreter/VM execution speed on
-allocation-heavy loops — the current optimization focus.
+Luna's GC now holds ~0.1–0.15ms worst-case pauses on the shipped profile — comparable to
+Go's pause behavior — with user time within ~1.2–1.4x of Go on allocation-heavy loops.
