@@ -24,7 +24,8 @@ JAVA_OUT = JAVA_DIR / "out"
 CSV_PATH = JAVA_DIR / "java_vs_luna.csv"
 LUNA_BIN = "./bin/luna"
 
-BENCHMARKS = ["binary_trees", "map_churn", "object_graph", "concurrent_map"]
+BENCHMARKS = ["alloc_heavy", "long_live", "cycles", "strings",
+              "binary_trees", "map_churn", "object_graph", "concurrent_map"]
 JAVA_OPTS = ["-Xms256m", "-Xmx256m", "-XX:+UseG1GC",
              "-Xlog:gc:stderr:time,uptime"]
 

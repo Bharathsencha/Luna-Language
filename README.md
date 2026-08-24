@@ -300,16 +300,31 @@ make test-gc-three # Go vs Luna GC benchmark, 3-run averages (stress_test/stress
 
 Luna has two complementary test layers. The Luna script tests verify observable language behavior. The Zig suite calls internal C APIs directly to pinpoint exactly which subsystem regressed and on which line.
 
-## GC vs Go (3-run averages)
+## GC vs Go vs Java (3-run averages)
 
-| Benchmark | Luna user | Go user | Luna GC max | Go GC max | Luna GC total |
-|---|---|---|---|---|---|
-| alloc_heavy | 0.270s | 0.227s | **0.122ms** | 0.033ms | 14.4ms |
-| long_live | 0.150s | 0.110s | **0.136ms** | 0.057ms | 8.8ms |
-| cycles | 0.030s | 0.000s | **0.119ms** | 0.000ms | 2.6ms |
-| strings | 0.200s | 0.163s | **0.108ms** | 0.037ms | 8.5ms |
+Classic workloads (same shapes in all three languages; Java on G1GC @ 256MB):
 
-Luna's worst pause is ~0.1–0.15ms — the same league as Go — while allocation-heavy user time is within ~1.2–1.4x of Go. Regenerate with `make test-gc-three`.
+| Benchmark | Luna user | Java user | Go user | Luna GC max | Java GC max | Go GC max |
+|---|---|---|---|---|---|---|
+| alloc_heavy | 0.113s | 0.034s | 0.227s | **0.091ms** | 6.573ms | 0.033ms |
+| long_live | 0.070s | 0.021s | 0.110s | **0.104ms** | 1.880ms | 0.057ms |
+| cycles | 0.010s | 0.003s | 0.000s | **0.103ms** | 0.000ms | 0.000ms |
+| strings | 0.090s | 0.034s | 0.163s | **0.081ms** | 6.506ms | 0.037ms |
+
+New GC-shape workloads (Java vs Luna; run with `make test-java-gc`):
+
+| Benchmark | Java user | Luna user | Java GC max | Luna GC max |
+|---|---|---|---|---|
+| binary_trees | 0.048s | 0.530s | 6.950ms | 0.000ms* |
+| map_churn | 0.185s | 0.933s | 2.855ms | **0.248ms** |
+| object_graph | 0.029s | 0.093s | 0.000ms | 2.190ms |
+| concurrent_map | 0.039s | 0.257s | 0.636ms | **0.103ms** |
+
+**Reading it:** where Luna's collector actually runs, its worst pause is **0.08–0.25ms** — better than Java G1 (1.9–6.9ms) and in Go's range (0.03–0.06ms). Java/Go win on raw user time (JIT/AOT vs bytecode VM) and collect far less often (big adaptive young gens vs Luna's fixed 1–8MB).
+
+\* `binary_trees` Luna shows no GC events: recursion-heavy code doesn't reach the safepoint counter — a known limitation (allocation-driven triggering has a liveness bug under investigation).
+
+Regenerate: `make test-gc-three` (Go) · `make test-java-gc` (Java).
 
 ---
 

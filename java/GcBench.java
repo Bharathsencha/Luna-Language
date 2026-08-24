@@ -166,7 +166,61 @@ public class GcBench {
         sink = map;
     }
 
+    /* ---------- classic workloads (same shapes as the Luna/Go suite) ---------- */
+
+    static void allocHeavy() {
+        java.util.ArrayList<String> items = new java.util.ArrayList<>(750_000);
+        for (int i = 0; i < 750_000; i++) {
+            items.add("item-".repeat(2) + Integer.toString(i));
+        }
+        sink = items;
+        if (items.size() != 750_000) System.out.println(items.size());
+    }
+
+    static void longLive() {
+        java.util.ArrayList<String> table = new java.util.ArrayList<>(200_000);
+        for (int i = 0; i < 200_000; i++) {
+            table.add("value-".repeat(2) + Integer.toString(i));
+        }
+        for (int j = 0; j < 400_000; j++) {
+            String scratch = "scratch-".repeat(2) + Integer.toString(j);
+            if (scratch.isEmpty()) System.out.println("never");
+        }
+        sink = table;
+    }
+
+    static final class CycleNode {
+        String name;
+        CycleNode next;
+        CycleNode(String n) { name = n; }
+    }
+
+    static void cycles() {
+        java.util.ArrayList<CycleNode> nodes = new java.util.ArrayList<>(50_000);
+        for (int i = 0; i < 50_000; i++) {
+            nodes.add(new CycleNode("n" + i));
+        }
+        for (int i = 0; i < nodes.size(); i++) {
+            nodes.get(i).next = nodes.get((i + 1) % nodes.size());
+        }
+        sink = nodes;
+        if (nodes.size() != 50_000) System.out.println(nodes.size());
+    }
+
+    static void strings() {
+        java.util.ArrayList<String> out = new java.util.ArrayList<>(500_000);
+        for (int i = 0; i < 500_000; i++) {
+            out.add("luna".repeat(16) + "-" + Integer.toString(i));
+        }
+        sink = out;
+        if (out.size() != 500_000) System.out.println(out.size());
+    }
+
     public static void main(String[] args) throws Exception {
+        bench("alloc_heavy", GcBench::allocHeavy);
+        bench("long_live", GcBench::longLive);
+        bench("cycles", GcBench::cycles);
+        bench("strings", GcBench::strings);
         bench("binary_trees", GcBench::binaryTrees);
         bench("map_churn", GcBench::mapChurn);
         bench("object_graph", GcBench::objectGraph);
