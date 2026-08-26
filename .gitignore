@@ -43,5 +43,7 @@ zig-test/.zig-global-cache/
 zig-test/zig-out/
 benchmark/.zig-cache/
 benchmark/.zig-global-cache/
-test_gc/
-luna/
+test_gc/*_go
+test_gc/*.csv
+test_gc/*.png
+luna/__pycache__/

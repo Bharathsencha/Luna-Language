@@ -1,0 +1,7 @@
+let start = clock()
+let out = []
+for (let i = 0; i < 500000; i++) {
+    append(out, repeat("luna", 16) + "-" + to_string(i))
+}
+print("strings", len(out))
+print("Time:", clock() - start, "seconds")

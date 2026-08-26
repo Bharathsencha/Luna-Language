@@ -1,0 +1,15 @@
+let start = clock()
+let m = {}
+for (let i = 0; i < 1000000; i++) {
+    let key = to_string((i * 2654435761) % 100000)
+    let op = i % 3
+    if (op == 0) {
+        map_set(m, key, i)
+    } else if (op == 1) {
+        map_delete(m, key)
+    } else {
+        let v = map_get(m, key)
+    }
+}
+print("concurrent_map", len(m))
+print("Time:", clock() - start, "seconds")

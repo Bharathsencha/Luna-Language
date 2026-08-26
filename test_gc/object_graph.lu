@@ -1,0 +1,27 @@
+template Node { edges, value }
+
+let start = clock()
+let nodes = []
+for (let i = 0; i < 100000; i++) {
+    append(nodes, Node([], i))
+}
+for (let i = 0; i < 100000; i++) {
+    let n = nodes[i]
+    for (let e = 0; e < 4; e++) {
+        let other = nodes[(i * 31 + e * 17) % 100000]
+        append(n.edges, other)
+    }
+}
+for (let i = 0; i < 10000; i++) {
+    let a = nodes[(i * 97) % 100000]
+    let b = nodes[(i * 53) % 100000]
+    if (len(a.edges) > 0) {
+        a.edges[(i * 13) % len(a.edges)] = b
+    }
+}
+let sum = 0
+for (let i = 0; i < 100000; i++) {
+    sum = sum + len(nodes[i].edges)
+}
+print("object_graph", sum)
+print("Time:", clock() - start, "seconds")

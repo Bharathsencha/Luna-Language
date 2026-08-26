@@ -1,0 +1,15 @@
+template Node { name, next }
+
+let start = clock()
+let nodes = []
+for (let i = 0; i < 5000; i++) {
+    append(nodes, Node("n" + to_string(i), null))
+}
+
+for (let i = 0; i < len(nodes); i++) {
+    let nextI = (i + 1) % len(nodes)
+    nodes[i].next = nodes[nextI]
+}
+
+print("cycles", len(nodes))
+print("Time:", clock() - start, "seconds")

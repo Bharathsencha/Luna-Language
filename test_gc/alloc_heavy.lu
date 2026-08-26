@@ -1,0 +1,7 @@
+let start = clock()
+let items = []
+for (let i = 0; i < 750000; i++) {
+    append(items, repeat("item-", 2) + to_string(i))
+}
+print("alloc_heavy", len(items))
+print("Time:", clock() - start, "seconds")

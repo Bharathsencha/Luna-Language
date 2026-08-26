@@ -265,6 +265,10 @@ test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo ""
 	@echo "GC safety tests passed under stress+verify."
 
+# Unified GC benchmark: Luna vs Go, Luna vs Java (G1), stress 3x, stress 8x
+test-gc-all: $(BINDIR)/$(TARGET)
+	@python3 test_gc/gc_bench_all.py
+
 zig-test:
 	cd zig-test && ZIG_GLOBAL_CACHE_DIR=.zig-global-cache zig build test --cache-dir .zig-cache
 	@echo "Zig test passed. No errors found."
@@ -275,4 +279,4 @@ vm:
 vm-run: vm
 	./vm/luna_vm vm/sample.luvm
 
-.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-java-gc test-gc-safety zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run
+.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-java-gc test-gc-safety test-gc-all zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run

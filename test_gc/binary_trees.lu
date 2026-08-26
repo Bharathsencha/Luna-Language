@@ -1,0 +1,25 @@
+template Node { left, right, value }
+
+func build(depth) {
+    if (depth == 0) {
+        return null
+    }
+    return Node(build(depth - 1), build(depth - 1), 1)
+}
+
+func checksum(node) {
+    if (node == null) {
+        return 0
+    }
+    return node.value + checksum(node.left) + checksum(node.right)
+}
+
+let start = clock()
+let total = 0
+for (let i = 0; i < 12; i++) {
+    let root = build(17)
+    total = total + checksum(root)
+    root = null
+}
+print("binary_trees", total)
+print("Time:", clock() - start, "seconds")

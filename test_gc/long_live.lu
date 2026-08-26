@@ -1,0 +1,10 @@
+let start = clock()
+let table = []
+for (let i = 0; i < 200000; i++) {
+    append(table, repeat("value-", 2) + to_string(i))
+}
+for (let j = 0; j < 400000; j++) {
+    let _ = repeat("scratch-", 2) + to_string(j)
+}
+print("long_live", len(table))
+print("Time:", clock() - start, "seconds")
