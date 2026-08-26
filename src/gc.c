@@ -660,9 +660,16 @@ static int gc_remember_scan_batch(GCHeap *heap, size_t limit) {
     size_t n = 0;
     while (heap->remember_cursor < heap->remember_snapshot && n < limit) {
         GCObject *obj = heap->remembered_set[heap->remember_cursor++];
-        if (obj && obj->color != GC_DEAD && obj->color != GC_GRAY) {
-            obj->color = GC_GRAY;
-            gray_push(heap, obj);
+        if (obj) {
+            /* Clear the dedup flag: the entry leaves the set here, so a
+             * later store into this object must be able to re-remember it.
+             * (Stale flags silently dropped edges in the next collection —
+             * the rapid-stepping liveness bug.) */
+            obj->remembered = 0;
+            if (obj->color != GC_DEAD && obj->color != GC_GRAY) {
+                obj->color = GC_GRAY;
+                gray_push(heap, obj);
+            }
         }
         n++;
     }
@@ -1040,14 +1047,14 @@ void gc_heap_collect(GCHeap *heap) {
  * catches up faster within the same safepoint.  This avoids a stop-the-world
  * drain while still making progress.
  *
- * We cap the adaptive budget at 4096 objects per step; beyond that we do a
- * one-shot full drain (which is bounded by the live-set, not by allocation
- * rate, so it terminates quickly once the live set is fully marked).
+ * The budget is capped at 4096 objects per step.  The doubling is clamped so
+ * the shift can never overflow to 0 (a 0 budget disables the deadline and
+ * turns a step into a stop-the-world drain — the multi-ms alloc_heavy spikes).
  */
 static size_t gc_adaptive_steps(GCHeap *heap) {
     if (heap->mark_step_count < 4) return heap->increment_steps;
     size_t steps = heap->increment_steps << (heap->mark_step_count / 4);
-    if (steps > 4096) steps = 4096;
+    if (steps > 4096 || steps == 0) steps = 4096;
     return steps;
 }
 

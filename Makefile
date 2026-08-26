@@ -116,6 +116,9 @@ $(OBJDIR)/gl_backend_3d.o: gui/gl_backend_3d.c | $(OBJDIR)
 $(OBJDIR)/gui_lib_3d.o: gui/gui_lib_3d.c | $(OBJDIR)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+$(OBJDIR)/model_backend.o: gui/model_backend.c | $(OBJDIR)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
 # Compile assembly files
 $(OBJDIR)/%.o: asm/%.asm | $(OBJDIR)
 	$(ASM) $(ASMFLAGS) $< -o $@
