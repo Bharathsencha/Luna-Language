@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Unified GC benchmark: Luna vs Go, Luna vs Java (G1), and Luna stress tests.
+"""Unified GC benchmark: Luna vs Go, Luna vs Java (G1), Luna vs Python, and stress.
 
-Runs four phases:
+Runs five phases:
   1. Luna vs Go        — 4 core benchmarks, N runs each
   2. Luna vs Java (G1) — 8 benchmarks, N runs each (single JVM invocation)
-  3. Luna stress 3x    — 4 core benchmarks, 1 run, reduced heap
-  4. Luna stress 8x    — 4 core benchmarks, 1 run, aggressive reduced heap
+  3. Luna vs Python    — 8 benchmarks, N runs each
+  4. Luna stress 3x    — 4 core benchmarks, 1 run, reduced heap
+  5. Luna stress 8x    — 4 core benchmarks, 1 run, aggressive reduced heap
 
 Outputs a single append-only CSV (test_gc/gc_all_results.csv) and a summary table.
 
@@ -200,6 +201,43 @@ def bench_java_all():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Python runner
+# ──────────────────────────────────────────────────────────────────────────────
+
+PY_GC_RE = re.compile(r"PY_GC_STATS,(\d+),(\d+),([\d.]+),([\d.]+)")
+
+
+def bench_python(name):
+    """Run one Python benchmark, return dict with user/rss/gc metrics."""
+    src = os.path.join("python", f"{name}.py")
+    if not os.path.exists(src):
+        return None
+    env = os.environ.copy()
+    # PY_GC_STATS is printed to stdout, so capture both streams (unlike
+    # bench_luna/bench_go which read the GC line from stderr).
+    full = ["/usr/bin/time", "-v", "python3", src]
+    proc = subprocess.run(full, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, env=env)
+    out = proc.stdout + proc.stderr
+    user = rss_mb = 0.0
+    m = USER_RE.search(proc.stderr)
+    if m:
+        user = float(m.group(1))
+    m = RSS_RE.search(proc.stderr)
+    if m:
+        rss_mb = float(m.group(1)) / 1024.0
+    gc_total = gc_max = 0.0
+    gc_events = 0
+    m = PY_GC_RE.search(out)
+    if m:
+        gc_events = int(m.group(1))
+        gc_max = float(m.group(3))
+        gc_total = float(m.group(4))
+    return {"user": user, "rss": rss_mb, "gc_total": gc_total,
+            "gc_max": gc_max, "gc_events": gc_events}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Phases
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -290,6 +328,55 @@ def phase_luna_vs_java():
                 f"{j['gc_total']:>13.3f} {int(j.get('gc_events',0)):>7} {'—':>9}")
         log("-" * 78)
 
+    return rows
+
+
+def phase_luna_vs_python():
+    """Phase 3: Luna vs Python on 8 benchmarks, RUNS runs each."""
+    banner("Phase 3: Luna vs Python  (8 benchmarks, {} run(s) each)".format(RUNS))
+
+    if not shutil.which("python3"):
+        log("  python3 not found — skipping phase 3.")
+        return []
+
+    rows = []
+    header_fmt = f"{'benchmark':<16} {'lang':<5} {'user(s)':>8} {'gc_max(ms)':>11} {'gc_total(ms)':>13} {'events':>7} {'rss(MB)':>9}"
+    log(header_fmt)
+    log("-" * 78)
+
+    for name in ALL_BENCHMARKS:
+        luna_runs = [bench_luna(name) for _ in range(RUNS)]
+        luna = avg_dicts(luna_runs)
+        py_runs = []
+        for _ in range(RUNS):
+            r = bench_python(name)
+            if r:
+                py_runs.append(r)
+        py = avg_dicts(py_runs) if py_runs else {}
+
+        def row(phase, lang, d):
+            return {
+                "Phase": phase, "Benchmark": name, "Language": lang,
+                "User Time (s)": f"{d['user']:.3f}",
+                "Max RSS (MB)": f"{d['rss']:.2f}",
+                "GC Total (ms)": f"{d['gc_total']:.3f}",
+                "GC Max Pause (ms)": f"{d['gc_max']:.3f}",
+                "GC Events": str(int(d.get("gc_events", 0))),
+            }
+
+        rows.append(row("python", "Luna", luna))
+        if py:
+            rows.append(row("python", "Python", py))
+
+        log(f"{name:<16} {'Luna':<5} {luna['user']:>8.3f} {luna['gc_max']:>11.3f} "
+            f"{luna['gc_total']:>13.3f} {int(luna.get('gc_events',0)):>7} {luna['rss']:>9.1f}")
+        if py:
+            log(f"{'':16} {'Python':<5} {py['user']:>8.3f} {py['gc_max']:>11.3f} "
+                f"{py['gc_total']:>13.3f} {int(py.get('gc_events',0)):>7} {py['rss']:>9.1f}")
+        log("-" * 78)
+
+    log("  Note: Python max_pause = 0.000 means its cyclic GC never fired; "
+        "refcount frees those objects instantly (cost is inside user time).")
     return rows
 
 
@@ -391,14 +478,17 @@ def main():
     # Phase 2: Luna vs Java
     all_rows.extend(phase_luna_vs_java())
 
-    # Phase 3: Luna stress 3x  (heap_limit / 3, young_limit / 3)
+    # Phase 3: Luna vs Python
+    all_rows.extend(phase_luna_vs_python())
+
+    # Phase 4: Luna stress 3x  (heap_limit / 3, young_limit / 3)
     all_rows.extend(phase_stress("stress_3x", {
         "LUNA_GC_STRESS": "1",
         "LUNA_GC_INITIAL_HEAP_LIMIT": "1365333",
         "LUNA_GC_YOUNG_LIMIT": "559240",
     }))
 
-    # Phase 4: Luna stress 8x  (heap_limit / 8, young_limit / 8)
+    # Phase 5: Luna stress 8x  (heap_limit / 8, young_limit / 8)
     all_rows.extend(phase_stress("stress_8x", {
         "LUNA_GC_STRESS": "1",
         "LUNA_GC_INITIAL_HEAP_LIMIT": "524288",

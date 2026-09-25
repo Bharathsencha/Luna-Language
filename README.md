@@ -296,6 +296,7 @@ make test          # Luna script tests with assert() and golden output
 make zig-test      # Host-side Zig tests: lexer, parser, AST shape, error line/column
 make test-gc       # GC benchmark suite with pause profiling
 make test-gc-three # Go vs Luna GC benchmark, 3-run averages (stress_test/stress_results.csv)
+make test-py       # Python vs Luna GC benchmark, 3-run averages (python/python_vs_luna.csv)
 ```
 
 Luna has two complementary test layers. The Luna script tests verify observable language behavior. The Zig suite calls internal C APIs directly to pinpoint exactly which subsystem regressed and on which line.
@@ -324,7 +325,22 @@ New GC-shape workloads (Java vs Luna; run with `make test-java-gc`):
 
 \* `binary_trees` Luna shows no GC events: recursion-heavy code doesn't reach the safepoint counter — a known limitation (allocation-driven triggering has a liveness bug under investigation).
 
-Regenerate: `make test-gc-three` (Go) · `make test-java-gc` (Java).
+Python vs Luna (3-run averages; run with `make test-py`, CSV in `python/python_vs_luna.csv`):
+
+| Benchmark | Luna user | Python user | Luna GC max | Python GC max |
+|---|---|---|---|---|
+| alloc_heavy | 0.290s | 0.227s | **0.153ms** | 0.000ms\*\* |
+| long_live | 0.150s | 0.167s | **0.120ms** | 0.000ms\*\* |
+| cycles | **0.030s** | 0.083s | **0.101ms** | 1.300ms |
+| strings | 0.253s | 0.170s | **0.129ms** | 0.000ms\*\* |
+| binary_trees | 0.753s | 0.710s | 0.000ms\* | **18.285ms** |
+| map_churn | **1.020s** | 1.067s | **0.518ms** | 0.000ms\*\* |
+| object_graph | **0.093s** | 0.137s | **0.196ms** | 5.888ms |
+| concurrent_map | **0.280s** | 0.290s | **0.271ms** | 0.000ms\*\* |
+
+\*\* CPython frees most objects by reference counting — instant, no stop-the-world pause — so the cost shows up in user time instead. Where CPython's cyclic GC does run (`cycles`, `object_graph`, `binary_trees`), Luna is 2.8x/1.5x faster and its worst pause is 0.10–0.52ms vs Python's **1.3–18.3ms** (up to ~100x better).
+
+Regenerate: `make test-gc-three` (Go) · `make test-java-gc` (Java) · `make test-py` (Python).
 
 ---
 

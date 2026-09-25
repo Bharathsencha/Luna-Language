@@ -439,12 +439,10 @@ Value luna_vm_execute(LunaVM *vm) {
     #ifdef LUNA_VM_DEBUG
     #define DISPATCH() do { \
         printf("[VM] ip = %d, opcode = %d\n", (int)(ip - chunk->code), *ip); \
-        luna_current_line = frame->chunk->line_map[ip - frame->chunk->code]; \
         goto *dispatch_table[*ip++]; \
     } while(0)
     #else
     #define DISPATCH() do { \
-        luna_current_line = frame->chunk->line_map[ip - frame->chunk->code]; \
         goto *dispatch_table[*ip++]; \
     } while(0)
     #endif
@@ -1563,12 +1561,14 @@ Value luna_vm_execute(LunaVM *vm) {
         } else if (callee.type == VAL_DATA_TYPE) {
             Value *args = slots + callee_reg + 1;
             int line = frame->chunk->line_map[ip - frame->chunk->code - 4];
+            luna_current_line = line;
             Value ret = instantiate_data_type(callee, argc, args, line);
             value_free(slots[dst]);
             slots[dst] = ret;
         } else if (callee.type == VAL_BLOC_TYPE) {
             Value *args = slots + callee_reg + 1;
             int line = frame->chunk->line_map[ip - frame->chunk->code - 4];
+            luna_current_line = line;
             char msg[256];
             Value ret = value_null();
             if (!value_bloc_check_construct(callee, argc, args, msg, sizeof(msg))) {
@@ -1587,6 +1587,7 @@ Value luna_vm_execute(LunaVM *vm) {
             printf("[VM_OP_CALL] Fallback call. Callee type: %d, value: %s, line: %d\n", callee.type, s, line);
             free(s);
             #endif
+            luna_current_line = line;
             Value ret = luna_call_value(vm->env, callee, argc, args, line);
             value_free(slots[dst]);
             slots[dst] = ret;
@@ -1668,11 +1669,13 @@ Value luna_vm_execute(LunaVM *vm) {
             slots = frame->slots;
         } else if (callee.type == VAL_DATA_TYPE) {
             Value *args = slots + callee_reg + 1;
+            luna_current_line = line;
             Value ret = instantiate_data_type(callee, argc, args, line);
             value_free(slots[dst]);
             slots[dst] = ret;
         } else if (callee.type == VAL_BLOC_TYPE) {
             Value *args = slots + callee_reg + 1;
+            luna_current_line = line;
             char msg[256];
             Value ret = value_null();
             if (!value_bloc_check_construct(callee, argc, args, msg, sizeof(msg))) {
@@ -1690,6 +1693,7 @@ Value luna_vm_execute(LunaVM *vm) {
             printf("[VM_OP_CALL_NAMED] Callee type: %d, value: %s, line: %d\n", callee.type, s, line);
             free(s);
             #endif
+            luna_current_line = line;
             Value ret = luna_call_value(vm->env, callee, argc, args, line);
             value_free(slots[dst]);
             slots[dst] = ret;
@@ -1903,6 +1907,7 @@ Value luna_vm_execute(LunaVM *vm) {
         }
         READ_BYTE(); /* is_module_use flag (names are bound the same way) */
         int line = vm_op_line(chunk, ip);
+        luna_current_line = line;
         vm_run_import(vm, path_idx, name_idxs, name_count, line);
         #ifdef __GNUC__
         DISPATCH();
