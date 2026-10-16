@@ -14,7 +14,6 @@ relative to the root.
 Other entry points outside this folder:
 
 - `main.lu` at the repository root: scratch script for `make run`.
-- `3D/main.lu`: standalone 3D scene, `./bin/luna 3D/main.lu`.
 
 ## Media
 

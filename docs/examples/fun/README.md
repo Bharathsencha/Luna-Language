@@ -35,6 +35,7 @@ make run-racer                           # the multi-module 3D racer
 | `orbrush.lu` | [orbrush.md](orbrush.md) | First-person shooter: captured-mouse camera, ray picking, spot light, particles |
 | `scene3d.lu` | [scene3d.md](scene3d.md) | API smoke test (~360 frames): `_pro` primitives, transform stack, fog, picking |
 | `scene_models.lu` | [scene3d.md](scene3d.md) | API smoke test (~300 frames): OBJ + MTL model loading |
+| `neon3d.lu` | none yet | Neon Geometry showcase: lit primitives, orbiting lights |
 
 ## Other
 

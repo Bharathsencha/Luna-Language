@@ -19,7 +19,7 @@ by impact, so they can be fixed one at a time.
 | # | Issue | Where |
 |---|---|---|
 | 7 | `set_fog` is called as `set_fog(mode, color, density)`, but the API is `set_fog(color, density)`, so the fog does not apply | `docs/examples/fun/orbrush.lu`, `docs/examples/fun/racer3d/main.lu` |
-| 8 | `draw_sphere` is called as `(center, r, rings, slices, color)`, but the API is `(center, r, color, rings, slices)`, so the color argument is ignored | `3D/main.lu` |
+| 8 | `draw_sphere` is called as `(center, r, rings, slices, color)`, but the API is `(center, r, color, rings, slices)`, so the color argument is ignored | `docs/examples/fun/neon3d.lu` |
 
 ## Smaller items
 

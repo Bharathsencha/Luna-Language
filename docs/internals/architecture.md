@@ -67,12 +67,12 @@ All builtins are registered in `env_register_stdlib` (`src/library.c`).
 |---|---|
 | `gui/gl_backend.c` | OpenGL 3.3 core renderer on GLFW: 65,536-vertex batch, shapes, textures (`stb_image`), fonts (`stb_truetype`), framebuffers, screenshots (`stb_image_write`), 2D camera, input |
 | `gui/gl_backend_3d.c` | 3D: one Blinn-Phong shader, up to 8 lights, fog, gamma, transform stack, billboards, sorted translucency |
-| `gui/model_backend.c` | OBJ + MTL loading (`vendor/tinyobj_loader_c.h`), material colors baked into vertices |
+| `gui/model_backend.c` | OBJ + MTL loading (`gui/tinyobj_loader_c.h`), material colors baked into vertices |
 | `gui/audio_backend.c` | miniaudio: streamed music, in-memory sounds, PCM capture for `get_music_fft` |
 | `gui/gui_lib.c`, `gui/gui_lib_3d.c` | Builtin wrappers: convert `Value` arguments and manage the ID pools for textures, fonts, sounds, images, models |
 
 GLFW 3.3.10 is linked statically from `lib/libglfw3.a` (header in `include/glfw3.h`). The stb
-headers and miniaudio are vendored in `gui/`. At runtime the only system dependencies are
+headers, miniaudio and tinyobj are vendored in `gui/`. At runtime the only system dependencies are
 OpenGL and X11.
 
 ## Rust runtimes (`rust/`)
@@ -93,9 +93,8 @@ is in [rust/readme.md](../../rust/readme.md).
 | `gui/` | Graphics and audio backends, vendored single-header libraries |
 | `rust/` | Rust runtimes |
 | `asm/` | NASM sources |
-| `lib/`, `vendor/` | Prebuilt GLFW, Rust outputs, `tinyobj_loader_c.h` |
+| `lib/` | Prebuilt GLFW and the Rust outputs |
 | `test/`, `test_runner.sh` | Luna script tests |
 | `zig-test/` | Host-side Zig tests against the C API |
 | `assets/` | Shared fonts, models, and the generated track cache |
-| `3D/` | Standalone 3D showcase |
 | `docs/` | Documentation and example programs |

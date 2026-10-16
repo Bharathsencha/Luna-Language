@@ -7,10 +7,10 @@
 // per-vertex colors at load time, so models render with the same single
 // shader as primitives — one VAO, one draw call, no texture units.
 //
-// Uses vendored tinyobj_loader_c.h (MIT, Syoyo Fujita) in vendor/.
+// Uses vendored tinyobj_loader_c.h (MIT, Syoyo Fujita) in gui/.
 
 #define TINYOBJ_LOADER_C_IMPLEMENTATION
-#include "../vendor/tinyobj_loader_c.h"
+#include "tinyobj_loader_c.h"
 
 #include "model_backend.h"
 #include "gl_backend_3d.h"

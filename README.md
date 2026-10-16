@@ -11,72 +11,58 @@
 
 ---
 
-## Hi, this is Luna
+## About Luna
 
-Luna is a programming language I built from scratch in C. If you have written a bit of
-JavaScript or Python, Luna will feel familiar within a few minutes.
+Luna is a scripting language written from scratch in C, with a syntax close to JavaScript.
+Scripts are compiled to bytecode and run on a small virtual machine.
 
-It started as an interpreter and grew into a complete little platform. Some things I'm proud
-of:
+- **Smooth garbage collection.** Pauses are usually around 0.1 ms, so games and animations
+  don't stutter.
+- **Graphics and sound built in.** 2D drawing, 3D scenes, music and sound effects with
+  nothing extra to install.
+- **Fast math.** Vector and matrix operations run on native SIMD code.
+- **Modules, closures and custom data types**, plus `unsafe` blocks for manual memory.
 
-- **A garbage collector that stays out of your way.** Its pauses are usually around a tenth
-  of a millisecond, so animations and games stay smooth.
-- **Graphics and sound out of the box.** You can open a window, draw shapes, build a 3D
-  scene, or play music without installing anything extra.
-- **Fast math when you need it.** Vector and matrix operations run on native SIMD code and
-  keep up with C and NumPy.
-- **Room to grow.** Modules, closures, structured data types, and even manual memory inside
-  `unsafe` blocks if you want to go low-level.
+## Getting Started
 
-## Getting Luna running
+### Install
 
-You'll need Linux on an x86-64 machine. On Ubuntu, Debian or Mint, install the tools first:
+Luna runs on Linux (x86-64). On Ubuntu, Debian or Mint:
 
 ```bash
 sudo apt install build-essential nasm libx11-dev libgl1-mesa-dev
+curl https://sh.rustup.rs -sSf | sh     # only if you don't have cargo
 ```
 
-Luna also uses Rust for two small runtime libraries. If you don't have `cargo` yet:
-
-```bash
-curl https://sh.rustup.rs -sSf | sh
-```
-
-Then clone and build:
+### Build
 
 ```bash
 git clone https://github.com/Bharathsencha/Luna-Language
 cd Luna-Language
 make
+make test        # ends with "All tests passed!"
 ```
 
-To make sure everything works, run the tests. They should finish with "All tests passed!":
-
-```bash
-make test
-```
-
-If something is missing, `make check-deps` will tell you what. There's more detail in
+If something is missing, `make check-deps` lists it. More details:
 [docs/getting-started.md](docs/getting-started.md).
 
-## Your first program
+### Hello World
 
 Save this as `hello.lu`:
 
 ```javascript
-let name = input("What's your name? ")
-print("Welcome to Luna, {name}!")
+print("Hello, World!")
 ```
 
-And run it:
+Run it:
 
 ```bash
 ./bin/luna hello.lu
 ```
 
-You can also start `./bin/luna` with no file to play around in the REPL.
+Run `./bin/luna` with no file to open the REPL.
 
-## A quick tour
+## Language Tour
 
 ### Variables
 
@@ -207,7 +193,7 @@ func save_log(path, text) {
 
 There's a lot more in [docs/language/syntax.md](docs/language/syntax.md).
 
-## Drawing things
+## Graphics
 
 Here is a circle gliding around a window:
 
@@ -249,9 +235,9 @@ close_window()
 
 Everything you can draw and play is listed in [docs/stdlib/gui.md](docs/stdlib/gui.md).
 
-## Things to try
+## Examples
 
-These are full programs written in Luna. Each one has a page explaining how it works.
+Full programs written in Luna, each with a page explaining how it works.
 
 ```bash
 make run-cargame             # a top-down car game
@@ -262,10 +248,9 @@ make run-fun NAME=galaxy     # lots of small visual demos
 
 Have a look at [docs/examples/](docs/examples/README.md).
 
-## How the garbage collector is doing
+## GC Performance
 
-I spent a lot of time on Luna's garbage collector, and compared it with Go, Java and Python
-on the same workloads. Here are the longest single pauses I measured, in milliseconds.
+Longest single pause on each workload, in milliseconds, compared with Go, Java and Python.
 Smaller is smoother.
 
 | Workload | Luna | Go | Java | Python |
@@ -276,15 +261,14 @@ Smaller is smoother.
 | strings | 0.10-0.13 | 0.05 | 8.4 | 0 |
 | object_graph | 0.20-0.26 | - | 0 | 5.9 |
 
-A 0 here usually means that language didn't need to collect at all on that workload. Python
-frees most objects as it goes, so it rarely pauses.
+A 0 means that language did not need to collect on that workload. Python frees most objects
+as it goes, so it rarely pauses.
 
-Go is still the champion for pauses. Luna stays well under a millisecond everywhere, which
-is plenty for smooth games and animations. There's still work to do on memory use and raw
-speed. The full story, including how the pauses went from 4 ms down to 0.1 ms, is in
-[docs/results/gc-results.md](docs/results/gc-results.md).
+Go has the shortest pauses. Luna stays under a millisecond on every workload. Memory use and
+raw speed are the next areas to improve. Full results, and how the pauses went from 4 ms to
+0.1 ms: [docs/results/gc-results.md](docs/results/gc-results.md).
 
-## Finding your way around the docs
+## Documentation
 
 Everything starts at [docs/README.md](docs/README.md). Some good places to begin:
 
@@ -299,14 +283,17 @@ Everything starts at [docs/README.md](docs/README.md). Some good places to begin
 - **Want to help?** [Testing](docs/testing.md) and the list of
   [known issues](docs/known-issues.md).
 
-## What's in the repository
+## Project Layout
 
 ```
-src/ include/   the language itself: parser, compiler, VM, GC, standard library
-gui/            graphics and audio
+src/ include/   the language: parser, compiler, VM, GC, standard library
+gui/            graphics, audio, and the vendored libraries they use
 rust/           two small Rust runtimes
+asm/            assembly (the clock)
+lib/            prebuilt GLFW and the Rust libraries
 test/           Luna tests
 zig-test/       lower-level tests written in Zig
+assets/         shared fonts and models
 docs/           documentation and example programs
 ```
 
@@ -317,7 +304,7 @@ Luna is free software under the **GNU General Public License v3.0 or later**. Se
 
 ## Credits
 
-Luna stands on the shoulders of some wonderful open source projects:
+Luna uses these open source libraries:
 
 - [GLFW](https://github.com/glfw/glfw) for windows and input (zlib/libpng license)
 - [stb](https://github.com/nothings/stb) by Sean Barrett for images, fonts and screenshots
@@ -327,7 +314,7 @@ Luna stands on the shoulders of some wonderful open source projects:
 - [tinyobjloader-c](https://github.com/syoyo/tinyobjloader-c) for loading 3D models (MIT)
 
 The music and artwork in the example programs belong to their artists and are included only
-for demonstration. Thank you to all of them. The full list is in
+for demonstration. The full list is in
 [docs/examples/musicplayer/CREDITS.md](docs/examples/musicplayer/CREDITS.md) and
 [docs/examples/fun/README.md](docs/examples/fun/README.md#credits). Playback icons are by
 [Icons8](https://icons8.com).
