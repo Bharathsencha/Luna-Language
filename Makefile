@@ -274,6 +274,10 @@ test-gc-safety: $(BINDIR)/$(TARGET)
 test-gc-all: $(BINDIR)/$(TARGET)
 	@python3 test_gc/gc_bench_all.py
 
+# Live GC pause monitor (opens the browser; Ctrl-C to stop)
+demo-gc: $(BINDIR)/$(TARGET)
+	@python3 demo/demo_gc_live.py
+
 zig-test:
 	cd zig-test && ZIG_GLOBAL_CACHE_DIR=.zig-global-cache zig build test --cache-dir .zig-cache
 	@echo "Zig test passed. No errors found."
@@ -284,4 +288,4 @@ vm:
 vm-run: vm
 	./vm/luna_vm vm/sample.luvm
 
-.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-java-gc test-py test-gc-safety test-gc-all zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run
+.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-java-gc test-py test-gc-safety test-gc-all demo-gc zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run
