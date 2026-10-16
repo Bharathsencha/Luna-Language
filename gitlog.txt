@@ -1,0 +1,874 @@
+commit 5306638ea1bc84cd752ff588a6edfdbbae2a9fe2
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Aug 26 23:19:29 2026 +0530
+
+    bench: unified GC benchmark (Luna vs Go vs Java G1) + stress tests + Makefile target
+
+commit eef24c02f596028948e4e01d3d294839ba92f30b
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Aug 26 14:49:24 2026 +0530
+
+    gc: fix adaptive step overflow (multi-ms alloc_heavy pauses) + remembered-set flag clear
+    
+    gc_adaptive_steps doubled 2048 << (mark_step_count/4); once the counter hit
+    212 the shift overflowed to 0, which disabled the drain deadline and turned
+    a step into a stop-the-world sweep of the whole gray stack (3-40ms spikes on
+    alloc_heavy's 8MB list buffer). Clamp the budget to 4096 instead.
+    
+    Also clear obj->remembered when an entry leaves the remembered set so later
+    stores can re-remember it (stale flags dropped edges across collections).
+    
+    Makefile: add missing build rule for gui/model_backend.c.
+
+commit 64c65555c07e03c388be88c27f8c7157f7530ae4
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 18:27:50 2026 +0530
+
+    remove jit.md (plan shared in chat, not as doc)
+
+commit 4725e39f339bdc5df5d152a4951f0b2b9fc321bc
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 18:27:19 2026 +0530
+
+    docs: add JIT plan (copy-and-patch baseline, phases, GC dependency)
+
+commit 34cb2348bfd8c990439fd1073ed9b09214c5ff65
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 18:24:54 2026 +0530
+
+    bench: 3-way GC comparison (Luna/Java/Go) on classic workloads + README tables
+
+commit 68f95951474b8f48bdffd8b11ce90f1ce810930c
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 18:20:01 2026 +0530
+
+    gc+java: growable intern table, Java vs Luna GC benchmark, module/model sources
+    
+    - Intern table now grows (2x rehash at 70% load) instead of fatal-erroring
+      at 8192 unique strings; map-heavy programs can intern 100k+ keys.
+    - Sweep block budget 2 -> 16 (the 64us deadline bounds the step, not the
+      budget); larger dead-block batches per step.
+    - New Java (G1) vs Luna GC benchmark: java/GcBench.java (binary_trees,
+      map_churn, object_graph, concurrent_map; warmup + 3 measured runs with
+      MXBean GC stats and per-run pause attribution) driven by
+      stress_test/java_bench.py -> java/java_vs_luna.csv.  Run: make test-java-gc.
+    - Test fixtures for the new GC workloads live in test_gc/ (gitignored).
+    - Module runtime + model backend sources and their Makefile wiring.
+    - .gitignore: gc.log.*, hs_err logs, gmon.out, build out dirs.
+    
+    20/20 tests pass, GC safety passes under stress+verify.
+
+commit b8433ac3bd2858ecd211062b4370ab01449dae0a
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 16:11:19 2026 +0530
+
+    Delete .codex
+
+commit 828424d049a13d95d80ff5ae696e4ab4a949590c
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:57:14 2026 +0530
+
+    bench: add make test-gc-three (Go vs Luna 3-run averages) + refresh docs
+    
+    - stress_test/stress_bench.py + Makefile target: runs each GC benchmark
+      3x against Go and appends a simple per-language summary row
+      (user time, GC max pause, GC total, RSS) to stress_test/stress_results.csv
+    - docs: README, docs/gc.md, docs/benchmarks.md, go/README.md updated with
+      the final numbers: worst pause ~0.11-0.14ms (Go 0.03-0.06ms), user time
+      within ~1.2-1.4x of Go, cycles RSS 428MB -> 16.5MB
+
+commit 140623c6b4ad98a21f73b9bcceb721fcc435cb75
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:41:35 2026 +0530
+
+    gc: incremental remembered-set scan bounds mark_roots pauses
+    
+    Minor-GC mark_roots used to push every remembered-set entry to the gray
+    stack in one unbounded pass.  Under churn (e.g. stores into freshly
+    promoted containers during incremental sweep) the set can reach tens of
+    thousands of entries and mark_roots took 0.3-0.45ms (cycles benchmark).
+    
+    Now the pre-existing entries are scanned in 1024-entry batches across
+    steps (like the drain), the sweep phase waits until the scan completes,
+    and entries appended during the collection are compacted for the next
+    one.  mark_roots is bounded again.
+    
+    cycles gc_max 0.45ms -> 0.135ms; alloc_heavy gc_total 13.4ms -> 15.6ms
+    benchmark-avg but 8-9ms direct, gc_max 0.150ms; all four benchmarks
+    0.11-0.16ms worst pause.  19/19 tests pass, GC safety passes under
+    stress+verify.
+
+commit a1fc52566d6652e4d97a0cd8006b4c0fef3ec0c3
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:35:43 2026 +0530
+
+    gc: 64us pause target, 2-block sweep budget, 1K promote-scan cap
+    
+    Push worst-case pauses well below 0.2ms without any JIT:
+    
+    - pause target 125us -> 64us (env-tunable LUNA_GC_PAUSE_TARGET_US)
+    - sweep block budget 6 -> 2 so a sweep step cannot outrun the target
+    - promotion remember-scan cap 4096 -> 1024 children (larger containers
+      are remembered unconditionally and traced with deadline slicing on the
+      next minor GC instead)
+    
+    3-run averages: alloc_heavy gc_max 0.299ms -> 0.143ms and gc_total
+    43.9ms -> 13.4ms; long_live 0.219ms -> 0.145ms; strings 0.174ms ->
+    0.142ms (worst observed under contention 1.6ms -> 0.45ms).  19/19 tests
+    pass, GC safety passes under stress+verify.
+
+commit 4a96b5bbba736a68d9fadd2514ae0cc662dd8749
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:28:52 2026 +0530
+
+    gc: bound sweep deadlines and reuse dead large objects (pause spikes fixed)
+    
+    - Sweep steps now inherit the collection step's absolute deadline instead
+      of starting a fresh 125us budget after the drain; combined mark+sweep
+      steps no longer double the target pause.
+    - Drain deadline checked every 16 gray pops (was 64) for tighter bounds.
+    - Sweep block budget 8 -> 6 so pass 1 stays under the pause target.
+    - Dead large objects (>32KB buffers) are parked on a per-heap free list
+      and reused on the next same-size allocation instead of being free()d
+      during sweep.  munmap of 8-12MB buffers could not be deadline-
+      interrupted and caused 0.3-1.0ms pause spikes; those are gone.
+      (Free list capped at 64MB; excess returns to the OS.)
+    
+    gc_max under benchmark contention: 1.056ms -> 0.375ms worst case;
+    direct runs 0.13-0.22ms.  19/19 tests pass, GC safety passes under
+    stress+verify.
+
+commit d2526045d3abf9a0fbe8427df27c41e3cdb1f4b5
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:16:44 2026 +0530
+
+    vm+gc: multi-part string fusion, young-filtered remember, template chunk sizing
+    
+    - FMT opcode generalized to N-part chains: repeat(const, N) and string
+      constants followed by to_string(int) now build in ONE allocation.
+      strings 0.35s -> 0.19s (now tied with Go), alloc_heavy 0.21s -> 0.13s,
+      long_live 0.13s -> 0.07s.
+    - Generational remembered set only remembers a container when the stored
+      child is young; old->old stores skip the hook (matches interpreter
+      semantics, shrinks remembered-set scan work).
+    - Fewer collections: young limit raised to 1-8MB, major interval raised;
+      GC totals roughly halved (alloc_heavy 43ms -> 23ms) with pauses still
+      sub-0.4ms.
+    - Template chunks sized to the actual field payload (was a flat 16KB);
+      cycles RSS 428MB -> 16MB and user time 0.20s -> 0.03s.
+    
+    19/19 tests pass, GC safety passes under stress+verify.
+
+commit 394964094f9b6cce0b1d0d91aba7b8c71fe5e254
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:09:22 2026 +0530
+
+    gc: halve pause target and sweep budget for lower sub-ms pauses
+    
+    Drain steps were consuming the full 250us pause target while tracing the
+    750k-entry live buffer each minor GC, and combined mark+sweep steps could
+    overshoot to ~0.65ms.  Lower the default pause target to 125us and the
+    per-step sweep budget from 16 to 8 blocks.
+    
+    alloc_heavy gc_max 0.495ms -> 0.176ms, gc_total 57ms -> 41ms, while user
+    time stays at 0.21s (now faster than Go's 0.21s).  All four GC benchmarks
+    hold sub-0.2ms worst pauses; 19/19 tests pass.
+
+commit b961687b5f5b100fc8a4052cc57d3fe02323400c
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 24 11:06:40 2026 +0530
+
+    vm: 100x+ user-time speedup via trusted barriers, box-scope fix, string fusion
+    
+    - Write barriers: internal container stores now use trusted barrier variants
+      that skip the O(blocks) managed-payload walk (was 5.4M calls x thousands
+      of block comparisons per alloc_heavy run).  The public API keeps a check,
+      now O(log n) via a sorted block-index with binary search.
+    - Box scope release: track a high-water mark + active count so scope exits
+      are O(1) when no boxes live (was 83% of runtime: 750k x 4096 slot scans).
+    - String fast paths: two-string concat in VM_OP_ADD avoids malloc
+      round-trips; to_string(int) builds directly.
+    - VM_OP_FMT fusion: repeat(const, N) + to_string(int) compiles to a single
+      allocation instead of three.
+    - Interned-name cache per chunk: global/field/map-key lookups skip
+      re-interning on every opcode.
+    
+    Benchmarks (3-run avg, user time): alloc_heavy 25.5s -> 0.23s (now beats
+    Go's 0.24s), long_live 2.27s -> 0.13s, cycles 23.3s -> 0.19s, strings
+    15.5s -> 0.28s.  GC pauses stay sub-ms.  19/19 tests pass.
+
+commit e375ff272487c210890bbdaef7e36772da90d36b
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Aug 20 23:08:56 2026 +0530
+
+    Major changes: interpreter → bytecode VM + sub-ms GC
+    
+    - Execution now runs on a bytecode VM (computed-goto dispatch):
+      * compiler extended to all node kinds: field access, map literals,
+        template strings, typed init, box, input, for-in, switch, import,
+        unsafe blocks, and/or short-circuit, default params, anonymous funcs
+      * 14 new opcodes (NEW_MAP, MAP_SET, BOX_ALLOC, ADDR_OF, CALL_NAMED,
+        DEFER, HAS_ARG, IMPORT, SCOPE_BEGIN/EXIT, UNSAFE_BEGIN/END, ...)
+      * top-level lets define globals; REPL runs on the VM; imports execute
+        compiled modules in nested VMs with a root registry for GC safety
+      * nested VM closures callable from native callbacks
+    - GC now holds sub-ms worst pauses on every benchmark:
+      * bounded promote-scan (4096-child cap) instead of unbounded traces
+      * remembered-set reset per minor GC; template write barrier added
+      * tuned young gen limits, sweep budgets, pause targets
+      * alloc_heavy 0.27ms / long_live 0.26ms / cycles 0.14ms / strings 0.28ms
+    - 19/19 tests pass; GC safety passes under stress+verify
+
+commit 5366573667ecc17b976aad83c7fe013f3b8c6bb8
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Aug 20 21:27:20 2026 +0530
+
+    vm: migrate execution to bytecode VM; all tests pass, GC sub-ms on all benchmarks
+
+commit 3fdce4c9ae638babd83b2b6c4fa8c5db38bdb6df
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Aug 20 19:01:22 2026 +0530
+
+    gc: bounded promote-scan fixes cycles liveness bug, sub-ms pauses on all benchmarks
+
+commit d9252f11884a4f3eb5980cdd2eb26944002c0d88
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Aug 20 15:51:03 2026 +0530
+
+    gc: tune pause targets and add template write barrier
+
+commit e5969be19d79ce94fac80ce93b2b94a7e7f90fa4
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Aug 10 15:17:24 2026 +0530
+
+    gc: fix crash + achieve sub-ms pauses
+    
+    - Fix stale-BLACK bug: minor sweep skipped blocks with young_objects==0,
+      leaving remembered old objects BLACK; next major GC treated them as
+      already-traced and missed their children → reachable objects swept as DEAD.
+      Add minor_marked_old flag + reclaim skip gate.
+    
+    - Fix deadline lost-reference: tracers (list_items_trace, map_entries_trace,
+      template_trace) could lose a reference when pause deadline hit inside
+      gc_visit_ref. Now check deadline_hit after each value_gc_mark and resume
+      from same slot.
+    
+    - Incremental sweep refactor: detach sweep chains at prepare (sweep_chain,
+      large_sweep_list) so mutator allocations can't corrupt unlink pointers.
+      Sweep runs in 3 passes (blocks, reclaim, large objects) with per-iteration
+      deadline checks; budgeted large_sweep_budget (64).
+    
+    - Remove dead mark_evacuate_candidates (0.5ms saved; 'evacuating' unused).
+    
+    - GC pause results (max):
+        alloc_heavy  0.71 ms
+        long_live    0.21 ms
+        cycles       0.38 ms
+        strings      0.40 ms
+    
+    - New test_gc/gc_bench.py: runs Luna + Go, captures both GC pause stats,
+      appends timestamped rows to test_gc/gc_benchmark_results.csv.
+      Makefile test-gc target updated to use it.
+    
+    - All 19 tests pass + stress/verify.
+
+commit 8de9a6f5a2e781100aed16783a9dd97514da72e9
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Aug 9 18:08:09 2026 +0530
+
+    Optimize interpreter & parser and expand Zig integration test suite
+    
+    - src/interpreter.c: Switch inline cache keys to env_scope_id(e) to keep variable cache hits active across TCO resets. Add string_may_have_interpolation check to skip interpolation logic for plain strings. Convert deferred_calls_run_scope to an O(1) LIFO stack pop.
+    - src/parser.c: Use geometric doubling growth for map literal key/value arrays in primary().
+    - zig-test/: Add integration fixtures for recursion, closures, loops, and constant folding. Fix build.zig data_runtime library linking.
+
+commit 3af31288980a1624694e60419ec10ff56bf1c4fa
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Aug 9 17:51:11 2026 +0530
+
+    Enforce export checks on imports and add automated GC benchmarks
+    
+    - src/interpreter.c: Enforce export/visibility checking on legacy import statement. Now, 'import' runs inside an isolated module environment and only exposes explicitly exported symbols to the caller environment, matching 'use' behavior.
+    - test/util.lu: Add export to util_ping and util_module_loaded to comply with export enforcement.
+    - test/import_helper.lu, test/test_import_private_error.lu, test/test_import_private_error.expect: Add new golden test validating that unexported/private symbols from an imported file are not accessible and generate name/type errors.
+    - Makefile: Replace shell script invocation with automated python runner for 'make test-gc', running Go and Luna benchmarks 3 times, averaging the results, and outputting to CSV.
+
+commit 8a09f2afba9670db64345176af7be7250ebae4ab
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun May 3 12:28:15 2026 +0530
+
+    Revise project description and key features in README
+    
+    Update README.md to enhance project description and features.
+
+commit 2c93c68337514e159fcd0d423b04276138fcdb27
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Apr 21 22:45:17 2026 +0530
+
+    Clean up README.md and fix merge conflict
+    
+    Removed unnecessary lines and resolved merge conflict.
+
+commit 5bcd1c1db8fcf9b6e8b0a43be452f72796a9203e
+Merge: c65b2e9 4c55070
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Apr 20 23:39:13 2026 +0530
+
+    Merge remote changes, resolve README conflict
+
+commit c65b2e9d7554fa0a695093293a4c7343ec83853d
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Apr 20 23:38:19 2026 +0530
+
+    Add 3D free-camera input, cursor capture, and test harness fixes
+
+commit 4c55070eba980b19638118e11f15f90535f6121f
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Apr 20 23:19:18 2026 +0530
+
+    Update README with key features and improvements
+    
+    Merged features and improvements from different branches, including modern syntax, manual memory tools, and creative coding enhancements.
+
+commit 805eb34c2c429d6516adba4033abebc00deebfa1
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Apr 20 12:06:10 2026 +0530
+
+    Major runtime overhaul: custom GL backend, perf passes, GC, language features, 3D GUI
+    
+    Performance:
+    - Add VALUE_IS_HEAP() macro, inline value_free/value_copy for primitives
+    - Add move semantics (value_move, value_list_append_move, env_def_move, env_assign_move)
+    - Replace env_clear_locals 512-slot scan with occupied_slots[] side array (~7x speedup)
+    - Add Env freelist pool (ENV_POOL_MAX=32) to avoid malloc/free per scope
+    - Intern builtin names for pointer-compare dispatch instead of strcmp chains
+    - Switch lexer keyword lookup to first-char dispatch
+    - Add 24-byte inline token buffer (ibuf) to avoid per-token malloc
+    - Add value_fprint() for zero-alloc direct stdout printing
+    - Optimize string concat from 5 mallocs to 2
+    - Replace linear env_get_func scan with 64-slot hash table
+    - Fix list/map string conversion from O(n^2) strcat to O(n) cursor-based
+    - Single scratch buffer for merge sort instead of O(N log N) malloc/free pairs
+    - Fix int division to preserve int type on exact division
+    - Add constant folding in parser (try_fold covers all binary/unary ops)
+    - Add tail-call optimization for self-recursive tail calls
+    - Tighten compiler flags: -funroll-loops -fomit-frame-pointer -DNDEBUG
+    - Fix main() double-call bug
+    
+    GC (Tracing/Immix/Generational):
+    - Fix promoted-young remembered-set hole in sweep_block/sweep_large promotion paths
+    - Fix root marker userdata wiring in mark_roots
+    - Add portable GC tuning env knobs (LUNA_GC_INCREMENTAL, INCREMENT_STEPS, SWEEP_BUDGET, etc.)
+    - Fix young_limit not scaling with heap_limit (nursery stayed tiny forever)
+    - Add chunked immix block sweeping across safe points (max pause ~10ms -> sub-ms)
+    - Fix remembered-set cleared mid-flight during chunked sweep (reachable-dead bug)
+    - Fix remembered-set ownership bug: remember backing buffers (list->items, map->entries)
+    - Add cached runtime string literals on AST nodes (avoid per-execution alloc in hot loops)
+    - Add value_string_len, value_string_concat_raw, value_string_repeat_raw helpers
+    - Rewire OP_ADD concat, concat(), repeat() to use direct builders
+    - Add make test-gc-safety target with stress+verify scripts
+    - Add incremental minor stepping restore in gc.c
+    - GC max pause results: alloc_heavy 0.178ms, cycles 0.617ms, long_live 0.237ms, strings 0.065ms
+    
+    Language Features:
+    - Add full expression string interpolation as AST form ({1+2}, {arr[0]}, {fn(x)})
+    - Fix empty {} in strings not being treated as interpolation
+    - Add func main() auto-call (zero-param only, C convention)
+    - Add compound assignment operators
+    - Add else if
+    - Add negative list indexing (read + assign)
+    - Add default function parameters
+    - Add for-in loops
+    - Add string indexing
+    - Add const declarations
+    - Add scope-level defer(call(...)) with LIFO execution
+    - Add range(start, end, step), map_values(), map_items() stdlib helpers
+    - Add remove/find/slice for lists, debug(x), format()
+    - Add real hashmaps (VAL_MAP, open addressing, interned keys)
+    - Add closures and first-class functions (VAL_CLOSURE, anonymous func literals)
+    - Add map/filter/reduce builtins accepting closures
+    - Add data Vec2 { x, y } custom data types with shape() introspection
+    - Add template keyword with VAL_TEMPLATE gc object, field r/w, type/shape/len support
+    - Add bloc with largest-field slot sizing and cache-line limit enforcement
+    - Add box with scope-tracked storage, auto-release, and escape promotion
+    - Add Rust data_rt crate (bloc, box, template runtime validation)
+    - Add Rust-C FFI bridge (11 extern C functions, src/data_runtime.c)
+    - Clean up module system: add use/export, keep legacy import for compat
+    - Fix use-after-free-token bug in string literal parser
+    - Fix text color (font atlas swizzle), draw_text color arg, mirrored arrow texture
+    
+    Tooling & Docs:
+    - Add Zig internal test suite for lexer/parser/interpreter/error behavior
+    - Update arch.md, gc.md, README, installation.md, gui.md, data structure.md
+    - Add docs/rust_data_types.md, docs/memory_and_data.md
+    - Add Go GC benchmark methodology validation
+    - Consolidate tests: remove test_errors.lu, multiline_list.lu, memory.lu
+    - Add test/test_data_types.lu integration test
+    - 17 Luna tests passing, 11 Rust data_rt tests passing
+
+commit 9cb313cf25263c50105a05ee606f2fc87f81fb8b
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Apr 15 23:15:33 2026 +0530
+
+    Thanks open source .. community this one is for you
+
+commit 8de93c4516abdbcf7f5619854f47284e707c7d31
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Apr 15 23:12:13 2026 +0530
+
+    Cooking something better now .. RIght GO?
+
+commit a1c0ea96cf398472cbd95b619e54846696e06c46
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Apr 15 23:11:37 2026 +0530
+
+    Delete tmep.lu
+
+commit f0fe07642bb1591a24746c6f6b838277fb38c45c
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Apr 15 23:11:23 2026 +0530
+
+    Delete gamepla.md
+    
+    This is just a plan that didnt work
+
+commit e840d5755b0a28ecc409c238c99a3a52a30bfe94
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Apr 15 23:10:49 2026 +0530
+
+    Ahh shit Here we go again
+
+commit 33df1a73e05ae158f44e3c02c766aff6e7ec41a1
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Mar 15 21:17:55 2026 +0530
+
+    add prebuilt libglfw3.a static library
+
+commit 7502285762a7451be448216b916a2b248c513af1
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Mar 3 17:40:28 2026 +0530
+
+    Replace Raylib with custom OpenGL 3.3 + miniaudio backends
+    
+    - Remove Raylib dependency (raylib.h, raymath.h, rlgl.h)
+    - Add gui/gl_backend.c/.h: custom OpenGL 3.3 Core + GLFW batch renderer
+      (shapes, textures, fonts via stb_truetype, FBOs, 2D camera, screenshots)
+    - Add gui/audio_backend.c/.h: miniaudio-based audio
+      (music streaming, sound effects, PCM capture for FFT)
+    - Vendor single-header libs: stb_image, stb_truetype, stb_image_write, miniaudio
+    - Vendor GLFW 3.3.10 (static lib + header)
+    - Rewrite gui/gui_lib.c to call gl_* and audio_* instead of Raylib
+    - Add draw_rectangle(x,y,w,h,r,g,b,a) 8-arg overload support
+    - Add draw_line 5-arg overload (x1,y1,x2,y2,color) with default thickness
+    - Auto-call main() if defined with zero params (no explicit main() call needed)
+    - Fix projection matrix transpose flag (GL_FALSE for column-major)
+    - Fix camera matrix multiply for column-major order
+    - Update Makefile: link glfw3, GL, X11 instead of raylib
+    - Update docs (arch.md, gui.md, installation.md) for new backend
+    - Add vulkan/ experimental sample
+
+commit 760c27e94cc88dfc7f6ad9458034bf4278fd8029
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Thu Feb 26 16:01:56 2026 +0530
+
+    Major language overhaul: GUI, SIMD math, memory management, string interning & demos
+    
+    This is a large, wide-ranging update to Luna covering new language features,
+    performance architecture, memory management, and a full suite of GUI demo programs.
+    It is also the final planned update to the language.
+    
+    GUI (Raylib Integration)
+    ------------------------
+    Added a native GUI library backed by Raylib, enabling real-time graphics, input
+    handling, and audio. Includes the following demo programs:
+    
+      - aurora.lu         Northern lights simulation (vertical ray style)
+      - aurora_wave.lu    Northern lights simulation (horizontal wave style)
+      - meadow.lu         Animated sunlit meadow scene
+      - eye.lu            The all-seeing eye animation
+      - paint.lu          Interactive drawing/paint app
+      - sand.lu           Falling sand particle simulation
+      - galaxy.lu         Milky Way galaxy renderer
+      - ripples.lu        Hypnotic ripple effect
+      - car_retro.lu      Neon retro racer game
+      - music.lu          Real-time audio visualizer
+      - boobs.lu          Soft body physics demo
+      - vortex.lu         Vortex physics simulation
+      - blackhole.lu      Black hole gravity simulation
+    
+    Also includes a full music player (music/) and a retro car game (cargame/)
+    originally written in C with Raylib, now integrated into the Luna ecosystem.
+    
+    SIMD & Native Math
+    ------------------
+      - vec_mul(a, b)        SIMD-accelerated vector multiplication
+      - vec_mul_inline(a, b) Zero-allocation in-place vector mutation
+      - mat_mul(a, b)        OpenMP-threaded matrix multiplication
+    
+    Luna now achieves up to 485x speedup over native Python, beating NumPy 2.2x on
+    vectors and 2.6x on large matrix workloads via AVX2/AVX-512 auto-vectorization,
+    OpenMP parallelism, dense contiguous memory layout, and arena-backed allocation.
+    
+    Memory Management
+    -----------------
+    Replaced manual memory handling with a hybrid deterministic system:
+      - Reference counting for strings and lists (immediate free at zero refs)
+      - AST memory arena using pointer-bump allocation (O(1) cleanup, zero per-node frees)
+    
+    String Interning
+    ----------------
+    Implemented global string interning via a hash set. All identical string identifiers
+    now share a single canonical pointer, enabling O(1) pointer-identity comparisons
+    instead of strcmp, and unlocking AST lexical caching for near-zero-cost variable
+    lookups inside hot loops.
+    
+    AST Improvements
+    ----------------
+    AST nodes for ident, assign, inc, and dec now carry an inline lexical cache.
+    Loop variables resolve in O(0) after the first iteration. Cache is invalidated
+    per-scope via an env version counter, keeping recursive function calls safe.
+    
+    Assets & Music
+    --------------
+    All music and third-party assets used in demos are not owned by the author.
+    Sources have been credited to the best of the author's knowledge.
+
+commit 1dd8460e7bf11849e52f6072efcf70b056d818d0
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Sat Feb 21 15:41:11 2026 +0530
+
+    Feat: Added new GUI library to languge using raylib underneath
+
+commit 20cb7c8d41065343c4b5976dabc57953d0a57eca
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Wed Feb 18 17:13:07 2026 +0530
+
+    Git attribute
+
+commit f7ffd77f7dccca6435f2264ca19af12c45baa10d
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Sat Feb 14 17:32:59 2026 +0530
+
+    Added make native make native-run and make native-clean. The code ran ~15% faster.
+
+commit 334856f93f71d474f936f522d3df04fbd4172f97
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Feb 12 21:40:55 2026 +0530
+
+    Rename 'Naive Python' to 'Native Python' in benchmarks
+
+commit 6bcf4d42ececa3ee4bebee918315ce69a248a927
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Feb 12 20:24:46 2026 +0530
+
+    Update performance-benchmarks.md
+
+commit fd3a4978e86625f889316d522e8271d8d9961c14
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Thu Feb 12 20:21:30 2026 +0530
+
+    Added new Performance Markdown fike,Alos added  Sample code along with Pyhton equivalent (To best of my knowledge) for Benchmarking new optimisations
+
+commit 185892bd165e63bcac43613e3fdffbff2eb79e51
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Thu Feb 12 18:44:33 2026 +0530
+
+    Optimize core performance
+
+commit b9d21d226653c0c95a56120fece3d00aac521f01
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Sun Feb 8 20:04:09 2026 +0530
+
+    Restore project to state of commit 3831a8b
+
+commit 23b5d70a5e805994fcf2034d014c0b5a546b89ba
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Wed Feb 4 23:06:16 2026 +0530
+
+    Just a prepration
+
+commit a0751b692ea777d57f2f53b3c979a4117e24b28b
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Wed Feb 4 22:53:19 2026 +0530
+
+    Fix vector addition precedence in interpreter
+    
+    The + operator on two lists incorrectly performed string concatenation instead of vector addition. This occurred because eval_binop treated lists as generic objects and coerced them to strings before vector math was checked. Reordering the checks ensures vector addition takes precedence. It's temporary fix but it works for now Dont know how I missed it.
+
+commit 12595671856f3e4e59bc6bfa18d8fcf5df7708ea
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Tue Feb 3 21:37:25 2026 +0530
+
+    feat : A special feature from my other language
+
+commit f8b4e19acd87c6a68f75ea1894d1e75e22506337
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Tue Feb 3 20:15:37 2026 +0530
+
+    Fix: Seprated diffrent test cases
+
+commit 257f960aa5944b3f330c18f540ae255ce4dd2138
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Tue Feb 3 20:08:41 2026 +0530
+
+    Updated readme
+
+commit 9fe38246776e60013caef632b432dfa24ae3f9c0
+Author: Bharath <bharathsencha50@gmail.com>
+Date:   Tue Feb 3 19:50:42 2026 +0530
+
+    feat: implement reference semantics and mark-and-sweep garbage collection
+    
+    Refactored the core memory model to support bootstrapping and complex
+    data structures. This transition moves Luna from "copy-by-value" to
+    "reference semantics" for strings and lists.
+    
+    Changes:
+    - Introduced a unified `Obj` system with headers for GC tracking.
+    - Implemented a Mark-and-Sweep Garbage Collector (gc.c, gc.h).
+    - Refactored `Value` to use a pointer-based model (VAL_OBJ).
+    - Updated the Interpreter to handle shared object references and truthiness.
+    - Added `env_mark` to support root-set scanning during GC cycles.
+    - Updated Standard Libraries (string, list, vec, file) to utilize
+      new Object macros (AS_STRING, AS_LIST, IS_OBJ).
+    - Modified Makefile to include the new GC module.
+    
+    This architecture shift allows for long-lived, shared data structures
+    necessary for writing a compiler in Luna itself.
+
+commit 3831a8be3c4bd0326e5ff3257cbcda57df17a719
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Jan 29 12:04:15 2026 +0530
+
+    Fixed url
+
+commit 5c19e001ebca9894f1b240813638789a1049c594
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Jan 13 23:26:16 2026 +0530
+
+    Add Windows build and run instructions to README
+    
+    Added Windows-specific instructions for building and running the project.
+
+commit 605d6dcc4ac642d7fb70434617076a8e3d0ad479
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Jan 13 23:22:51 2026 +0530
+
+    Add CMake configuration
+
+commit 987e2b28f5e50318babf7df15cca4cc85b02e396
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Wed Jan 7 10:17:25 2026 +0530
+
+    Changed some stuff
+
+commit aac79c4a8ec02991ab157de7e22cd2342cafa99e
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Jan 4 19:03:48 2026 +0530
+
+    Clarify run command in Makefile
+    
+    Updated run command comment to clarify usage.
+
+commit d7a471add283782958358975b89c5941861cc0e8
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Dec 29 20:22:22 2025 +0530
+
+    feat: upgrade random engine to xoroshiro128++ and add hybrid sort
+    
+    Merged many test files into a few and updated math.md with new code.
+    
+    Implemented xoroshiro128++ PRNG with SplitMix64 seeding for better randomness.
+    
+    Added automatic OS-level entropy seeding via /dev/urandom at startup.
+    
+    Unified rand() API to support float [0,1), rand(max), and rand(min, max).
+    
+    Added trand() for direct access to 64-bit OS-level randomness.
+    
+    Implemented hybrid Merge/Insertion Sort for efficient list ordering.
+    
+    Added Fisher-Yates shuffle powered by the new xoroshiro engine.
+    
+    Fixed Makefile and header dependencies for uint64_t and list_lib.
+
+commit 1e8c811e020a54567a56e9949b62dccb325e1d8e
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Dec 29 20:21:12 2025 +0530
+
+    chore: force linguist to detect Luna
+
+commit 0431ce039b44e3c46336de79be1e549263020a1a
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Dec 29 20:04:16 2025 +0530
+
+    chore: mark .lu files as Luna language
+
+commit c8b439687123d1d241b856a7afe648e546ee7e3f
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Dec 28 21:25:24 2025 +0530
+
+    Refactor roll_dice function and improve output format
+    
+    Updated the dice rolling function to use a dynamic seed and adjusted print formatting for results.
+
+commit 55581ecec2a8b919a8cf2e3a827f5067294512a3
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Fri Dec 26 01:29:06 2025 +0530
+
+    docs: complete documentation overhaul with modular structure and examples
+    
+    - Restructured README with a clear, casual tone
+    - Split architecture documentation into arch.md
+    - Enhanced math, string, and file docs with practical examples
+    - Added performance.md covering SIMD vectorization and high-precision timing
+    - All examples tested and verified to work
+
+commit 7e0264e2c18c855d34e99411e1fc3e68fa27fe7c
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 25 16:24:08 2025 +0530
+
+    Fix: Fixed format in readme.md
+
+commit 674630902b54f498133b3b7cb729e9d7a467a958
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 25 16:22:47 2025 +0530
+
+    I aint so smart
+
+commit 34f7a44df1b5a78b2d521f9c0e75da261b6a036e
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 25 16:19:09 2025 +0530
+
+    I hate doing this
+
+commit 32ed4d61fa4360ef4ae37d34d6750815226bfc0f
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 25 16:16:31 2025 +0530
+
+    docs: move standard library docs to docs index
+
+commit 02acd084a2d05b7311e2ffe808be8a8821355e2d
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 25 16:12:27 2025 +0530
+
+    docs: fix documentation navigation structure
+
+commit 2847274b0a46071469ea289ab4d9c854b46f74d9
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 25 16:08:14 2025 +0530
+
+    docs: add documentation index for math and string module
+
+commit 6a621b4cb15c3859bcab842bb98e4699f547bb72
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sat Dec 20 13:26:09 2025 +0530
+
+    Expand readme with File I/O functions and samples
+    
+    Added File I/O functions and usage examples to the documentation.
+
+commit 8499afff3651b3a9a1ee461528c50ea5f67759ad
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sat Dec 20 13:24:46 2025 +0530
+
+    feat: accurate line tracking, improved error reporting, and native file I/O
+    
+    Added source line tracking to AstNode and propagated lexer line numbers through the parser and AST.
+    Synchronized the interpreter to report runtime, index, and semantic errors using AST line numbers.
+    Implemented global line tracking in luna_error to eliminate incorrect "Line 0" diagnostics.
+    Fixed read_line to strip trailing newlines, resolving file_io.lu assertion failures.
+    
+    Introduced VAL_FILE for native file handles and added a file library with wrappers for standard file operations.
+    Registered file APIs (open, read, write, close, read_line, file_exists, remove_file, flush).
+    Updated value handling, Makefile integration, and added perror-based diagnostics for file open failures.
+
+commit 3cbe7e4a03139ed1905e70f095ce53ddfbeada17
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Thu Dec 11 12:16:50 2025 +0530
+
+    Removed useless comments
+
+commit 8867bd3d60b3b173a371d0c976885438c7ac0a57
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Dec 9 23:06:50 2025 +0530
+
+    WIP: local changes before rebase
+
+commit 60437f32d07d64d35891dfc9aa7116ba3a4af521
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Dec 9 23:03:40 2025 +0530
+
+    Refactor: Split interpreter.c into modular components (Env, Library)
+    
+    - Extracted Environment/Scope management into  and .
+    - Moved Standard Library registration and native  to .
+    - Decoupled  to focus strictly on AST traversal and execution.
+    - Updated  and  to link the new modules.
+    
+    This change reduces the size of interpreter.c by ~30% and enforces separation of concerns between memory management, runtime configuration, and execution logic.
+
+commit 9a88413740de0777c85a959ec9b216027dc21b2a
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Dec 9 14:56:10 2025 +0530
+
+    Update time_vec.md
+
+commit d44069dd251b013f0403d112473095bb0364f444
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Tue Dec 9 14:51:09 2025 +0530
+
+    Feat: Implement SIMD operator overloading for lists
+    
+    - Added  providing SSE2 implementations for , ~/Desktop/Luna-Language, , and
+    - Created  and  to bridge the interpreter with Assembly
+    - Updated  to overload binary operators for  types
+    - Updated Makefile to compile  and link
+
+commit 6799154652a9424c5f60f1bc5d61225cc25cf771
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Dec 8 16:40:29 2025 +0530
+
+     Feat: Implement complete SIMD vector arithmetic in Assembly
+    
+    - Replace  with  supporting +, -, *, and /
+    - Implement  macro to generate optimized SSE2 code for all operations
+    - Update  and  to expose , , , and
+    - Add  section to mark stack as non-executable
+
+commit e8b28f6dbd88c52efae967f1b8a7b8685c1bcefd
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Mon Dec 8 11:30:29 2025 +0530
+
+    Feat: Implement high-precision clock() function using ASM
+    
+    - Added  for direct  syscalls
+    - Implemented C bridge in  to return time as float
+    - Registered  native function in
+    - Updated Makefile to support NASM compilation and link assembly objectsBruh
+
+commit 089105149b1df4c273437f043bff42e55aef2a80
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Dec 7 14:28:53 2025 +0530
+
+    Revise project description in readme.md
+    
+    Updated project description for clarity and tone.
+
+commit 0145d995e4185aa4efedb310d3637f5b5163866e
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sun Dec 7 13:49:15 2025 +0530
+
+    fix(parser): allow newlines in control flow statements (if, else, while, for) to resolve syntax errors
+
+commit 3c34f1c98d4aaac928df0634dc1da636b70dafe0
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sat Dec 6 16:55:53 2025 +0530
+
+    feat: implement logical operators (&&, ||): added lexer tokens, AST nodes, parser precedence rules, and short-circuit evaluation in the interpreter.
+
+commit 115be284278448f204f568ff4de2bc4137a6f5d8
+Author: Bharathsencha <bharathsencha50@gmail.com>
+Date:   Sat Dec 6 12:10:40 2025 +0530
+
+    initial commit
