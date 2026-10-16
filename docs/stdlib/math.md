@@ -22,6 +22,7 @@ Luna natively accelerates operations on massive arrays using GCC automatic vecto
 | -------------------- | ------------------------------------------------- | ----------------------- |
 | `dense_list(size, fill)`| Creates a contiguous pre-flattened float array | `dense_list(5, 1.5) → [1.5, ...]`|
 | `vec_mul(a, b)`      | SIMD accelerated vector multiplication            | `vec_mul([1, 2], [3, 4]) → [3, 8]`|
+| `vec_add(a, b)`, `vec_sub(a, b)`, `vec_div(a, b)` | Element-wise add, subtract, divide | `vec_add([1, 2], [3, 4]) → [4, 6]`|
 | `vec_mul_inline(a,b)`| Zero-allocation in-place vector multiplication    | `vec_mul_inline(A, B) -> mutates A`|
 | `mat_mul(a, b)`      | OpenMP threaded Matrix Multiplication             | `mat_mul(A, B) → Matrix`|
 
@@ -91,7 +92,7 @@ Generate random numbers for simulations, procedural content, and games.
 
 ---
 
-## Sort and Shuffel
+## Sort and Shuffle
 
 Utility functions for working with arrays.
 
@@ -168,7 +169,7 @@ func roll_dice(num_rolls) {
 roll_dice(10)
 ```
 
-## Example 3 : Randomness,Shuffel and Sort test
+## Example 3: Randomness, Shuffle and Sort
 
 ```javascript
 # Test 1: Basic rand() - float between 0.0 and 1.0

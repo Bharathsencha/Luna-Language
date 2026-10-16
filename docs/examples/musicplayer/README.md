@@ -1,162 +1,73 @@
-# Music Player Documentation
+# Music Player (`musicplayer/`)
 
-This document explains the internal logic, usage, and customization of the **Luna Music Player** (`musicplayer/music.lu`).
+A playlist player with album art, a seek bar, and a 32-band live spectrum visualizer.
 
-## Overview
-The Luna Music Player is a fully-featured audio application built with the Luna Language, featuring animated gradient backgrounds, album art support, a real-time audio visualizer, and an organized project structure.
-
-## Features
--   **Animated Gradient Background**: Dynamic HSL color cycling with purple-to-blue tones.
--   **Asset Organization**: Dedicated folders for songs and UI resources.
--   **Album Art**: Automated extraction from MP3 ID3v2 tags.
--   **Playlist System**: Supports multiple tracks with automated advancement.
--   **UI Controls**: Seek bar, Play/Pause (with resume), Next/Previous controls.
--   **Real-Time Audio Visualizer**: 32-band frequency equalizer bars driven by live PCM data.
-
----
-
-## Project Structure
-
-| Folder | Purpose |
-| :--- | :--- |
-| `musicplayer/` | Contains the main script (`music.lu`) and documentation. |
-| `musicplayer/assets/` | UI textures, icons, and custom fonts. |
-| `musicplayer/songs/` | MP3 files for the playlist. |
-
----
-
-## Controls
+```bash
+make run-music
+```
 
 | Action | Input |
-| :--- | :--- |
-| **Play / Pause** | Click the Play/Pause button (Center) |
-| **Next Song** | Click the Right Arrow |
-| **Previous Song** | Click the Left Arrow |
-| **Seek** | Click anywhere on the progress bar |
-| **Exit** | Close the window |
+|---|---|
+| Play / pause | Click the center button |
+| Next / previous track | Click the right / left arrow |
+| Seek | Click anywhere on the progress bar |
+| Exit | Close the window |
+
+Tracks advance automatically when one finishes.
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `music.lu` | The whole program (900x700 window) |
+| `songs/` | 14 MP3 files; the playlist is the `songs` list at the top of `music.lu` |
+| `assets/` | Play / pause / forward icons and the `ShadeBlue` font (`vinyl.png` and `neon.jpg` are present but unused) |
+| `CREDITS.md` | Sources for every track, icon and font |
+
+To add a track, copy the MP3 into `songs/` and append its path (root-relative, starting with
+`docs/examples/musicplayer/songs/`) to the `songs` list.
+
+## How it works
+
+**Background.** Every frame draws one `draw_gradient_ex` rectangle covering the window. The four
+corner colors come from `hsl()`, with hues driven by `sin(time)` and kept within 180-290 so the
+palette stays in the blue/purple range. Note that `hsl(h, s, v)` actually performs an HSV
+conversion (`gl_color_from_hsv`) despite its name.
+
+**Album art.** `load_music_cover(path)` reads the MP3's ID3v2 header, extracts the embedded
+picture frame, and uploads it as a texture. It returns `-1` when the file has no cover; the
+player then leaves the art area empty. The cover is scaled to fit a square with
+`draw_texture_pro`, preserving aspect ratio.
+
+**Spectrum.** The visualizer pipeline:
+
+```
+miniaudio data callback -> PCM ring buffer -> get_music_fft() -> 32 floats -> draw_rectangle bars
+  gui/audio_backend.c        audio_get_pcm_buffer()   gui/gui_lib.c                music.lu
+```
+
+1. While the current stream plays, the miniaudio data callback in `gui/audio_backend.c` averages
+   each stereo frame to mono and writes it into a ring buffer (only the most recently loaded
+   stream is captured).
+2. `get_music_fft(music)` in `gui/gui_lib.c` copies the buffer, then runs a direct DFT over the
+   last 1024 samples (48 kHz) at 32 logarithmically spaced frequencies from 60 Hz to 16 kHz:
+
+   ```c
+   float freq_ratio = powf(16000.0f / 60.0f, 1.0f / (NUM_BANDS - 1));
+   for (int n = 0; n < N; n++) {
+       float angle = 2.0f * M_PI * band_freqs[b] * n / sample_rate;
+       real += buffer[n] * cosf(angle);
+       imag += buffer[n] * sinf(angle);
+   }
+   ```
+
+3. Magnitudes are divided by the largest band (so the loudest band is 1.0) and returned as a
+   Luna list.
+4. `music.lu` maps each value to a bar height and a hue from 180 (cyan) to 340 (magenta).
+
+Logarithmic spacing matters because hearing is logarithmic: with linear bands, most bars would
+show high-frequency content.
 
 ---
 
-## Aesthetics & Background
-
-The player features an animated gradient background.
-
-### Background Engine
-The background is rendered using:
--   **`draw_gradient_ex`**: 4-corner gradient with dynamic HSL colors.
--   **Dynamic HSL**: Colors are calculated using `hsl()` based on `sin(time)` to create a breathing effect.
-
-### Color Limits
-The background is restricted to the cool spectrum (cyan, purple, blue) by bounding hue values between `200` and `290`.
-
----
-
-## Audio Visualizer
-
-The visualizer displays 32 frequency bars that react to the actual audio output in real-time. Here is how it works end-to-end.
-
-### Architecture
-
-```
-Audio Stream → PCM Callback → Ring Buffer → DFT → Luna List → Drawing
- (raylib)      (gui_lib.c)    (gui_lib.c)  (gui_lib.c) (library.c) (music.lu)
-```
-
-### 1. PCM Sample Capture (`gui/gui_lib.c`)
-
-When a music stream is loaded via `load_music_stream()`, the C function `lib_gui_load_music` attaches an audio processor callback using raylib's `AttachAudioStreamProcessor`.
-
-```c
-// Ring buffer for raw audio samples
-#define FFT_BUFFER_SIZE 2048
-static float fft_buffer[FFT_BUFFER_SIZE];
-static int fft_write_cursor = 0;
-
-// Callback: receives raw PCM frames from raylib's audio pipeline
-static void audio_processor_callback(void *bufferData, unsigned int frames) {
-    float *samples = (float *)bufferData;
-    for (unsigned int i = 0; i < frames; i++) {
-        // Average stereo channels to mono
-        float mono = (samples[i * 2] + samples[i * 2 + 1]) * 0.5f;
-        fft_buffer[fft_write_cursor] = mono;
-        fft_write_cursor = (fft_write_cursor + 1) % FFT_BUFFER_SIZE;
-    }
-}
-```
-
-This callback runs automatically whenever raylib processes audio frames. The stereo signal is averaged to mono and written to a circular buffer of 2048 samples.
-
-### 2. DFT Frequency Analysis (`gui/gui_lib.c`)
-
-The function `lib_gui_get_music_fft` computes frequency band magnitudes:
-
-1. **Snapshot**: Copies the ring buffer to avoid race conditions with the audio thread.
-2. **Frequency bands**: Defines 32 logarithmically spaced frequencies from 60 Hz to 16 kHz.
-3. **DFT**: For each band, computes the magnitude using a direct Fourier transform over the last 1024 samples at 48 kHz sample rate.
-4. **Normalization**: Divides each magnitude by the maximum to produce values between 0.0 and 1.0.
-5. **Return**: Packages the 32 floats into a Luna list using `value_list` / `value_float` / `value_list_append`.
-
-```c
-// Logarithmic frequency spacing
-float base_freq = 60.0f;
-float freq_ratio = powf(16000.0f / 60.0f, 1.0f / (NUM_BANDS - 1));
-for (int b = 0; b < NUM_BANDS; b++) {
-    band_freqs[b] = base_freq * powf(freq_ratio, (float)b);
-}
-```
-
-### 3. Registration (`src/library.c`)
-
-The C function is registered as a Luna builtin:
-```c
-env_def(env, "get_music_fft", value_native(lib_gui_get_music_fft));
-```
-
-This makes `get_music_fft(music_id)` callable from any Luna script.
-
-### 4. Rendering (`musicplayer/music.lu`)
-
-The Luna script calls `get_music_fft()` every frame and draws 32 colored bars:
-
-```python
-let fft = get_music_fft(current_music)
-if (fft != null) {
-    let num_bars = len(fft)
-    let b = 0
-    while (b < num_bars) {
-        let mag = fft[b]
-        let h = to_int(mag * viz_height * 0.9)
-        # Color gradient: cyan(180) -> magenta(340) across bars
-        let bar_hue = 180.0 + (b * 160.0 / num_bars)
-        let bar_col = hsl(bar_hue, 1.0, 0.55)
-        draw_rectangle(bx, by, vbar_w, h, [bar_col[0], bar_col[1], bar_col[2], 220])
-        b = b + 1
-    }
-}
-```
-
-### Files Involved
-
-| File | Role |
-| :--- | :--- |
-| `gui/gui_lib.c` | PCM ring buffer, audio callback, DFT computation, `lib_gui_get_music_fft` |
-| `gui/gui_lib.h` | Function declaration for `lib_gui_get_music_fft` |
-| `src/library.c` | Registers `get_music_fft` as a Luna builtin |
-| `musicplayer/music.lu` | Calls `get_music_fft()` and draws the equalizer bars |
-
----
-
-## Code Snippets
-
-### Initialization
-```python
-# Load font from organized asset folder
-let FONT_L = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 60)
-```
-
-### Playlist Configuration
-
----
-
-## Credits
-For full details on the music, icons, and fonts used in this project, see **[CREDITS.md](CREDITS.md)**.
+[Back to examples](../README.md)

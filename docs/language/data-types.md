@@ -56,7 +56,7 @@ A `bloc` is a tiny, immutable, cache-line-aligned value type. Think of it as a s
 ### Examples
 
 **Example 1 — Basic 2D vector (works)**
-```luna
+```javascript
 bloc Vec2 { x, y }
 let p = Vec2{3.0, 4.0}
 print(p.x)   // 3.0
@@ -65,7 +65,7 @@ print(p.x)   // 3.0
 - Lives inline on the cache line. No heap allocation occurs.
 
 **Example 2 — Max-size bloc (works)**
-```luna
+```javascript
 bloc Color { r, g, b, a }
 let white = Color{255, 255, 255, 255}
 ```
@@ -73,7 +73,7 @@ let white = Color{255, 255, 255, 255}
 - Four integers pack perfectly into one cache line.
 
 **Example 3 — Oversize bloc (rejected)**
-```luna
+```javascript
 bloc TooWide { a, b, c, d, e }
 // ERROR: bloc exceeds the cache-line size limit (32 bytes)
 // 5 x 8B = 40 bytes, over the 32B cap
@@ -85,7 +85,7 @@ bloc TooWide { a, b, c, d, e }
 
 **Blocs are NOT allowed inside `unsafe {}` blocks.** This is Rule 12 of Luna's unsafe rules. The reasoning: blocs have their own deterministic lifetime that doesn't need manual management, and allowing them in unsafe blocks would create confusing ownership semantics. If you need raw byte-level control, use `alloc`/`free` inside unsafe instead.
 
-```luna
+```javascript
 unsafe {
     bloc Vec2 { x, y }   // ERROR: bloc not allowed inside unsafe
     let p = Vec2{1, 2}   // rejected
@@ -123,7 +123,7 @@ A `box` is a mutable, fixed-size byte buffer with explicit ownership. It lives o
 ### Examples
 
 **Example 1 — Basic buffer allocation (works)**
-```luna
+```javascript
 let buf = box[128]
 print(buf.len)   // 128
 print(buf.cap)   // >= 128
@@ -132,14 +132,14 @@ print(buf.cap)   // >= 128
 - The handle is tracked by the Rust backend via `luna_data_box_track`.
 
 **Example 2 — Zero-size allocation (rejected)**
-```luna
+```javascript
 let buf = box[0]
 // ERROR: box size must be between 1 and 4096 bytes
 ```
 - The Rust backend (`luna_data_box_size_ok`) rejects size 0.
 
 **Example 3 — Use-after-free protection (caught at runtime)**
-```luna
+```javascript
 let buf = box[64]
 // buf goes out of scope and is freed
 // later attempt to access buf:
@@ -152,14 +152,14 @@ let buf = box[64]
 
 **Boxes are NOT allowed inside `unsafe {}` blocks.** This is the same Rule 12 that applies to blocs. Boxes have their own scope-based lifetime, and mixing them with `alloc`/`free` manual memory would create confusion about which system owns which memory.
 
-```luna
+```javascript
 unsafe {
     let buf = box[128]   // ERROR: box not allowed inside unsafe
 }
 ```
 
 If you need raw byte manipulation inside unsafe, use `alloc(n)` instead:
-```luna
+```javascript
 unsafe {
     let raw = alloc(16)
     store(raw, 42)
@@ -199,7 +199,7 @@ A `template` is a rich, schema-backed, mutable heap object. It is fully managed 
 ### Examples
 
 **Example 1 — Basic entity (works)**
-```luna
+```javascript
 template Player { name, hp, pos }
 let hero = Player{"Astra", 100, Vec2{0, 0}}
 print(hero.name)   // "Astra"
@@ -211,7 +211,7 @@ print(hero.hp)     // 80
 - Named field access goes through the schema lookup table.
 
 **Example 2 — Wrong constructor arity (rejected)**
-```luna
+```javascript
 template Pair { left, right }
 let p = Pair{42}
 // ERROR: template constructor argument count does not match field count
@@ -220,7 +220,7 @@ let p = Pair{42}
 - The Rust backend (`luna_data_template_arity_ok`) rejects mismatched counts.
 
 **Example 3 — Unknown field access (rejected)**
-```luna
+```javascript
 template Point { x, y }
 let p = Point{1, 2}
 print(p.z)
@@ -236,7 +236,7 @@ print(p.z)
 These examples show how the three tiers interact, including what the containment hierarchy allows and forbids.
 
 **Scenario 1 — Bloc inside a Template (works)**
-```luna
+```javascript
 bloc Vec2 { x, y }
 template Entity { name, pos, buffer }
 let e = Entity{"goblin", Vec2{5, 10}, box[64]}
@@ -247,7 +247,7 @@ print(e.name)   // "goblin"
 - Containment check: `luna_data_containment_ok(KIND_TEMPLATE, KIND_BOX)` returns OK.
 
 **Scenario 2 — Template inside Template (rejected)**
-```luna
+```javascript
 template Inner { value }
 template Outer { child }
 let o = Outer{Inner{42}}
@@ -258,7 +258,7 @@ let o = Outer{Inner{42}}
 - Design rationale: nested GC objects with arbitrary depth would complicate the write barrier.
 
 **Scenario 3 — Nested Bloc (works if total fits)**
-```luna
+```javascript
 bloc Vec2 { x, y }
 bloc Rect { min, max }
 let r = Rect{Vec2{0, 0}, Vec2{10, 10}}
@@ -267,7 +267,7 @@ let r = Rect{Vec2{0, 0}, Vec2{10, 10}}
 - Both blocs are inline. No heap allocation for either.
 
 **Scenario 4 — Mutation: bloc vs template**
-```luna
+```javascript
 bloc Point { x, y }
 let p = Point{1, 2}
 p.x = 5   // ERROR: bloc values are immutable
@@ -287,7 +287,7 @@ Templates exist in the GC tier. The `unsafe {}` block exists to bypass the GC. T
 - **Rule 12**: Bloc and Box are not allowed in unsafe blocks.
 - Templates are GC objects — you cannot `alloc`/`free` them or take an `address_of` a template.
 
-```luna
+```javascript
 unsafe {
     template Foo { x }     // ERROR: templates are GC-managed, not manual
     let f = Foo{42}        // never reaches here

@@ -1,42 +1,13 @@
-# Luna Performance Architecture & Internal Optimizations
+# Performance Engineering
 
-Luna achieves up to a **485x speedup** compared to native Python implementations by leveraging distinct architectural optimizations. This document covers both how Luna is built to be fast and the full engineering journey taken to beat NumPy at vector math.
+How Luna's speed was built: compiler flags, data layout, the SIMD work that matched C on vector
+math, and the interpreter-era hot-path optimizations. The measured numbers are in
+[results/benchmarks.md](../results/benchmarks.md).
 
----
-
-## Benchmarks
-
-_Test Environment: AMD Ryzen 7 7435HS, 24GB DDR5, Linux Mint._
-
-### Matrix Multiplication (300x300)
-
-| Implementation | Time (s) | Speedup vs Native Python |
-|----------------|----------|--------------------------|
-| Native Python | ~1.930s | 1x (Baseline) |
-| NumPy C-Extension | ~0.013s | 148x |
-| **Luna Native Bridge** | **~0.005s** | **386x** |
-
-### Environment Variable Lookups (1M Iterations)
-
-| Implementation | Time (s) | Speedup vs Unoptimized |
-|----------------|----------|------------------------|
-| Native Python (Bytecode) | ~0.028s | — |
-| Luna (Unoptimized — string linear scan) | ~0.380s | 1x (Baseline) |
-| Luna + String Interning + Lexical Caching | ~0.200s | 1.9x |
-| Luna + Primitive Fast Path + Occupied Slot Tracking | ~0.06s | 6.3x |
-| **Luna + Env Pool + Builtin Ptr Compare + Flags** | **~0.05s** | **7.6x** |
-
-> **0.380s → 0.200s → 0.06s → 0.05s.** Interning and caching halved the lookup cost, occupied-slot tracking eliminated the 512-slot scan, then env pooling, interned builtin dispatch, and compiler flags shaved off the last bit.
-
-### Vector Multiplication (1M Elements)
-
-| Implementation | Time (s) | Speedup vs Native Python |
-|----------------|----------|--------------------------|
-| Native Python | ~0.115s | 1x (Baseline) |
-| NumPy SIMD | ~0.0019s | 60x |
-| **Luna Arena SIMD (inline)** | **~0.00087s** | **132x** |
-
-Luna beats NumPy 2.2x on vectors and 2.6x on large matrix workloads. Getting there was not straightforward. The sections below cover both the architecture that makes this possible and the step by step journey of what it actually took to reach those numbers.
+Sections 5 and 6 describe the tree-walking interpreter (`src/interpreter.c`), which was the
+execution engine at the time. Scripts now run on the bytecode VM ([vm.md](vm.md)). The VM
+reuses the lexer, parser, arena, interning, value and string work described here, but the
+environment caching and tail-call optimization below apply only to the interpreter.
 
 ---
 
@@ -116,7 +87,7 @@ In a normal interpreter, `result = result + i` forces the engine to do two hash-
 
 **1. Modifying the AST**
 Nodes that frequently access variables (`ident`, `assign`, `inc` `dec`) are upgraded to locally cache the pointer:
-```javascript
+```c
 struct { 
     const char *name;
     Value *cached_val;         // Points directly to the Hash Table slot
@@ -128,7 +99,7 @@ struct {
 When the interpreter hits a `NODE_IDENT` for the first time, `cached_val` is NULL. It performs the standard (but fast) $O(1)$ Hash Table lookup, finds the `Value *`, and stores that physical memory pointer directly on the AST node.
 
 On the 2nd through 1,000,000th time the loop executes that exact AST node, it skips the Hash Table completely and just pulls the value from the pointer:
-```javascript
+```c
 if (n->ident.cached_val && n->ident.cached_env_version == env_get_version(e)) {
     return value_copy(*(n->ident.cached_val)); // O(0) Return
 }
@@ -159,14 +130,14 @@ User-defined functions were stored in a flat array (up to 64 entries) with linea
 A recent bug in `musicplayer/music.lu` perfectly illustrates why interning is critical—both for performance and correctness. The script was failing with `Variable 'MOUSE_LEFT_BUTTON' is not defined`, even though it was registered in `gui/gui_lib.c`.
 
 The root cause was how the variable was pushed into the Environment dictionary:
-```javascript
+```c
 // Incorrect: Pushing a raw C string literal
 env_def(env, "MOUSE_LEFT_BUTTON", value_int(MOUSE_LEFT_BUTTON));
 ```
 
 The string `"MOUSE_LEFT_BUTTON"` was added to the hash table, but it was **never put through the interning process**. When the script ran and looked up the variable, the interpreter tried to perform its $O(1)$ pointer comparison:
 
-```javascript
+```c
 // O(1) IDENTIFIER RESOLUTION: Direct pointer comparison
 if (cur_env->vars[h].name == search_name) {
     return &cur_env->vars[h].val;
@@ -177,7 +148,7 @@ Even though both strings spelled "MOUSE_LEFT_BUTTON", they lived at different me
 
 The fix was to explicitly intern the string before defining it:
 
-```javascript
+```c
 // Correct: Guaranteed to return the canonical pointer for this string
 env_def(env, intern_string("MOUSE_LEFT_BUTTON"), value_int(MOUSE_LEFT_BUTTON));
 ```
@@ -188,9 +159,9 @@ This ensures the dictionary holds the exact same memory address pointer that the
 
 ## 6. Memory Management
 
-Luna now uses a hybrid runtime memory model instead of the older RC-first setup.
+Luna uses a hybrid runtime memory model, which replaced the earlier reference-counting design.
 
-**Tracing GC** handles the active runtime heap for strings, lists, dense lists, maps, closures, and GC-owned backing buffers. The current checked GC benchmark suite is sub-ms on max pause across all shipped `test_gc` workloads.
+**Tracing GC** handles the active runtime heap for strings, lists, dense lists, maps, closures, and GC-owned backing buffers. Worst-case pauses stay under 1 ms on every recorded workload; see [gc.md](gc.md) and [results/gc-results.md](../results/gc-results.md).
 
 **Primitive Fast Path** — The `ValueType` enum is ordered so non-heap types (INT, FLOAT, CHAR, BOOL, NATIVE, FILE, NULL) come first. `value_free()` and `value_copy()` are `static inline` functions that check `VALUE_IS_HEAP()` — a single integer comparison. For primitives this compiles to zero work. Heap values still route through the runtime-managed path, but primitives stay effectively free.
 

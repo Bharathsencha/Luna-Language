@@ -1,55 +1,39 @@
-# Luna Memory Library
+# Unsafe Memory
 
-The Memory library gives Luna a low-level `unsafe` mode for manual memory work.
-Most Luna programs should stay with normal values, lists, maps, and strings.
-Use this only when you need raw pointer-style control.
+`unsafe { ... }` gives Luna manual memory: raw buffers you allocate, read, write and free
+yourself. Most programs never need it. Lists, maps, strings and `dense_list` cover normal work.
 
-Inside `unsafe { ... }`, Luna now supports:
+The C side (`src/unsafe_runtime.c`) performs allocation, loads, stores and frees. Every
+operation is first checked by the Rust rule engine in `rust/unsafe_rt`
+(`lib/libluna_memory_rt.a`).
 
-- `alloc(n)`
-- `free(ptr)`
-- `defer(ptr)`
-- `load(ptr)` or legacy `deref(ptr)`
-- `store(ptr, value)`
-- `ptr_offset(ptr, offset)` or legacy `ptr_add(ptr, offset)`
-- `address_of(name)` or legacy `addr(name)`
-- `int(ptr)`
+## Functions
 
-The Rust runtime (`libluna_memory_rt.a`) enforces the memory rules, while the C
-interpreter performs the actual allocation, reads, writes, and frees.
+Available only inside `unsafe { }`:
 
-Outside `unsafe`, Luna also supports scope cleanup with deferred calls:
+| Function | Meaning |
+|---|---|
+| `alloc(n)` | Allocate `n` value slots; returns a pointer |
+| `free(ptr)` | Free an allocation |
+| `defer(ptr)` | Free `ptr` when the block exits |
+| `load(ptr)` | Read the value at `ptr` |
+| `store(ptr, value)` | Write `value` at `ptr` |
+| `ptr_offset(ptr, n)` | Pointer `n` slots past `ptr`, bounds-checked |
+| `address_of(name)` | Pointer to a named variable |
+| `int(ptr)` | The only allowed pointer cast |
 
-- `defer(close(file))`
-- `defer(save_state(cache))`
+The older names `deref`, `ptr_add` and `addr` still work on the legacy interpreter, but the
+bytecode VM does not recognize them (see [Engine status](#engine-status)). Use the names above.
 
-These deferred calls run in LIFO order when the current scope exits.
+Outside `unsafe`, `defer(call(...))` schedules a call for scope exit, for example
+`defer(close(file))`. Deferred calls run in LIFO order.
 
-Inside `unsafe`, Luna does not bypass the whole runtime or disable the GC.
-What changes is this:
+## Boundary with the GC
 
-- Raw buffers created by `alloc()` are manual memory and are not GC-managed.
-- Normal Luna values still behave normally and still use the existing runtime
-  ownership / GC rules.
-- The unsafe runtime blocks pointers from being stored inside GC-managed values
-  like lists and maps, so GC-tracked objects never end up holding raw pointers.
-
-Today, Luna runs on the new SATB tracing collector plus the existing arena.
-Unsafe memory still follows the same boundary we want to keep:
-
-- manual `alloc()` buffers stay outside GC ownership
-- normal Luna values stay under the language runtime
-- raw pointers are forbidden from entering GC-managed containers
-
-## Memory Functions
-
-Preferred names for new code:
-
-- `address_of(name)` instead of `addr(name)`
-- `ptr_offset(ptr, offset)` instead of `ptr_add(ptr, offset)`
-- `load(ptr)` instead of `deref(ptr)`
-
-Legacy names still work, so older Luna code stays valid.
+- Buffers from `alloc()` are not GC-managed and are never traced.
+- Normal Luna values inside an `unsafe` block are still GC-managed as usual.
+- A raw pointer may not be stored in a list, map or other GC value (R7), so the collector
+  never sees one.
 
 ## Lifecycle Example
 
@@ -152,33 +136,41 @@ unsafe {
 }
 ```
 
-## Implemented Safety Rules
+## Safety Rules
 
-The following rules are currently enforced by the runtime and interpreter.
-Most of them are worth keeping because they remove real undefined-behavior
-classes. The one that is more policy than raw memory safety is `R11`, which
-forbids user-defined calls inside `unsafe`. It is still kept for now because it
-keeps pointer lifetime analysis simple and predictable.
+| Rule | Meaning | Interpreter | VM |
+|---|---|---|---|
+| `R1` | No pointer-to-pointer through `address_of()` | enforced | enforced |
+| `R2` | Pointers cannot escape the current `unsafe` block | enforced | enforced |
+| `R3` | `ptr_offset()` cannot go out of bounds | enforced | enforced |
+| `R4` | No use-after-free and no double free | enforced | enforced |
+| `R5` | `address_of()` only works on named values | enforced | not enforced: reports a Name Error instead |
+| `R6` | Nested `unsafe` blocks are rejected | enforced | enforced |
+| `R7` | Pointers cannot be stored in GC-managed values | enforced | enforced |
+| `R8` | `alloc()` size must be a positive integer | enforced | enforced |
+| `R9` | Ordered pointer comparisons need the same base allocation | enforced | not enforced |
+| `R10` | Pointers may only be cast with `int(ptr)` | enforced | enforced |
+| `R11` | Only builtin calls are allowed inside `unsafe` | enforced | not enforced |
+| `R12` | `free()` inside conditional control flow is rejected (static lint) | enforced | enforced |
 
-| Rule | Status | Meaning |
-|------|--------|---------|
-| `R1` | Implemented | No pointer-to-pointer through `address_of()` |
-| `R2` | Implemented | Pointers cannot escape the current `unsafe` block |
-| `R3` | Implemented | `ptr_offset()` cannot go out of bounds |
-| `R4` | Implemented | No use-after-free and no double free |
-| `R5` | Implemented | `address_of()` only works on named values |
-| `R6` | Implemented | Nested `unsafe` blocks are rejected |
-| `R7` | Implemented | Pointers cannot be stored in GC-managed values |
-| `R8` | Implemented | `alloc()` size must be a positive integer |
-| `R9` | Implemented | Ordered pointer comparisons need the same base allocation |
-| `R10` | Implemented | Pointers may only be cast with `int(ptr)` |
-| `R11` | Implemented | Only builtin/native calls are allowed inside `unsafe` |
-| `R12` | Implemented | `free()` inside conditional control flow is rejected by a static lint pass |
+R11 is more policy than memory safety. It keeps pointer lifetime analysis simple by forbidding
+user-defined calls inside `unsafe`.
+
+## Engine status
+
+Scripts run on the bytecode VM by default. The VM currently differs from the interpreter
+(`LUNA_USE_INTERPRETER=1`) in two ways:
+
+- R5, R9 and R11 are not checked, so the corresponding examples below run without an error on
+  the VM.
+- The legacy aliases `deref`, `ptr_add` and `addr` are undefined.
+
+These are open bugs on `luna-beta`.
 
 ## Error Cases
 
-These examples intentionally fail. The messages below match the combined golden
-test in `test/test_unsafe_errors.expect`.
+These examples intentionally fail. The messages are what the interpreter prints; see
+[Engine status](#engine-status) for the rules the VM does not check.
 
 ### R1: `address_of()` of a pointer
 
@@ -328,23 +320,23 @@ unsafe {
     defer(buf)
 
     store(buf, 10)
-    store(ptr_add(buf, 1), 20)
-    store(ptr_add(buf, 2), 30)
+    store(ptr_offset(buf, 1), 20)
+    store(ptr_offset(buf, 2), 30)
 
-    print(deref(buf))
-    print(deref(ptr_add(buf, 1)))
-    print(deref(ptr_add(buf, 2)))
+    print(load(buf))
+    print(load(ptr_offset(buf, 1)))
+    print(load(ptr_offset(buf, 2)))
 }
 ```
 
-## Example 2: Editing a Variable Through `addr()`
+## Example 2: Editing a Variable Through `address_of()`
 
 ```javascript
 let score = 5
 
 unsafe {
-    let p = addr(score)
-    let current = deref(p)
+    let p = address_of(score)
+    let current = load(p)
     store(p, current + 10)
 }
 
@@ -359,12 +351,12 @@ unsafe {
     defer(buf)
 
     for (let i = 0; i < 5; i++) {
-        let slot = ptr_add(buf, i)
+        let slot = ptr_offset(buf, i)
         store(slot, i * i)
     }
 
     for (let i = 0; i < 5; i++) {
-        print("slot", i, "=", deref(ptr_add(buf, i)))
+        print("slot", i, "=", load(ptr_offset(buf, i)))
     }
 }
 ```
@@ -377,8 +369,8 @@ unsafe {
     defer(buf)
 
     let a = buf
-    let b = ptr_add(buf, 1)
-    let c = ptr_add(buf, 2)
+    let b = ptr_offset(buf, 1)
+    let c = ptr_offset(buf, 2)
 
     print(a < b)
     print(b < c)
@@ -399,7 +391,7 @@ unsafe {
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             let index = y * width + x
-            let cell = ptr_add(grid, index)
+            let cell = ptr_offset(grid, index)
             store(cell, x + y)
         }
     }
@@ -408,7 +400,7 @@ unsafe {
         let row = []
         for (let x = 0; x < width; x++) {
             let index = y * width + x
-            append(row, deref(ptr_add(grid, index)))
+            append(row, load(ptr_offset(grid, index)))
         }
         print(row)
     }

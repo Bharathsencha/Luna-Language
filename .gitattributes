@@ -7,4 +7,4 @@ obj/* linguist-vendored
 lib/* linguist-vendored
 
 # Treat specific asset folders as documentation/vendo red if needed (optional)
-# fun/assets/* linguist-vendored
+# docs/examples/fun/assets/* linguist-vendored

@@ -23,8 +23,9 @@ Configuration and operational instructions for Claude Code when working in the L
 - Run arbitrary script: `./bin/luna <path_to_script.lu>`
 - Run default entry script: `make run` (runs `main.lu`)
 - Interactive REPL: `make repl` (or `./bin/luna`)
-- Run Car Game demo: `make run-cargame` (runs `cargame/cargame.lu`)
-- Run Music Player demo: `make run-music` (runs `musicplayer/music.lu`)
+- Run Car Game demo: `make run-cargame` (runs `docs/examples/cargame/cargame.lu`)
+- Run Music Player demo: `make run-music` (runs `docs/examples/musicplayer/music.lu`)
+- Run 3D racer: `make run-racer`; any fun/ program: `make run-fun NAME=<file>`
 
 ---
 
@@ -112,7 +113,7 @@ Instead of vibe-coding, implement interfaces adhering to these deliberate engine
 
 ## Code Style and Architecture Rules
 
-### C11 Core (`src/`, `include/`, `gui/`, `vm/`)
+### C11 Core (`src/`, `include/`, `gui/`)
 - Standard: ISO C11 (`-std=c11`).
 - Compiler Flags: Strict warnings (`-Wall -Wextra -Wno-unused-parameter`). Code must compile cleanly.
 - Memory Allocation:
@@ -129,9 +130,9 @@ Instead of vibe-coding, implement interfaces adhering to these deliberate engine
 - Static Linking: Libraries are compiled as `staticlib` (`libluna_memory_rt.a`, `libluna_data_rt.a`) and placed in `lib/`.
 - Unsafe Rules: Enforce the 12 memory safety rules in `unsafe_rt` (no use-after-free, bounds enforcement, alignment checks, lifetime validation).
 
-### Bytecode VM (`vm/`)
-- Stack Discipline: Ensure VM stack balance across opcode dispatch in `vm/luna_vm.c`.
-- Compiler Pass: The AST-to-bytecode compiler (`vm/luna_compiler.c`) must emit verified jump offsets and constant table indices.
+### Bytecode VM (`src/luna_vm.c`, `src/luna_compiler.c`)
+- Stack Discipline: Ensure VM stack balance across opcode dispatch in `src/luna_vm.c`.
+- Compiler Pass: The AST-to-bytecode compiler (`src/luna_compiler.c`) must emit verified jump offsets and constant table indices.
 
 ---
 
