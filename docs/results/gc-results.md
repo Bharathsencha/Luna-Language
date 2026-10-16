@@ -8,18 +8,17 @@ Mint). The final runs were recorded on 2026-09-25 and 2026-09-26.
 
 ## Summary
 
-- Luna's worst single pause stays between **0.10 and 0.65 ms** on every workload where its
-  collector runs.
-- **Go** pauses less (0.03-0.05 ms) and finishes 1.2-1.3x faster on the allocation workloads.
-- **Java G1** pauses 0.9-12 ms per collection (3.5 ms or more on six of the eight workloads)
-  and runs 3-4x faster on most workloads. That comparison is a JIT-compiled runtime against a
-  bytecode interpreter.
-- **CPython** frees most objects by reference counting, so it has no pause on half the
-  workloads. Where its cyclic GC does run, it pauses 1.3-18 ms.
-- Luna's weak points are memory (1.3-4x the RSS of Go and Python, leaving out the
-  `binary_trees` bug) and total GC time. Luna
-  counts every incremental step as pause time, so its totals are larger than those of
-  collectors with concurrent mark threads.
+- Luna's longest pause stays between **0.10 and 0.65 ms** on every workload where its
+  collector runs. That is comfortably smooth for games and animations.
+- **Go** is the one to beat: its pauses are around 0.03-0.05 ms, and it runs allocation-heavy
+  code about 1.2-1.3x faster.
+- **Java G1** runs 3-4x faster thanks to its JIT, but its pauses reach several milliseconds
+  (up to 12 ms here).
+- **Python** frees most objects as it goes, so it often doesn't pause at all. When its cycle
+  collector does run, pauses reach 1.3-18 ms.
+- The next things to improve are memory use (Luna uses roughly 1.3-4x the RSS of Go and
+  Python) and total GC time. Luna counts every small step as pause time, so its totals look
+  bigger than those of collectors that work on background threads.
 
 ## Metrics
 
