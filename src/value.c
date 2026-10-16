@@ -20,6 +20,7 @@ typedef enum {
     BLOC_FIELD_BOOL,
     BLOC_FIELD_CHAR,
     BLOC_FIELD_BLOC,
+    BLOC_FIELD_PRIM, /* descriptor-level: any int/float/bool/char, kind stored per instance */
 } BlocFieldKind;
 
 struct BlocTypeDesc {
@@ -37,15 +38,14 @@ struct BlocTypeDesc {
 
 static BlocTypeDesc *bloc_registry = NULL;
 
-typedef struct {
-    int in_use;
-    int ref_count;
+/* Bloc payloads are small GC objects with no outgoing references.
+ * kinds[] holds the primitive kind of each 8-byte leaf slot (index = offset / 8),
+ * so int/float/bool/char may differ between instances of the same bloc type. */
+struct BlocObj {
     BlocTypeDesc *desc;
-    unsigned char bytes[VALUE_BLOC_INLINE_MAX];
-} BlocSlot;
-
-#define BLOC_SLOT_MAX 4096
-static BlocSlot bloc_slots[BLOC_SLOT_MAX];
+    unsigned char kinds[BLOC_MAX_SLOTS];
+    unsigned char bytes[BLOC_MAX_BYTES];
+};
 
 typedef struct {
     int in_use;
@@ -72,22 +72,16 @@ static BoxSlot box_slots[BOX_SLOT_MAX];
 static uint64_t box_high_water = 0; /* 1-based highest handle ever allocated */
 static int box_active_count = 0;    /* live (non-freed) boxes */
 
-static BlocSlot *bloc_slot_from_handle(uint64_t handle) {
-    if (handle == 0 || handle > BLOC_SLOT_MAX) return NULL;
-    BlocSlot *slot = &bloc_slots[handle - 1];
-    return slot->in_use ? slot : NULL;
+static BlocObj *bloc_obj_from_value(Value v) {
+    return (v.type == VAL_BLOC) ? v.bloc.obj : NULL;
 }
 
-static uint64_t bloc_alloc_slot(BlocTypeDesc *desc) {
-    for (uint64_t i = 0; i < BLOC_SLOT_MAX; i++) {
-        if (bloc_slots[i].in_use) continue;
-        bloc_slots[i].in_use = 1;
-        bloc_slots[i].ref_count = 1;
-        bloc_slots[i].desc = desc;
-        memset(bloc_slots[i].bytes, 0, sizeof(bloc_slots[i].bytes));
-        return i + 1;
-    }
-    return 0;
+static BlocObj *bloc_obj_new(BlocTypeDesc *desc) {
+    BlocObj *obj = (BlocObj *)luna_gc_alloc(sizeof(BlocObj), NULL, NULL);
+    if (!obj) return NULL;
+    memset(obj, 0, sizeof(BlocObj));
+    obj->desc = desc;
+    return obj;
 }
 
 static BoxSlot *box_slot_from_handle(uint64_t handle) {
@@ -166,18 +160,14 @@ static BlocFieldKind bloc_kind_for_value(Value v) {
     }
 }
 
-static int bloc_kind_size(BlocFieldKind kind, Value v) {
-    switch (kind) {
-        case BLOC_FIELD_INT: return (int)sizeof(long long);
-        case BLOC_FIELD_FLOAT: return (int)sizeof(double);
-        case BLOC_FIELD_BOOL: return (int)sizeof(unsigned char);
-        case BLOC_FIELD_CHAR: return (int)sizeof(char);
-        case BLOC_FIELD_BLOC: {
-            BlocSlot *slot = (v.type == VAL_BLOC) ? bloc_slot_from_handle(v.bloc.handle) : NULL;
-            return (slot && slot->desc) ? slot->desc->total_size : 0;
-        }
-        default: return 0;
+/* Bytes a field occupies in the bloc payload: one 8-byte slot per primitive,
+ * or the nested bloc's whole payload. */
+static int bloc_field_size(BlocFieldKind kind, Value v) {
+    if (kind == BLOC_FIELD_BLOC) {
+        BlocObj *nested = bloc_obj_from_value(v);
+        return (nested && nested->desc) ? nested->desc->total_size : 0;
     }
+    return (kind == BLOC_FIELD_UNSET) ? 0 : BLOC_SLOT_BYTES;
 }
 
 static int bloc_is_same_schema(const BlocTypeDesc *desc, const char **fields, int field_count) {
@@ -199,7 +189,7 @@ static int bloc_validate_layout(BlocTypeDesc *desc, int argc, Value *argv, char 
         return 0;
     }
 
-    int slot_size = 0;
+    int offset = 0;
     for (int i = 0; i < argc; i++) {
         BlocFieldKind actual_kind = bloc_kind_for_value(argv[i]);
         if (actual_kind == BLOC_FIELD_UNSET) {
@@ -209,21 +199,26 @@ static int bloc_validate_layout(BlocTypeDesc *desc, int argc, Value *argv, char 
             return 0;
         }
 
-        int field_size = bloc_kind_size(actual_kind, argv[i]);
+        int field_size = bloc_field_size(actual_kind, argv[i]);
         if (field_size <= 0) {
             snprintf(msg, msg_len, "Bloc field '%s' has an invalid inline size", desc->fields[i]);
             return 0;
         }
 
+        BlocObj *nested = (actual_kind == BLOC_FIELD_BLOC) ? bloc_obj_from_value(argv[i]) : NULL;
+        BlocFieldKind slot_class = (actual_kind == BLOC_FIELD_BLOC) ? BLOC_FIELD_BLOC : BLOC_FIELD_PRIM;
+
         if (desc->layout_locked) {
-            if (desc->kinds[i] != (unsigned char)actual_kind) {
+            /* Primitive fields accept any primitive kind; nested blocs must keep their type. */
+            if (desc->kinds[i] != (unsigned char)slot_class) {
                 snprintf(msg, msg_len,
-                         "Bloc '%s' field '%s' must keep the same primitive layout across constructions",
+                         desc->kinds[i] == BLOC_FIELD_BLOC
+                             ? "Bloc '%s' field '%s' must hold a nested bloc"
+                             : "Bloc '%s' field '%s' must hold an int, float, bool or char",
                          desc->name ? desc->name : "<bloc>", desc->fields[i]);
                 return 0;
             }
-            BlocSlot *nested_slot = (actual_kind == BLOC_FIELD_BLOC) ? bloc_slot_from_handle(argv[i].bloc.handle) : NULL;
-            if (actual_kind == BLOC_FIELD_BLOC && desc->nested_descs[i] != (nested_slot ? nested_slot->desc : NULL)) {
+            if (slot_class == BLOC_FIELD_BLOC && desc->nested_descs[i] != (nested ? nested->desc : NULL)) {
                 snprintf(msg, msg_len,
                          "Bloc '%s' field '%s' must use the same nested bloc type",
                          desc->name ? desc->name : "<bloc>", desc->fields[i]);
@@ -232,55 +227,56 @@ static int bloc_validate_layout(BlocTypeDesc *desc, int argc, Value *argv, char 
             continue;
         }
 
-        desc->kinds[i] = (unsigned char)actual_kind;
-        if (actual_kind == BLOC_FIELD_BLOC) {
-            BlocSlot *nested_slot = bloc_slot_from_handle(argv[i].bloc.handle);
-            desc->nested_descs[i] = nested_slot ? nested_slot->desc : NULL;
-        } else {
-            desc->nested_descs[i] = NULL;
-        }
-        if (field_size > slot_size) slot_size = field_size;
+        desc->kinds[i] = (unsigned char)slot_class;
+        desc->nested_descs[i] = nested ? nested->desc : NULL;
+        desc->offsets[i] = (unsigned char)(offset < 255 ? offset : 255);
+        offset += field_size;
     }
 
     if (!desc->layout_locked) {
-        if (slot_size <= 0) slot_size = 1;
-        int total_size = slot_size * argc;
-        if (total_size > VALUE_BLOC_INLINE_MAX) {
+        if (offset > BLOC_MAX_BYTES) {
             snprintf(msg, msg_len,
                      "Bloc '%s' exceeds the %d-byte cache-line cap",
-                     desc->name ? desc->name : "<bloc>", VALUE_BLOC_INLINE_MAX);
+                     desc->name ? desc->name : "<bloc>", BLOC_MAX_BYTES);
             return 0;
         }
-        for (int i = 0; i < argc; i++) {
-            desc->offsets[i] = (unsigned char)(i * slot_size);
-        }
-        desc->slot_size = slot_size;
-        desc->total_size = total_size;
+        desc->slot_size = BLOC_SLOT_BYTES;
+        desc->total_size = offset;
         desc->layout_locked = 1;
     }
 
     return 1;
 }
 
-static void bloc_store_field(unsigned char *dest, BlocFieldKind kind, Value v, int size) {
+/* Writes one field into obj at the descriptor's offset, recording leaf kinds. */
+static void bloc_store_field(BlocObj *obj, int offset, Value v) {
+    BlocFieldKind kind = bloc_kind_for_value(v);
+    unsigned char *dest = obj->bytes + offset;
+    int leaf = offset / BLOC_SLOT_BYTES;
     switch (kind) {
         case BLOC_FIELD_INT:
             memcpy(dest, &v.i, sizeof(long long));
+            obj->kinds[leaf] = (unsigned char)kind;
             break;
         case BLOC_FIELD_FLOAT:
             memcpy(dest, &v.f, sizeof(double));
+            obj->kinds[leaf] = (unsigned char)kind;
             break;
-        case BLOC_FIELD_BOOL: {
-            unsigned char b = (unsigned char)(v.b ? 1 : 0);
-            memcpy(dest, &b, sizeof(unsigned char));
+        case BLOC_FIELD_BOOL:
+            dest[0] = (unsigned char)(v.b ? 1 : 0);
+            obj->kinds[leaf] = (unsigned char)kind;
             break;
-        }
         case BLOC_FIELD_CHAR:
             memcpy(dest, &v.c, sizeof(char));
+            obj->kinds[leaf] = (unsigned char)kind;
             break;
         case BLOC_FIELD_BLOC: {
-            BlocSlot *slot = bloc_slot_from_handle(v.bloc.handle);
-            if (slot) memcpy(dest, slot->bytes, (size_t)size);
+            BlocObj *nested = bloc_obj_from_value(v);
+            if (nested && nested->desc) {
+                int size = nested->desc->total_size;
+                memcpy(dest, nested->bytes, (size_t)size);
+                memcpy(obj->kinds + leaf, nested->kinds, (size_t)(size / BLOC_SLOT_BYTES));
+            }
             break;
         }
         default:
@@ -288,12 +284,28 @@ static void bloc_store_field(unsigned char *dest, BlocFieldKind kind, Value v, i
     }
 }
 
-static Value bloc_load_field(const BlocTypeDesc *desc, int idx, const unsigned char *src) {
+static Value bloc_load_field(const BlocObj *obj, int idx) {
     Value out = value_null();
+    const BlocTypeDesc *desc = obj ? obj->desc : NULL;
     if (!desc || idx < 0 || idx >= desc->field_count) return out;
 
-    const unsigned char *field_src = src + desc->offsets[idx];
-    switch ((BlocFieldKind)desc->kinds[idx]) {
+    int offset = desc->offsets[idx];
+    const unsigned char *field_src = obj->bytes + offset;
+    int leaf = offset / BLOC_SLOT_BYTES;
+
+    if (desc->kinds[idx] == BLOC_FIELD_BLOC) {
+        BlocTypeDesc *nested_desc = desc->nested_descs[idx];
+        BlocObj *nested = bloc_obj_new(nested_desc);
+        if (!nested || !nested_desc) return out;
+        int size = nested_desc->total_size;
+        memcpy(nested->bytes, field_src, (size_t)size);
+        memcpy(nested->kinds, obj->kinds + leaf, (size_t)(size / BLOC_SLOT_BYTES));
+        out.type = VAL_BLOC;
+        out.bloc.obj = nested;
+        return out;
+    }
+
+    switch ((BlocFieldKind)obj->kinds[leaf]) {
         case BLOC_FIELD_INT: {
             long long v = 0;
             memcpy(&v, field_src, sizeof(long long));
@@ -306,25 +318,13 @@ static Value bloc_load_field(const BlocTypeDesc *desc, int idx, const unsigned c
             out = value_float(v);
             break;
         }
-        case BLOC_FIELD_BOOL: {
-            unsigned char v = 0;
-            memcpy(&v, field_src, sizeof(unsigned char));
-            out = value_bool(v != 0);
+        case BLOC_FIELD_BOOL:
+            out = value_bool(field_src[0] != 0);
             break;
-        }
         case BLOC_FIELD_CHAR: {
             char v = 0;
             memcpy(&v, field_src, sizeof(char));
             out = value_char(v);
-            break;
-        }
-        case BLOC_FIELD_BLOC: {
-            out.type = VAL_BLOC;
-            out.bloc.handle = bloc_alloc_slot(desc->nested_descs[idx]);
-            BlocSlot *slot = bloc_slot_from_handle(out.bloc.handle);
-            if (slot && slot->desc) {
-                memcpy(slot->bytes, field_src, (size_t)slot->desc->total_size);
-            }
             break;
         }
         default:
@@ -593,6 +593,9 @@ static void gc_note_owner_write_value(void *payload, const Value *value) {
         case VAL_TEMPLATE:
             if (value->template_obj) luna_gc_runtime_write_barrier_trusted(value->template_obj);
             break;
+        case VAL_BLOC:
+            if (value->bloc.obj) luna_gc_runtime_write_barrier_trusted(value->bloc.obj);
+            break;
         default:
             break;
     }
@@ -609,6 +612,7 @@ static void gc_note_owner_write_value(void *payload, const Value *value) {
         case VAL_CLOSURE:   child = value->closure;   break;
         case VAL_DATA_TYPE: child = value->dtype;     break;
         case VAL_TEMPLATE:  child = value->template_obj; break;
+        case VAL_BLOC:      child = value->bloc.obj; break;
         default: break;
     }
     if (child) {
@@ -643,6 +647,9 @@ static void gc_note_value_overwrite(const Value *value) {
             break;
         case VAL_TEMPLATE:
             if (value->template_obj) luna_gc_runtime_write_barrier_trusted(value->template_obj);
+            break;
+        case VAL_BLOC:
+            if (value->bloc.obj) luna_gc_runtime_write_barrier_trusted(value->bloc.obj);
             break;
         default:
             break;
@@ -975,36 +982,34 @@ Value value_bloc_construct(Value descriptor, int argc, Value *argv) {
     Value out = value_null();
     if (descriptor.type != VAL_BLOC_TYPE || !descriptor.bloc_type) return out;
 
-    out.type = VAL_BLOC;
-    out.bloc.handle = bloc_alloc_slot(descriptor.bloc_type);
-    BlocSlot *slot = bloc_slot_from_handle(out.bloc.handle);
-    if (!slot) return value_null();
+    BlocObj *obj = bloc_obj_new(descriptor.bloc_type);
+    if (!obj) return value_null();
 
-    for (int i = 0; i < argc; i++) {
-        BlocFieldKind kind = (BlocFieldKind)descriptor.bloc_type->kinds[i];
-        int size = bloc_kind_size(kind, argv[i]);
-        bloc_store_field(slot->bytes + descriptor.bloc_type->offsets[i], kind, argv[i], size);
+    for (int i = 0; i < argc && i < descriptor.bloc_type->field_count; i++) {
+        bloc_store_field(obj, descriptor.bloc_type->offsets[i], argv[i]);
     }
 
+    out.type = VAL_BLOC;
+    out.bloc.obj = obj;
     return out;
 }
 
 Value value_bloc_get_field(Value bloc, const char *field, int *found) {
     if (found) *found = 0;
-    BlocSlot *slot = (bloc.type == VAL_BLOC) ? bloc_slot_from_handle(bloc.bloc.handle) : NULL;
-    if (!slot || !slot->desc) return value_null();
+    BlocObj *obj = bloc_obj_from_value(bloc);
+    if (!obj || !obj->desc) return value_null();
 
-    int idx = bloc_find_field_index(slot->desc, field);
+    int idx = bloc_find_field_index(obj->desc, field);
     if (idx < 0) return value_null();
 
     if (found) *found = 1;
-    return bloc_load_field(slot->desc, idx, slot->bytes);
+    return bloc_load_field(obj, idx);
 }
 
 const char *value_bloc_name(Value v) {
     if (v.type == VAL_BLOC) {
-        BlocSlot *slot = bloc_slot_from_handle(v.bloc.handle);
-        if (slot && slot->desc) return slot->desc->name;
+        BlocObj *obj = bloc_obj_from_value(v);
+        if (obj && obj->desc) return obj->desc->name;
     }
     if (v.type == VAL_BLOC_TYPE && v.bloc_type) return v.bloc_type->name;
     return NULL;
@@ -1012,10 +1017,13 @@ const char *value_bloc_name(Value v) {
 
 int value_bloc_equal(Value left, Value right) {
     if (left.type != VAL_BLOC || right.type != VAL_BLOC) return 0;
-    BlocSlot *left_slot = bloc_slot_from_handle(left.bloc.handle);
-    BlocSlot *right_slot = bloc_slot_from_handle(right.bloc.handle);
-    if (!left_slot || !right_slot || !left_slot->desc || left_slot->desc != right_slot->desc) return 0;
-    return memcmp(left_slot->bytes, right_slot->bytes, (size_t)left_slot->desc->total_size) == 0;
+    BlocObj *lo = bloc_obj_from_value(left);
+    BlocObj *ro = bloc_obj_from_value(right);
+    if (!lo || !ro || !lo->desc || lo->desc != ro->desc) return 0;
+    if (lo == ro) return 1;
+    int size = lo->desc->total_size;
+    return memcmp(lo->bytes, ro->bytes, (size_t)size) == 0 &&
+           memcmp(lo->kinds, ro->kinds, (size_t)(size / BLOC_SLOT_BYTES)) == 0;
 }
 
 // Constructor for empty lists
@@ -1299,17 +1307,6 @@ void _value_free_refcount(Value v) {
         }
     } else if (v.type == VAL_TEMPLATE) {
         /* GC-managed; nothing to free in the refcount fallback path. */
-    } else if (v.type == VAL_BLOC) {
-        BlocSlot *slot = bloc_slot_from_handle(v.bloc.handle);
-        if (slot) {
-            slot->ref_count--;
-            if (slot->ref_count <= 0) {
-                slot->in_use = 0;
-                slot->ref_count = 0;
-                slot->desc = NULL;
-                memset(slot->bytes, 0, sizeof(slot->bytes));
-            }
-        }
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end_ts);
@@ -1355,11 +1352,6 @@ Value _value_copy_refcount(Value v) {
             break;
         case VAL_TEMPLATE:
             break;
-        case VAL_BLOC: {
-            BlocSlot *slot = bloc_slot_from_handle(v.bloc.handle);
-            if (slot) slot->ref_count++;
-            break;
-        }
         default:
             break;
     }
@@ -1394,6 +1386,9 @@ void value_gc_mark(Value *value, void *ctx) {
         case VAL_TEMPLATE:
             if (value->template_obj) gc_visit_ref(ctx, (void **)&value->template_obj);
             break;
+        case VAL_BLOC:
+            if (value->bloc.obj) gc_visit_ref(ctx, (void **)&value->bloc.obj);
+            break;
         default:
             break;
     }
@@ -1426,7 +1421,7 @@ char *value_to_string(Value v) {
             size_t cap = 64;
             size_t pos = 0;
             char *res = malloc(cap);
-            BlocSlot *slot = bloc_slot_from_handle(v.bloc.handle);
+            BlocObj *slot = bloc_obj_from_value(v);
             BlocTypeDesc *desc = slot ? slot->desc : NULL;
             const char *name = (desc && desc->name) ? desc->name : "bloc";
             size_t name_len = strlen(name);
@@ -1447,7 +1442,7 @@ char *value_to_string(Value v) {
                     pos += field_len;
                     res[pos++] = ':';
                     res[pos++] = ' ';
-                    Value field = bloc_load_field(desc, i, slot->bytes);
+                    Value field = bloc_load_field(slot, i);
                     char *field_str = value_to_string(field);
                     size_t field_str_len = strlen(field_str);
                     while (pos + field_str_len + 2 >= cap) { cap *= 2; res = realloc(res, cap); }
@@ -1629,7 +1624,7 @@ void value_fprint(FILE *f, Value v) {
             break;
         case VAL_BLOC:
         {
-            BlocSlot *slot = bloc_slot_from_handle(v.bloc.handle);
+            BlocObj *slot = bloc_obj_from_value(v);
             BlocTypeDesc *desc = slot ? slot->desc : NULL;
             if (desc && desc->name) fputs(desc->name, f);
             else fputs("bloc", f);
@@ -1639,7 +1634,7 @@ void value_fprint(FILE *f, Value v) {
                     if (i > 0) fputs(", ", f);
                     fputs(desc->fields[i], f);
                     fputs(": ", f);
-                    Value field = bloc_load_field(desc, i, slot->bytes);
+                    Value field = bloc_load_field(slot, i);
                     value_fprint(f, field);
                 }
             }

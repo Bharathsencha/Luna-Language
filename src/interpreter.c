@@ -87,6 +87,9 @@ static void gc_note_heap_value_overwrite(const Value *value) {
         case VAL_TEMPLATE:
             if (value->template_obj) luna_gc_runtime_write_barrier(value->template_obj);
             break;
+        case VAL_BLOC:
+            if (value->bloc.obj) luna_gc_runtime_write_barrier(value->bloc.obj);
+            break;
         default:
             break;
     }
@@ -107,6 +110,8 @@ static int gc_value_is_young_heap(const Value *value) {
             return value->closure && GC_FROM_PAYLOAD(value->closure)->generation == GC_GEN_YOUNG;
         case VAL_TEMPLATE:
             return value->template_obj && GC_FROM_PAYLOAD(value->template_obj)->generation == GC_GEN_YOUNG;
+        case VAL_BLOC:
+            return value->bloc.obj && GC_FROM_PAYLOAD(value->bloc.obj)->generation == GC_GEN_YOUNG;
         default:
             return 0;
     }

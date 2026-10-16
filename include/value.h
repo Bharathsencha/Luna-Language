@@ -101,8 +101,16 @@ typedef struct {
 
 #define VALUE_BLOC_INLINE_MAX 64
 
+// Bloc payload cap. Every primitive field takes one 8-byte slot, so a bloc
+// holds at most BLOC_MAX_SLOTS primitive leaves, nested blocs included.
+#define BLOC_MAX_BYTES 32
+#define BLOC_SLOT_BYTES 8
+#define BLOC_MAX_SLOTS (BLOC_MAX_BYTES / BLOC_SLOT_BYTES)
+
+typedef struct BlocObj BlocObj;
+
 typedef struct {
-    uint64_t handle;
+    BlocObj *obj;
 } BlocValue;
 
 typedef struct {
