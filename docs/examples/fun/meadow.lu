@@ -5,7 +5,7 @@ init_window(1024, 768, "Luna - Sunlit Meadow")
 set_fps(60)
 init_audio_device()
 
-let music = load_music_stream("fun/music/グッド・ドクター-(143k).mp3")
+let music = load_music_stream("docs/examples/fun/music/グッド・ドクター-(143k).mp3")
 play_music_stream(music)
 
 let time = 0.0

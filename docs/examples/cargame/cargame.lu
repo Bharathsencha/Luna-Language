@@ -43,23 +43,23 @@ func main() {
     set_fps(target_fps)
 
     # Load Resources
-    let menu_bg = load_texture("cargame/assets/home_page_background.jpg")
-    let btn_sound = load_sound("cargame/assets/coin-collect-retro-8-bit-sound-effect-145251.mp3")
-    let menu_music = load_music_stream("cargame/assets/8-bit-heaven-26287.mp3")
-    let arrow_left = load_texture("cargame/assets/left-arrow.png")
-    let arrow_right = load_texture("cargame/assets/right-arrow.png")
+    let menu_bg = load_texture("docs/examples/cargame/assets/home_page_background.jpg")
+    let btn_sound = load_sound("docs/examples/cargame/assets/coin-collect-retro-8-bit-sound-effect-145251.mp3")
+    let menu_music = load_music_stream("docs/examples/cargame/assets/8-bit-heaven-26287.mp3")
+    let arrow_left = load_texture("docs/examples/cargame/assets/left-arrow.png")
+    let arrow_right = load_texture("docs/examples/cargame/assets/right-arrow.png")
     
     # Fonts
-    let title_font = load_font("cargame/assets/ShadeBlue-2OozX.ttf", 90)
-    let ui_font = load_font("cargame/assets/ShadeBlue-2OozX.ttf", 40)
+    let title_font = load_font("docs/examples/cargame/assets/ShadeBlue-2OozX.ttf", 90)
+    let ui_font = load_font("docs/examples/cargame/assets/ShadeBlue-2OozX.ttf", 40)
     
     # Game World Resources
-    let soil_img = load_image("cargame/assets/Soil_Tile.png")
+    let soil_img = load_image("docs/examples/cargame/assets/Soil_Tile.png")
     image_rotate_cw(soil_img)
     let soil_tex = load_texture_from_image(soil_img)
     unload_image(soil_img)
 
-    let car_img = load_image("cargame/assets/Car_1_01.png")
+    let car_img = load_image("docs/examples/cargame/assets/Car_1_01.png")
     image_rotate_cw(car_img)
     let car_tex = load_texture_from_image(car_img)
     unload_image(car_img)

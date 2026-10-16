@@ -2,7 +2,7 @@ ifeq (,$(filter -j%,$(MAKEFLAGS)))
 MAKEFLAGS += -j$(shell nproc)
 endif
 CC = gcc
-CFLAGS = -std=c11 -O3 -march=native -flto=auto -fopenmp -funroll-loops -fomit-frame-pointer -DNDEBUG -Iinclude -Igui -Ivm -Wall -Wextra -Wno-unused-parameter
+CFLAGS = -std=c11 -O3 -march=native -flto=auto -fopenmp -funroll-loops -fomit-frame-pointer -DNDEBUG -Iinclude -Igui -Wall -Wextra -Wno-unused-parameter
 DEPFLAGS = -MMD -MP
 ASM = nasm
 ASMFLAGS = -f elf64
@@ -32,7 +32,7 @@ SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
        gui/gui_lib.c gui/gl_backend.c gui/audio_backend.c \
        gui/gl_backend_3d.c gui/gui_lib_3d.c gui/model_backend.c \
        src/module_runtime.c \
-       vm/luna_chunk.c vm/luna_compiler.c vm/luna_vm.c vm/luna_vm_gc.c
+       src/luna_chunk.c src/luna_compiler.c src/luna_vm.c src/luna_vm_gc.c
 
 # Object files
 OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
@@ -94,10 +94,6 @@ $(BINDIR)/$(TARGET): $(OBJS) $(UNSAFE_RT_LIB) $(DATA_RT_LIB) | $(BINDIR)
 
 # Compile source files from src/
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-# Compile source files from vm/
-$(OBJDIR)/luna_%.o: vm/luna_%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # Rules to compile source files from gui/
@@ -210,12 +206,21 @@ run: $(BINDIR)/$(TARGET)
 repl: $(BINDIR)/$(TARGET)
 	./$(BINDIR)/$(TARGET)
 
-# Run the Car Game
+# Example programs (docs/examples/). Run from the repo root: asset paths are root-relative.
+EXAMPLES = docs/examples
+
 run-cargame: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) cargame/cargame.lu
+	./$(BINDIR)/$(TARGET) $(EXAMPLES)/cargame/cargame.lu
 
 run-music: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) musicplayer/music.lu
+	./$(BINDIR)/$(TARGET) $(EXAMPLES)/musicplayer/music.lu
+
+run-racer: $(BINDIR)/$(TARGET)
+	./$(BINDIR)/$(TARGET) $(EXAMPLES)/fun/racer3d/main.lu
+
+# Run any example in docs/examples/fun: make run-fun NAME=galaxy
+run-fun: $(BINDIR)/$(TARGET)
+	./$(BINDIR)/$(TARGET) $(EXAMPLES)/fun/$(NAME).lu
 
 # Generate IR (GIMPLE) representation
 ir:
@@ -238,29 +243,6 @@ preprocess:
 	done
 	@echo "Preprocessed files generated in preprocessed/ directory"
 
-# Run Luna vs Zig Performance Comparison
-run-comp: $(BINDIR)/$(TARGET)
-	@chmod +x benchmark/compare.sh
-	@+ZIG=$(ZIG) ./benchmark/compare.sh
-
-test-gc: $(BINDIR)/$(TARGET)
-	@python3 test_gc/gc_bench.py
-
-# 3-run Luna vs Go stress benchmark; summary CSV in stress_test/
-test-gc-three: $(BINDIR)/$(TARGET)
-	@mkdir -p stress_test
-	@python3 stress_test/stress_bench.py
-
-# Java (G1) vs Luna GC benchmark, 3 runs; CSV in java/
-test-java-gc: $(BINDIR)/$(TARGET)
-	@mkdir -p java/out
-	@python3 stress_test/java_bench.py
-
-# Python vs Luna GC benchmark, 3 runs; CSV in python/
-test-py: $(BINDIR)/$(TARGET)
-	@mkdir -p python
-	@python3 stress_test/python_bench.py
-
 test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo "==> GC stress+verify: test/test_gc_safety.lu"
 	@env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 ./$(BINDIR)/$(TARGET) test/test_gc_safety.lu
@@ -270,22 +252,8 @@ test-gc-safety: $(BINDIR)/$(TARGET)
 	@echo ""
 	@echo "GC safety tests passed under stress+verify."
 
-# Unified GC benchmark: Luna vs Go, Luna vs Java (G1), stress 3x, stress 8x
-test-gc-all: $(BINDIR)/$(TARGET)
-	@python3 test_gc/gc_bench_all.py
-
-# Live GC pause monitor (opens the browser; Ctrl-C to stop)
-demo-gc: $(BINDIR)/$(TARGET)
-	@python3 demo/demo_gc_live.py
-
 zig-test:
 	cd zig-test && ZIG_GLOBAL_CACHE_DIR=.zig-global-cache zig build test --cache-dir .zig-cache
 	@echo "Zig test passed. No errors found."
 
-vm:
-	$(MAKE) -C vm
-
-vm-run: vm
-	./vm/luna_vm vm/sample.luvm
-
-.PHONY: all clean clean-c run repl test test-rust-data test-gc test-gc-three test-java-gc test-py test-gc-safety test-gc-all demo-gc zig-test ir preprocess install check-deps setup-mint run-comp vm vm-run
+.PHONY: all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun

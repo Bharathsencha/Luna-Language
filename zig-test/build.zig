@@ -37,10 +37,16 @@ pub fn build(b: *std.Build) void {
             "src/luna_runtime.c",
             "src/luna_test.c",
             "src/data_runtime.c",
+            "src/module_runtime.c",
+            "src/luna_chunk.c",
+            "src/luna_compiler.c",
+            "src/luna_vm.c",
+            "src/luna_vm_gc.c",
         },
         .flags = &.{
             "-std=c11",
             "-D_POSIX_C_SOURCE=200809L",
+            "-D_DEFAULT_SOURCE",
             "-Iinclude",
         },
     });

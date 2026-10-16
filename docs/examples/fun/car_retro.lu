@@ -133,11 +133,11 @@ func main() {
     init_audio_device()
 
     # Load Assets
-    let music = load_music_stream("fun/music/kavinsky.mp3")
+    let music = load_music_stream("docs/examples/fun/music/kavinsky.mp3")
     play_music_stream(music)
 
-    let arrow_left = load_texture("fun/assets/left-arrow.png")
-    let arrow_right = load_texture("fun/assets/right-arrow.png")
+    let arrow_left = load_texture("docs/examples/fun/assets/left-arrow.png")
+    let arrow_right = load_texture("docs/examples/fun/assets/right-arrow.png")
 
     while (window_open()) {
         let dt = get_delta_time()

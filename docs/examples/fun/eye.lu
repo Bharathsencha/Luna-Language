@@ -6,7 +6,7 @@ init_window(1024, 768, "Luna - The All-Seeing Eye")
 set_fps(60)
 init_audio_device()
 
-let music = load_music_stream("fun/music/Pogo - Forget [Slowed down]-(129k).mp3")
+let music = load_music_stream("docs/examples/fun/music/Pogo - Forget [Slowed down]-(129k).mp3")
 play_music_stream(music)
 
 let time = 0.0

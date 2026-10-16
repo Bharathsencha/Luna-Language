@@ -6,37 +6,37 @@ init_window(WIDTH, HEIGHT, TITLE)
 init_audio_device()
 
 # Load Assets
-let FONT_L = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 60)
-let FONT_S = load_font("musicplayer/assets/ShadeBlue-2OozX.ttf", 30)
+let FONT_L = load_font("docs/examples/musicplayer/assets/ShadeBlue-2OozX.ttf", 60)
+let FONT_S = load_font("docs/examples/musicplayer/assets/ShadeBlue-2OozX.ttf", 30)
 
-let IMG_PLAY = load_image("musicplayer/assets/icons8-play-64.png")
+let IMG_PLAY = load_image("docs/examples/musicplayer/assets/icons8-play-64.png")
 let TEX_PLAY = load_texture_from_image(IMG_PLAY)
 unload_image(IMG_PLAY)
 
-let IMG_PAUSE = load_image("musicplayer/assets/icons8-pause-50.png")
+let IMG_PAUSE = load_image("docs/examples/musicplayer/assets/icons8-pause-50.png")
 let TEX_PAUSE = load_texture_from_image(IMG_PAUSE)
 unload_image(IMG_PAUSE)
 
-let IMG_NEXT = load_image("musicplayer/assets/icons8-forward-50_arrow.png")
+let IMG_NEXT = load_image("docs/examples/musicplayer/assets/icons8-forward-50_arrow.png")
 let TEX_NEXT = load_texture_from_image(IMG_NEXT)
 unload_image(IMG_NEXT)
 
 # Playlist
 let songs = [
-    "musicplayer/songs/Virtual Love - Tanin Jazz ( English translation lyrics)-(130k).mp3",
-    "musicplayer/songs/TheFatRat - Jackpot (Jackpot EP Track 1)-(134k).mp3",
-    "musicplayer/songs/TheFatRat - Rise Up-(133k).mp3",
-    "musicplayer/songs/TheFatRat & Anjulie - Close To The Sun-(136k).mp3",
-    "musicplayer/songs/TheFatRat & Cecilia Gault - Escaping Gravity [Chapter 3]-(134k).mp3",
-    "musicplayer/songs/The Pointer Sisters - Hot Together (Official Audio)-(130k).mp3",
-    "musicplayer/songs/Hozier - Too Sweet (Official Video)-(131k).mp3",
-    "musicplayer/songs/Alphaville - Forever Young (Official Music Video)-(129k).mp3",
-    "musicplayer/songs/Max Raabe - We Will Rock You-(134k).mp3",
-    "musicplayer/songs/Sunflower - Spider-Man_ Into the Spider-Verse_spotdown.org.mp3",
-    "musicplayer/songs/Tears For Fears - Everybody Wants To Rule The World (Official Music Video)-(132k).mp3",
-    "musicplayer/songs/The Score - Unstoppable (Lyric Video)-(129k).mp3",
-    "musicplayer/songs/Tip Toe.mp3",
-    "musicplayer/songs/yung kai - blue (official audio)-(141k).mp3"
+    "docs/examples/musicplayer/songs/Virtual Love - Tanin Jazz ( English translation lyrics)-(130k).mp3",
+    "docs/examples/musicplayer/songs/TheFatRat - Jackpot (Jackpot EP Track 1)-(134k).mp3",
+    "docs/examples/musicplayer/songs/TheFatRat - Rise Up-(133k).mp3",
+    "docs/examples/musicplayer/songs/TheFatRat & Anjulie - Close To The Sun-(136k).mp3",
+    "docs/examples/musicplayer/songs/TheFatRat & Cecilia Gault - Escaping Gravity [Chapter 3]-(134k).mp3",
+    "docs/examples/musicplayer/songs/The Pointer Sisters - Hot Together (Official Audio)-(130k).mp3",
+    "docs/examples/musicplayer/songs/Hozier - Too Sweet (Official Video)-(131k).mp3",
+    "docs/examples/musicplayer/songs/Alphaville - Forever Young (Official Music Video)-(129k).mp3",
+    "docs/examples/musicplayer/songs/Max Raabe - We Will Rock You-(134k).mp3",
+    "docs/examples/musicplayer/songs/Sunflower - Spider-Man_ Into the Spider-Verse_spotdown.org.mp3",
+    "docs/examples/musicplayer/songs/Tears For Fears - Everybody Wants To Rule The World (Official Music Video)-(132k).mp3",
+    "docs/examples/musicplayer/songs/The Score - Unstoppable (Lyric Video)-(129k).mp3",
+    "docs/examples/musicplayer/songs/Tip Toe.mp3",
+    "docs/examples/musicplayer/songs/yung kai - blue (official audio)-(141k).mp3"
 ]
 
 let song_names = [
