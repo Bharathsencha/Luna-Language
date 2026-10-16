@@ -1372,7 +1372,7 @@ Value luna_vm_execute(LunaVM *vm) {
             res = value_box((size_t)size.i, msg, sizeof(msg));
             if (res.type == VAL_NULL) {
                 error_report_with_context(ERR_ARGUMENT, line, 0, msg,
-                    "Boxes are stack-scoped scratch buffers up to one cache line");
+                    "Use box[n] with n between 1 and 4096; at most 4096 boxes can be live at once");
             } else {
                 uint64_t scope_id = vm->scope_depth > 0 ?
                     vm->scope_stack[vm->scope_depth - 1] : 0;
@@ -1461,7 +1461,11 @@ Value luna_vm_execute(LunaVM *vm) {
             ret = value_bloc_get_field(target, vm_intern_const(chunk, name_idx), &found);
         } else if (target.type == VAL_BOX) {
             const char *f = vm_intern_const(chunk, name_idx);
-            if (f == intern_string("len")) {
+            char live_msg[128];
+            if (!value_box_check_live(target, live_msg, sizeof(live_msg))) {
+                error_report_with_context(ERR_RUNTIME, line, 0, live_msg,
+                    "Do not use a box after it is freed.");
+            } else if (f == intern_string("len")) {
                 ret = value_int((long long)value_box_len(target));
             } else if (f == intern_string("cap")) {
                 ret = value_int((long long)value_box_cap(target));

@@ -42,7 +42,7 @@ assert(type(buf) == "box")
 assert(buf.len == 32)
 assert(buf.cap >= 32)
 free(buf)
-assert(buf.len == 0)
+assert(to_string(buf) == "<box freed>")
 
 # Template tests
 template Entity { name, hp, tag }

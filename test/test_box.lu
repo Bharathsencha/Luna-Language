@@ -11,8 +11,7 @@ assert(alias.len == 16)
 
 free(buf)
 
-assert(alias.len == 0)
-assert(alias.cap == 0)
+assert(to_string(alias) == "<box freed>")
 
 let tiny = box[1]
 assert(tiny.len == 1)
@@ -24,7 +23,6 @@ if (true) {
     escaped = scoped
     assert(escaped.len == 8)
 }
-assert(escaped.len == 0)
-assert(escaped.cap == 0)
+assert(to_string(escaped) == "<box freed>")
 
 print("Box tests passed!")

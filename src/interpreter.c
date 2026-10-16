@@ -838,6 +838,12 @@ static Value eval_expr(Env *e, AstNode *n) {
             if (target.type == VAL_BOX) {
                 Value res = value_null();
                 int found = 1;
+                char live_msg[128];
+                if (!value_box_check_live(target, live_msg, sizeof(live_msg))) {
+                    error_report_with_context(ERR_RUNTIME, n->line, 0, live_msg,
+                        "Do not use a box after it is freed.");
+                    return value_null();
+                }
                 if (n->field.field == intern_string("len")) {
                     res = value_int((long long)value_box_len(target));
                 } else if (n->field.field == intern_string("cap")) {
@@ -928,7 +934,7 @@ static Value eval_expr(Env *e, AstNode *n) {
             Value res = value_box((size_t)size.i, msg, sizeof(msg));
             if (res.type == VAL_NULL) {
                 error_report_with_context(ERR_ARGUMENT, n->line, 0, msg,
-                    "Boxes are stack-scoped scratch buffers up to one cache line");
+                    "Use box[n] with n between 1 and 4096; at most 4096 boxes can be live at once");
             } else {
                 value_box_mark_scope(res, env_scope_id(e));
             }
@@ -1353,7 +1359,15 @@ static Value eval_expr(Env *e, AstNode *n) {
                         if (v.type == VAL_LIST && v.list) len = v.list->count;
                         if (v.type == VAL_DENSE_LIST && v.dlist) len = v.dlist->count;
                         if (v.type == VAL_MAP && v.map) len = v.map->count;
-                        if (v.type == VAL_BOX) len = (int)value_box_len(v);
+                        if (v.type == VAL_BOX) {
+                            char live_msg[128];
+                            if (!value_box_check_live(v, live_msg, sizeof(live_msg))) {
+                                error_report_with_context(ERR_RUNTIME, n->line, 0, live_msg,
+                                    "Do not use a box after it is freed.");
+                                return value_null();
+                            }
+                            len = (int)value_box_len(v);
+                        }
                         if (v.type == VAL_TEMPLATE) len = value_template_len(v);
                         value_free(v);
                         return value_int(len);

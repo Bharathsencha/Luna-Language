@@ -47,6 +47,11 @@ Value lib_str_len(int argc, Value *argv, Env *env) {
         return value_int((long long)v.map->count);
     }
     else if (v.type == VAL_BOX) {
+        char msg[128];
+        if (!value_box_check_live(v, msg, sizeof(msg))) {
+            error_report_with_context(ERR_RUNTIME, 0, 0, msg, "Do not use a box after it is freed.");
+            return value_null();
+        }
         return value_int((long long)value_box_len(v));
     }
     else if (v.type == VAL_TEMPLATE) {

@@ -169,6 +169,7 @@ const char *value_bloc_name(Value v);
 int value_bloc_equal(Value left, Value right);
 Value value_box(size_t size, char *msg, size_t msg_len);
 int value_box_free(Value box, char *msg, size_t msg_len);
+int value_box_check_live(Value box, char *msg, size_t msg_len);
 size_t value_box_len(Value box);
 size_t value_box_cap(Value box);
 int value_box_is_live(Value box);

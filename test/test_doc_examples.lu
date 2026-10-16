@@ -23,7 +23,7 @@ assert(buf.cap >= 64)
 assert(type(buf) == "box")
 
 free(buf)
-assert(buf.len == 0)
+assert(to_string(buf) == "<box freed>")
 
 // Template Example
 

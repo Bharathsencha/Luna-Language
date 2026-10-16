@@ -28,8 +28,27 @@ typedef struct Loop {
     int break_count;
     int break_cap;
     int is_switch; /* pseudo-loop for switch: `break` ends switch, `continue` skips it */
+    int continue_forward; /* 1: `continue` jumps forward to the step (for, for-in) */
+    int *continue_jumps;
+    int continue_count;
+    int continue_cap;
     struct Loop *outer;
 } Loop;
+
+static void loop_init(Loop *loop, int start_ip, int scope_depth, int is_switch,
+                      int continue_forward, Loop *outer) {
+    loop->start_ip = start_ip;
+    loop->scope_depth = scope_depth;
+    loop->break_jumps = NULL;
+    loop->break_count = 0;
+    loop->break_cap = 0;
+    loop->is_switch = is_switch;
+    loop->continue_forward = continue_forward;
+    loop->continue_jumps = NULL;
+    loop->continue_count = 0;
+    loop->continue_cap = 0;
+    loop->outer = outer;
+}
 
 typedef struct Compiler {
     struct Compiler *parent;
@@ -208,6 +227,15 @@ static void end_scope(Compiler *c, int line) {
         c->local_count--;
     }
     c->next_reg = c->local_count;
+}
+
+/* Emits one SCOPE_EXIT per scope between the current depth and target_depth,
+ * for break/continue. Compile-time locals are left alone: control flow
+ * continues in enclosing code that closes them normally. */
+static void emit_scope_exits(Compiler *c, int target_depth, int line) {
+    for (int d = c->scope_depth; d > target_depth; d--) {
+        emit_opcode(c, VM_OP_SCOPE_EXIT, line);
+    }
 }
 
 static int compile_expr(Compiler *c, AstNode *n, int target_reg);
@@ -888,13 +916,7 @@ static void compile_stmt(Compiler *c, AstNode *n) {
             c->next_reg = old_reg;
 
             Loop loop;
-            loop.start_ip = start_ip;
-            loop.scope_depth = c->scope_depth;
-            loop.break_jumps = NULL;
-            loop.break_count = 0;
-            loop.break_cap = 0;
-            loop.is_switch = 0;
-            loop.outer = c->current_loop;
+            loop_init(&loop, start_ip, c->scope_depth, 0, 0, c->current_loop);
             c->current_loop = &loop;
 
             begin_scope(c, line);
@@ -933,13 +955,7 @@ static void compile_stmt(Compiler *c, AstNode *n) {
             }
 
             Loop loop;
-            loop.start_ip = start_ip;
-            loop.scope_depth = c->scope_depth;
-            loop.break_jumps = NULL;
-            loop.break_count = 0;
-            loop.break_cap = 0;
-            loop.is_switch = 0;
-            loop.outer = c->current_loop;
+            loop_init(&loop, start_ip, c->scope_depth, 0, 1, c->current_loop);
             c->current_loop = &loop;
 
             // Body
@@ -948,6 +964,12 @@ static void compile_stmt(Compiler *c, AstNode *n) {
                 compile_stmt(c, n->forstmt.body.items[i]);
             }
             end_scope(c, line);
+
+            // `continue` lands here so the increment still runs
+            for (int i = 0; i < loop.continue_count; i++) {
+                patch_jump(c, loop.continue_jumps[i]);
+            }
+            if (loop.continue_jumps) free(loop.continue_jumps);
 
             // Increment
             if (n->forstmt.incr) {
@@ -1003,13 +1025,7 @@ static void compile_stmt(Compiler *c, AstNode *n) {
             for (int b = 0; b < 8; b++) emit_byte(c, (uint8_t)((zero >> (b * 8)) & 0xFF), line);
 
             Loop loop;
-            loop.start_ip = 0;
-            loop.scope_depth = c->scope_depth;
-            loop.break_jumps = NULL;
-            loop.break_count = 0;
-            loop.break_cap = 0;
-            loop.is_switch = 0;
-            loop.outer = c->current_loop;
+            loop_init(&loop, 0, c->scope_depth, 0, 1, c->current_loop);
             c->current_loop = &loop;
 
             int start_ip = (int)c->chunk->code_len;
@@ -1022,9 +1038,18 @@ static void compile_stmt(Compiler *c, AstNode *n) {
 
             emit_4(c, VM_OP_INDEX_GET, var_reg, iter_reg, i_reg, line);
 
+            /* Each iteration gets its own scope so boxes and defers from the
+             * body are released per iteration, not when the loop ends. */
+            begin_scope(c, line);
             for (int j = 0; j < n->forin.body.count; j++) {
                 compile_stmt(c, n->forin.body.items[j]);
             }
+            end_scope(c, line);
+
+            for (int j = 0; j < loop.continue_count; j++) {
+                patch_jump(c, loop.continue_jumps[j]);
+            }
+            if (loop.continue_jumps) free(loop.continue_jumps);
 
             /* i = i + 1 */
             int one_reg = allocate_reg(c);
@@ -1053,13 +1078,7 @@ static void compile_stmt(Compiler *c, AstNode *n) {
 
             /* Register a pseudo-loop so `break` inside switch jumps to the end. */
             Loop sw;
-            sw.start_ip = 0;
-            sw.scope_depth = c->scope_depth;
-            sw.break_jumps = NULL;
-            sw.break_count = 0;
-            sw.break_cap = 0;
-            sw.is_switch = 1;
-            sw.outer = c->current_loop;
+            loop_init(&sw, 0, c->scope_depth, 1, 0, c->current_loop);
             c->current_loop = &sw;
 
             int case_count = n->switchstmt.cases.count;
@@ -1140,9 +1159,10 @@ static void compile_stmt(Compiler *c, AstNode *n) {
                 fprintf(stderr, "Compile error: break statement outside loop\n");
                 abort();
             }
-            // Emit jump to patch later
-            int jump = emit_jump(c, VM_OP_JUMP, line);
+            // Leave every scope opened inside the loop (runs defers, releases boxes)
             Loop *loop = c->current_loop;
+            emit_scope_exits(c, loop->scope_depth, line);
+            int jump = emit_jump(c, VM_OP_JUMP, line);
             if (loop->break_count >= loop->break_cap) {
                 loop->break_cap = loop->break_cap ? loop->break_cap * 2 : 4;
                 loop->break_jumps = realloc(loop->break_jumps, loop->break_cap * sizeof(int));
@@ -1157,7 +1177,17 @@ static void compile_stmt(Compiler *c, AstNode *n) {
                 fprintf(stderr, "Compile error: continue statement outside loop\n");
                 abort();
             }
-            emit_loop_jump(c, target->start_ip, line);
+            emit_scope_exits(c, target->scope_depth, line);
+            if (target->continue_forward) {
+                int jump = emit_jump(c, VM_OP_JUMP, line);
+                if (target->continue_count >= target->continue_cap) {
+                    target->continue_cap = target->continue_cap ? target->continue_cap * 2 : 4;
+                    target->continue_jumps = realloc(target->continue_jumps, target->continue_cap * sizeof(int));
+                }
+                target->continue_jumps[target->continue_count++] = jump;
+            } else {
+                emit_loop_jump(c, target->start_ip, line);
+            }
             break;
         }
         case NODE_RETURN: {

@@ -47,9 +47,12 @@ struct BlocObj {
     unsigned char bytes[BLOC_MAX_BYTES];
 };
 
+/* Box handles are (generation << 32) | (index + 1). Freeing a box bumps the
+ * slot's generation, so the slot can be reused and stale handles no longer
+ * resolve (the Rust registry still reports them as freed). */
 typedef struct {
     int in_use;
-    int freed;
+    uint32_t gen;
     int owned_by_template;
     uint64_t scope_id;
     size_t len;
@@ -66,7 +69,7 @@ struct TemplateObj {
 };
 
 #define BOX_SLOT_MAX 4096
-#define VALUE_BOX_MAX_BYTES VALUE_BLOC_INLINE_MAX
+#define VALUE_BOX_MAX_BYTES 4096
 #define TEMPLATE_MIN_CHUNK_BYTES 64
 static BoxSlot box_slots[BOX_SLOT_MAX];
 static uint64_t box_high_water = 0; /* 1-based highest handle ever allocated */
@@ -84,10 +87,20 @@ static BlocObj *bloc_obj_new(BlocTypeDesc *desc) {
     return obj;
 }
 
+static uint64_t box_handle_make(uint64_t index, uint32_t gen) {
+    return ((uint64_t)gen << 32) | (index + 1);
+}
+
+static uint64_t box_handle_of(const BoxSlot *slot) {
+    return box_handle_make((uint64_t)(slot - box_slots), slot->gen);
+}
+
 static BoxSlot *box_slot_from_handle(uint64_t handle) {
-    if (handle == 0 || handle > BOX_SLOT_MAX) return NULL;
-    BoxSlot *slot = &box_slots[handle - 1];
-    return slot->in_use ? slot : NULL;
+    uint64_t index = handle & 0xffffffffULL;
+    if (index == 0 || index > BOX_SLOT_MAX) return NULL;
+    BoxSlot *slot = &box_slots[index - 1];
+    if (!slot->in_use || slot->gen != (uint32_t)(handle >> 32)) return NULL;
+    return slot;
 }
 
 static uint64_t box_alloc_slot(size_t size) {
@@ -96,7 +109,6 @@ static uint64_t box_alloc_slot(size_t size) {
         unsigned char *bytes = calloc(size, sizeof(unsigned char));
         if (!bytes) return 0;
         box_slots[i].in_use = 1;
-        box_slots[i].freed = 0;
         box_slots[i].owned_by_template = 0;
         box_slots[i].scope_id = 0;
         box_slots[i].len = size;
@@ -104,18 +116,20 @@ static uint64_t box_alloc_slot(size_t size) {
         box_slots[i].bytes = bytes;
         if (i + 1 > box_high_water) box_high_water = i + 1;
         box_active_count++;
-        return i + 1;
+        return box_handle_make(i, box_slots[i].gen);
     }
     return 0;
 }
 
 static void box_free_slot(BoxSlot *slot) {
-    if (!slot || slot->freed) return;
+    if (!slot || !slot->in_use) return;
+    (void)luna_data_box_free_ok(box_handle_of(slot)); /* mark dead in the Rust registry */
     free(slot->bytes);
     slot->bytes = NULL;
     slot->len = 0;
     slot->cap = 0;
-    slot->freed = 1;
+    slot->in_use = 0;
+    slot->gen++;
     slot->owned_by_template = 0;
     slot->scope_id = 0;
     if (box_active_count > 0) box_active_count--;
@@ -849,7 +863,7 @@ Value value_pointer(uintptr_t ptr) {
 }
 
 Value value_box(size_t size, char *msg, size_t msg_len) {
-    if (!data_runtime_check_box_size(size, 0)) {
+    if (luna_data_box_size_ok(size) != 0) {
         if (msg && msg_len > 0) {
             snprintf(msg, msg_len,
                      "box size must be between 1 and %d bytes",
@@ -861,7 +875,7 @@ Value value_box(size_t size, char *msg, size_t msg_len) {
     uint64_t handle = box_alloc_slot(size);
     if (handle == 0) {
         if (msg && msg_len > 0) {
-            snprintf(msg, msg_len, "box allocation failed");
+            snprintf(msg, msg_len, "box allocation failed: more than %d boxes are live at once", BOX_SLOT_MAX);
         }
         return value_null();
     }
@@ -874,18 +888,30 @@ Value value_box(size_t size, char *msg, size_t msg_len) {
     return v;
 }
 
-int value_box_free(Value box, char *msg, size_t msg_len) {
-    if (box.type == VAL_BOX && !data_runtime_check_box_free(box.box.handle, 0)) {
-        if (msg && msg_len > 0) snprintf(msg, msg_len, "box was already freed (use-after-free)");
-        return 0;
+/* Returns 1 if box is a live box. Otherwise fills msg (use-after-free or
+ * invalid handle) and returns 0. Does not report. */
+int value_box_check_live(Value box, char *msg, size_t msg_len) {
+    if (box.type == VAL_BOX && box_slot_from_handle(box.box.handle)) return 1;
+    if (msg && msg_len > 0) {
+        int code = (box.type == VAL_BOX) ? luna_data_box_access_ok(box.box.handle) : 6;
+        if (code == 5) snprintf(msg, msg_len, "box was already freed (use-after-free)");
+        else snprintf(msg, msg_len, "expected a live box value");
     }
+    return 0;
+}
+
+int value_box_free(Value box, char *msg, size_t msg_len) {
     BoxSlot *slot = (box.type == VAL_BOX) ? box_slot_from_handle(box.box.handle) : NULL;
     if (!slot) {
-        if (msg && msg_len > 0) snprintf(msg, msg_len, "free() expects a live box value");
+        int code = (box.type == VAL_BOX) ? luna_data_box_access_ok(box.box.handle) : 6;
+        if (msg && msg_len > 0) {
+            if (code == 5) snprintf(msg, msg_len, "box was already freed (double free)");
+            else snprintf(msg, msg_len, "free() expects a live box value");
+        }
         return 0;
     }
-    if (slot->freed) {
-        if (msg && msg_len > 0) snprintf(msg, msg_len, "box was already freed");
+    if (slot->owned_by_template) {
+        if (msg && msg_len > 0) snprintf(msg, msg_len, "this box belongs to a template and is freed with it");
         return 0;
     }
 
@@ -904,13 +930,12 @@ size_t value_box_cap(Value box) {
 }
 
 int value_box_is_live(Value box) {
-    BoxSlot *slot = (box.type == VAL_BOX) ? box_slot_from_handle(box.box.handle) : NULL;
-    return slot && !slot->freed;
+    return box.type == VAL_BOX && box_slot_from_handle(box.box.handle) != NULL;
 }
 
 void value_box_mark_scope(Value box, uint64_t scope_id) {
     BoxSlot *slot = (box.type == VAL_BOX) ? box_slot_from_handle(box.box.handle) : NULL;
-    if (!slot || slot->freed || slot->owned_by_template) return;
+    if (!slot || slot->owned_by_template) return;
     slot->scope_id = scope_id;
 }
 
@@ -919,14 +944,14 @@ void value_box_release_scope(uint64_t scope_id) {
     /* Only scan up to the highest handle ever handed out. */
     for (uint64_t i = 0; i < box_high_water && i < BOX_SLOT_MAX; i++) {
         BoxSlot *slot = &box_slots[i];
-        if (!slot->in_use || slot->freed || slot->owned_by_template) continue;
+        if (!slot->in_use || slot->owned_by_template) continue;
         if (slot->scope_id == scope_id) box_free_slot(slot);
     }
 }
 
 void value_box_promote_to_template(Value box) {
     BoxSlot *slot = (box.type == VAL_BOX) ? box_slot_from_handle(box.box.handle) : NULL;
-    if (!slot || slot->freed) return;
+    if (!slot) return;
     slot->owned_by_template = 1;
     slot->scope_id = 0;
 }
@@ -1461,9 +1486,7 @@ char *value_to_string(Value v) {
             char *res = malloc(len);
             BoxSlot *slot = box_slot_from_handle(v.box.handle);
             if (!slot) {
-                snprintf(res, len, "<box invalid>");
-            } else if (slot->freed) {
-                snprintf(res, len, "<box freed>");
+                snprintf(res, len, luna_data_box_access_ok(v.box.handle) == 5 ? "<box freed>" : "<box invalid>");
             } else {
                 snprintf(res, len, "<box len=%zu cap=%zu>", slot->len, slot->cap);
             }
@@ -1643,8 +1666,7 @@ void value_fprint(FILE *f, Value v) {
         }
         case VAL_BOX: {
             BoxSlot *slot = box_slot_from_handle(v.box.handle);
-            if (!slot) fputs("<box invalid>", f);
-            else if (slot->freed) fputs("<box freed>", f);
+            if (!slot) fputs(luna_data_box_access_ok(v.box.handle) == 5 ? "<box freed>" : "<box invalid>", f);
             else fprintf(f, "<box len=%zu cap=%zu>", slot->len, slot->cap);
             break;
         }
