@@ -19,7 +19,6 @@ gc.log.*
 hs_err_pid*.log
 gmon.out
 /out/
-java/out/
 .vscode/
 .idea/
 .DS_Store
@@ -41,9 +40,5 @@ lib/libluna_data_rt.a
 zig-test/.zig-cache/
 zig-test/.zig-global-cache/
 zig-test/zig-out/
-benchmark/.zig-cache/
-benchmark/.zig-global-cache/
-test_gc/*_go
-test_gc/*.csv
-test_gc/*.png
 __pycache__/
+*.csv
