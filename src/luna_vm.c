@@ -81,6 +81,20 @@ static int vm_ptr_store_ok(Value v, int line) {
     return unsafe_runtime_check_gc_store(v, line);
 }
 
+/* Unknown field on a template or bloc; same wording as the interpreter. */
+static void vm_report_missing_field(Value target, const char *field, int line) {
+    char msg[256];
+    if (target.type == VAL_TEMPLATE) {
+        snprintf(msg, sizeof(msg), "Template field '%s' does not exist", field);
+        error_report_with_context(ERR_NAME, line, 0, msg,
+            "Access only declared fields for this template");
+    } else {
+        snprintf(msg, sizeof(msg), "Field '%s' does not exist on this bloc value", field);
+        error_report_with_context(ERR_NAME, line, 0, msg,
+            "Use dot access with a declared bloc field such as point.x");
+    }
+}
+
 /* Reports a box that would outlive its scope. */
 static int vm_box_escape_ok(Value v, const char *where, int line) {
     char msg[160];
@@ -1293,13 +1307,17 @@ Value luna_vm_execute(LunaVM *vm) {
             }
         } else if (target.type == VAL_TEMPLATE && index.type == VAL_STRING) {
             int found = 0;
-            ret = value_template_get_field(target, intern_string(index.string->chars), &found);
+            const char *fname = intern_string(index.string->chars);
+            ret = value_template_get_field(target, fname, &found);
+            if (!found) vm_report_missing_field(target, fname, vm_op_line(chunk, ip));
         } else if (target.type == VAL_MAP && index.type == VAL_STRING) {
             Value *got = value_map_get(&target, intern_string(index.string->chars));
             if (got) ret = value_copy(*got);
         } else if (target.type == VAL_BLOC && index.type == VAL_STRING) {
             int found = 0;
-            ret = value_bloc_get_field(target, intern_string(index.string->chars), &found);
+            const char *fname = intern_string(index.string->chars);
+            ret = value_bloc_get_field(target, fname, &found);
+            if (!found) vm_report_missing_field(target, fname, vm_op_line(chunk, ip));
         } else if (target.type == VAL_BOX) {
             char msg[160];
             if (index.type != VAL_INT) {
@@ -1363,8 +1381,23 @@ Value luna_vm_execute(LunaVM *vm) {
             if (index.type == VAL_STRING && vm_ptr_store_ok(val, line)) {
                 char msg[256];
                 Value val_copy = value_copy(val);
-                value_template_set_field(&target, intern_string(index.string->chars), &val_copy, msg, sizeof(msg));
+                if (!value_template_set_field(&target, intern_string(index.string->chars), &val_copy, msg, sizeof(msg))) {
+                    error_report_with_context(ERR_NAME, line, 0, msg,
+                        "Assign only to declared template fields");
+                }
+            } else if (index.type != VAL_STRING) {
+                error_report_with_context(ERR_TYPE, line, 0,
+                    "Template assignment index must be a string",
+                    "Use template[\"field\"] = value or template.field = value");
             }
+        } else if (target.type == VAL_BLOC) {
+            error_report_with_context(ERR_TYPE, line, 0,
+                "bloc values are immutable",
+                "Build a new bloc, or use a template for data that changes");
+        } else if (target.type != VAL_LIST && target.type != VAL_DENSE_LIST && target.type != VAL_MAP) {
+            error_report_with_context(ERR_TYPE, line, 0,
+                "Cannot assign through this target",
+                "Use integer indices for lists, or string keys for maps and templates");
         }
         #ifdef __GNUC__
         DISPATCH();
@@ -1514,10 +1547,14 @@ Value luna_vm_execute(LunaVM *vm) {
             if (got) ret = value_copy(*got);
         } else if (target.type == VAL_TEMPLATE) {
             int found = 0;
-            ret = value_template_get_field(target, vm_intern_const(chunk, name_idx), &found);
+            const char *fname = vm_intern_const(chunk, name_idx);
+            ret = value_template_get_field(target, fname, &found);
+            if (!found) vm_report_missing_field(target, fname, line);
         } else if (target.type == VAL_BLOC) {
             int found = 0;
-            ret = value_bloc_get_field(target, vm_intern_const(chunk, name_idx), &found);
+            const char *fname = vm_intern_const(chunk, name_idx);
+            ret = value_bloc_get_field(target, fname, &found);
+            if (!found) vm_report_missing_field(target, fname, line);
         } else if (target.type == VAL_BOX) {
             const char *f = vm_intern_const(chunk, name_idx);
             char live_msg[128];
@@ -1561,7 +1598,14 @@ Value luna_vm_execute(LunaVM *vm) {
         } else if (target.type == VAL_TEMPLATE) {
             char msg[256];
             Value val_copy = value_copy(val);
-            value_template_set_field(&target, intern_string(name_val.string->chars), &val_copy, msg, sizeof(msg));
+            if (!value_template_set_field(&target, intern_string(name_val.string->chars), &val_copy, msg, sizeof(msg))) {
+                error_report_with_context(ERR_NAME, vm_op_line(chunk, ip), 0, msg,
+                    "Assign only to declared template fields");
+            }
+        } else if (target.type == VAL_BLOC) {
+            error_report_with_context(ERR_TYPE, vm_op_line(chunk, ip), 0,
+                "bloc values are immutable",
+                "Build a new bloc, or use a template for data that changes");
         }
         #ifdef __GNUC__
         DISPATCH();

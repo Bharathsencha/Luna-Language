@@ -1004,18 +1004,23 @@ void value_box_promote_to_template(Value box) {
     slot->scope_id = 0;
 }
 
-Value value_bloc_type(const char *name, const char **fields, int field_count) {
+Value value_bloc_type(const char *name, const char **fields, int field_count, char *msg, size_t msg_len) {
     Value v;
     v.type = VAL_BLOC_TYPE;
 
     /* Rust-side validation: empty name, duplicate fields, oversize */
-    if (!data_runtime_check_bloc(name, fields, field_count, 0)) {
+    int code = luna_data_bloc_validate(name, fields, field_count);
+    if (code != 0) {
+        if (msg && msg_len > 0) luna_data_error_message(code, msg, msg_len);
         return value_null();
     }
 
     BlocTypeDesc *existing = bloc_find_desc(name);
     if (existing) {
         if (!bloc_is_same_schema(existing, fields, field_count)) {
+            if (msg && msg_len > 0) {
+                snprintf(msg, msg_len, "bloc '%s' is already defined with different fields", name ? name : "");
+            }
             v.type = VAL_NULL;
             v.i = 0;
             return v;
@@ -1162,12 +1167,56 @@ Value value_vm_closure(struct LunaChunk *chunk, int upvalue_count) {
     return v;
 }
 
-Value value_data_type(const char *name, const char **fields, int field_count, int is_template) {
-    /* Rust-side template schema registration */
+/* Every data/template name maps to one field list. Redefining a name with the
+ * same fields is allowed (REPL, re-imports); different fields are an error. */
+typedef struct DataSchema {
+    const char *name;
+    const char **fields;
+    int field_count;
+    int is_template;
+    struct DataSchema *next;
+} DataSchema;
+
+static DataSchema *data_schema_registry = NULL;
+
+static int data_schema_check(const char *name, const char **fields, int field_count, int is_template,
+                             char *msg, size_t msg_len) {
+    for (DataSchema *d = data_schema_registry; d; d = d->next) {
+        if (d->name != name) continue;
+        int same = d->field_count == field_count && d->is_template == is_template;
+        for (int i = 0; same && i < field_count; i++) {
+            if (d->fields[i] != fields[i]) same = 0;
+        }
+        if (!same && msg && msg_len > 0) {
+            snprintf(msg, msg_len, "%s '%s' is already defined with different fields",
+                     is_template ? "template" : "data type", name ? name : "");
+        }
+        return same;
+    }
+    DataSchema *d = calloc(1, sizeof(DataSchema));
+    if (!d) return 1;
+    d->name = name;
+    d->field_count = field_count;
+    d->is_template = is_template;
+    d->fields = field_count > 0 ? malloc(sizeof(const char *) * (size_t)field_count) : NULL;
+    for (int i = 0; i < field_count; i++) d->fields[i] = fields[i];
+    d->next = data_schema_registry;
+    data_schema_registry = d;
+    return 1;
+}
+
+Value value_data_type(const char *name, const char **fields, int field_count, int is_template,
+                      char *msg, size_t msg_len) {
+    /* Rust-side template schema validation: empty name, duplicate fields */
     if (is_template) {
-        if (!data_runtime_check_template_register(name, fields, field_count, 0)) {
+        int code = luna_data_template_register(name, fields, field_count);
+        if (code != 0) {
+            if (msg && msg_len > 0) luna_data_error_message(code, msg, msg_len);
             return value_null();
         }
+    }
+    if (!data_schema_check(name, fields, field_count, is_template, msg, msg_len)) {
+        return value_null();
     }
 
     Value v;

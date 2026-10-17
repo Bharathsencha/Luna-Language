@@ -1076,6 +1076,28 @@ static Value eval_expr(Env *e, AstNode *n) {
                 value_free(target);
                 value_free(idx);
                 return res;
+            } else if (idx.type == VAL_STRING && idx.string &&
+                       (target.type == VAL_TEMPLATE || target.type == VAL_BLOC)) {
+                const char *fname = intern_string(idx.string->chars);
+                int found = 0;
+                Value res = (target.type == VAL_TEMPLATE)
+                    ? value_template_get_field(target, fname, &found)
+                    : value_bloc_get_field(target, fname, &found);
+                if (!found) {
+                    char msg[256];
+                    if (target.type == VAL_TEMPLATE) {
+                        snprintf(msg, sizeof(msg), "Template field '%s' does not exist", fname);
+                        error_report_with_context(ERR_NAME, n->line, 0, msg,
+                            "Access only declared fields for this template");
+                    } else {
+                        snprintf(msg, sizeof(msg), "Field '%s' does not exist on this bloc value", fname);
+                        error_report_with_context(ERR_NAME, n->line, 0, msg,
+                            "Use dot access with a declared bloc field such as point.x");
+                    }
+                }
+                value_free(target);
+                value_free(idx);
+                return found ? res : value_null();
             }
             value_free(target);
             value_free(idx);
@@ -1661,6 +1683,13 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 value_free(val);
                 return value_null();
             }
+            if (target && target->type == VAL_BLOC) {
+                error_report_with_context(ERR_TYPE, n->line, 0,
+                    "bloc values are immutable",
+                    "Build a new bloc, or use a template for data that changes");
+                value_free(val);
+                return value_null();
+            }
             if (target && (target->type == VAL_LIST || target->type == VAL_MAP) &&
                 !interp_box_escape_ok(val, "stored in a list or map", n->line)) {
                 value_free(val);
@@ -2173,18 +2202,24 @@ static Value exec_stmt(Env *e, AstNode *n) {
         }
 
         case NODE_DATA_DEF: {
+            char msg[256] = "";
             Value dtype = value_data_type(n->data_def.name, n->data_def.fields, n->data_def.field_count,
-                                          n->data_def.is_template);
+                                          n->data_def.is_template, msg, sizeof(msg));
+            if (dtype.type == VAL_NULL) {
+                error_report_with_context(ERR_TYPE, n->line, 0, msg,
+                    "Each data or template name must keep one field list");
+                return value_null();
+            }
             env_def_move(e, n->data_def.name, &dtype);
             return value_null();
         }
         case NODE_BLOC_DEF: {
-            Value btype = value_bloc_type(n->bloc_def.name, n->bloc_def.fields, n->bloc_def.field_count);
+            char msg[256] = "";
+            Value btype = value_bloc_type(n->bloc_def.name, n->bloc_def.fields, n->bloc_def.field_count,
+                                          msg, sizeof(msg));
             if (btype.type == VAL_NULL) {
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Bloc '%s' conflicts with an existing bloc definition", n->bloc_def.name);
-                error_report_with_context(ERR_NAME, n->line, 0, msg,
-                    "Keep the field list stable for a given bloc name");
+                error_report_with_context(ERR_TYPE, n->line, 0, msg,
+                    "A bloc holds at most 32 bytes of unique fields; each name keeps one field list");
                 return value_null();
             }
             env_def_move(e, n->bloc_def.name, &btype);

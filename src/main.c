@@ -246,17 +246,28 @@ static void register_definitions(Env *env, AstNode *n) {
             register_definitions(env, n->block.items.items[i]);
         }
     } else if (n->kind == NODE_DATA_DEF) {
+        char msg[256] = "";
         Value dtype = value_data_type(n->data_def.name, n->data_def.fields, n->data_def.field_count,
-                                      n->data_def.is_template);
+                                      n->data_def.is_template, msg, sizeof(msg));
+        if (dtype.type == VAL_NULL) {
+            error_report_with_context(ERR_TYPE, n->line, 0, msg,
+                "Each data or template name must keep one field list");
+            return;
+        }
         #ifdef LUNA_VM_DEBUG
         printf("[REGISTER] Registering data type %s at pointer %p\n", n->data_def.name, (void*)n->data_def.name);
         #endif
         env_def_move(env, n->data_def.name, &dtype);
     } else if (n->kind == NODE_BLOC_DEF) {
-        Value btype = value_bloc_type(n->bloc_def.name, n->bloc_def.fields, n->bloc_def.field_count);
-        if (btype.type != VAL_NULL) {
-            env_def_move(env, n->bloc_def.name, &btype);
+        char msg[256] = "";
+        Value btype = value_bloc_type(n->bloc_def.name, n->bloc_def.fields, n->bloc_def.field_count,
+                                      msg, sizeof(msg));
+        if (btype.type == VAL_NULL) {
+            error_report_with_context(ERR_TYPE, n->line, 0, msg,
+                "A bloc holds at most 32 bytes of unique fields; each name keeps one field list");
+            return;
         }
+        env_def_move(env, n->bloc_def.name, &btype);
     }
 }
 

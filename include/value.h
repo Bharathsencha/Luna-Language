@@ -161,7 +161,7 @@ Value value_string_repeat_raw(const char *s, size_t len, size_t count);
 Value value_char(char c); 
 Value value_bool(int b);
 Value value_pointer(uintptr_t ptr);
-Value value_bloc_type(const char *name, const char **fields, int field_count);
+Value value_bloc_type(const char *name, const char **fields, int field_count, char *msg, size_t msg_len);
 int value_bloc_check_construct(Value descriptor, int argc, Value *argv, char *msg, size_t msg_len);
 Value value_bloc_construct(Value descriptor, int argc, Value *argv);
 Value value_bloc_get_field(Value bloc, const char *field, int *found);
@@ -184,7 +184,8 @@ Value value_dense_list(void); // Constructor for dense arrays
 Value value_map(void);
 Value value_closure(struct AstNode *funcdef, struct Env *env, int owns_env);
 Value value_vm_closure(struct LunaChunk *chunk, int upvalue_count);
-Value value_data_type(const char *name, const char **fields, int field_count, int is_template);
+Value value_data_type(const char *name, const char **fields, int field_count, int is_template,
+                      char *msg, size_t msg_len);
 Value value_template_from_dtype(Value dtype, int argc, Value *argv, char *msg, size_t msg_len);
 Value value_template_get_field(Value template_value, const char *field, int *found);
 Value *value_template_field_slot(Value *template_value, const char *field);
