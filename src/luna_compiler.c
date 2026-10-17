@@ -310,6 +310,9 @@ static int compile_function_value(Compiler *c, AstNode *n, int line, int target_
 
     // Function body scope: box lifetime + deferred calls are scoped here.
     emit_opcode(&fn_compiler, VM_OP_SCOPE_BEGIN, line);
+    // GC checkpoint on every call, so recursion-heavy code (no loops) still
+    // reaches the collector. The VM only collects on every 1024th safepoint.
+    emit_opcode(&fn_compiler, VM_OP_SAFEPOINT, line);
     for (int i = 0; i < n->funcdef.body.count; i++) {
         compile_stmt(&fn_compiler, n->funcdef.body.items[i]);
     }

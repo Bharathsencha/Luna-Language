@@ -1,0 +1,31 @@
+// Recursion-heavy code with no loops must still reach the collector: every
+// function entry is a GC safepoint. Runs under GC stress + verify.
+print("Testing GC in recursion-only code...")
+
+template Node { left, right, value }
+
+func build(depth) {
+    if (depth == 0) {
+        return null
+    }
+    return Node(build(depth - 1), build(depth - 1), depth)
+}
+
+func check(n) {
+    if (n == null) {
+        return 0
+    }
+    return n.value + check(n.left) + check(n.right)
+}
+
+func run(i, total) {
+    if (i == 0) {
+        return total
+    }
+    return run(i - 1, total + check(build(10)))
+}
+
+// One depth-10 tree sums to 2^11 - 12 = 2036.
+assert(run(8, 0) == 8 * 2036)
+
+print("GC recursion tests passed!")
