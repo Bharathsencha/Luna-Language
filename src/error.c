@@ -49,6 +49,11 @@ static const char *color_if_enabled(const char *code) {
     return error_use_color() ? code : "";
 }
 
+void error_get_source(const char **source, const char **filename) {
+    if (source) *source = g_source_info.source;
+    if (filename) *filename = g_source_info.filename;
+}
+
 void error_init(const char *source, const char *filename) {
     g_source_info.source = source;
     g_source_info.filename = filename;

@@ -38,6 +38,8 @@ typedef struct {
 
 // Initialize the error reporting system with source code
 void error_init(const char *source, const char *filename);
+// Current source/filename, so an import can restore the importer's after it runs.
+void error_get_source(const char **source, const char **filename);
 void error_clear_last(void);
 int error_get_last(LunaErrorInfo *out);
 void error_set_quiet(int quiet);

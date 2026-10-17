@@ -343,7 +343,7 @@ int main(int argc, char **argv) {
 
             // Auto-call main() if defined and takes no arguments.
             Value *main_val = env_get(global_env, intern_string("main"));
-            if (main_val && main_val->type == VAL_VM_CLOSURE && main_val->vm_closure &&
+            if (!luna_had_error && main_val && main_val->type == VAL_VM_CLOSURE && main_val->vm_closure &&
                 main_val->vm_closure->chunk->param_count == 0 &&
                 main_val->vm_closure->chunk->upvalue_count == 0) {
                 Value mret = luna_vm_run(&vm, main_val->vm_closure->chunk);
@@ -372,5 +372,5 @@ int main(int argc, char **argv) {
     ast_cleanup();
     env_free_global(global_env);
     luna_gc_runtime_shutdown();
-    return 0;
+    return luna_had_error ? 1 : 0;
 }

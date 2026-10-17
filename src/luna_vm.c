@@ -302,6 +302,8 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
         return;
     }
 
+    const char *saved_src = NULL, *saved_file = NULL;
+    error_get_source(&saved_src, &saved_file);
     error_init(src, canon);
     Parser parser;
     parser_init(&parser, src);
@@ -309,6 +311,7 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
     parser_close(&parser);
 
     if (!prog) {
+        error_init(saved_src, saved_file);
         free(src);
         free(canon);
         return;
@@ -322,6 +325,7 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
     LunaChunk *module_chunk = luna_compile_program(prog);
 
     if (!module_runtime_push_file(canon)) {
+        error_init(saved_src, saved_file);
         free(canon);
         return;
     }
@@ -332,6 +336,7 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
     luna_vm_run(&module_vm, module_chunk);
 
     module_runtime_pop_file();
+    error_init(saved_src, saved_file);
 
     if (!luna_had_error) {
         vm_copy_module_exports(vm, module_env, path, name_idxs, name_count,
@@ -456,7 +461,9 @@ Value luna_vm_execute(LunaVM *vm) {
         goto *dispatch_table[*ip++]; \
     } while(0)
     #else
+    /* A reported runtime error stops the program, as in the interpreter. */
     #define DISPATCH() do { \
+        if (__builtin_expect(luna_had_error, 0)) goto vm_runtime_error; \
         goto *dispatch_table[*ip++]; \
     } while(0)
     #endif
@@ -473,9 +480,21 @@ Value luna_vm_execute(LunaVM *vm) {
     #else
     switch_dispatch:
     while (1) {
+        if (luna_had_error) goto vm_runtime_error;
         switch (*ip++) {
     #endif
 
+    vm_runtime_error:
+        /* Unwind without running deferred calls: the program is stopping. */
+        close_upvalues(vm, vm->stack);
+        while (vm->scope_depth > 0) {
+            uint64_t id = vm->scope_stack[--vm->scope_depth];
+            value_box_release_scope(id);
+        }
+        vm->deferred_count = 0;
+        vm->frame_count = 0;
+        luna_vm_unregister(vm);
+        return value_null();
     #ifdef __GNUC__
     do_halt:
     #else

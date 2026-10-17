@@ -4,7 +4,7 @@ import "util.lu"
 assert(util_ping() == "util-ok")
 assert(util_module_loaded == "module-loaded")
 
-use {util_greet, util_answer} from "test/util.lu"
+use {util_greet, util_answer} from "util.lu"
 assert(util_answer == 42)
 assert(util_greet("Luna") == "Hello Luna from util")
 

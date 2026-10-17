@@ -2068,11 +2068,14 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 return value_null();
             }
 
+            const char *saved_src = NULL, *saved_file = NULL;
+            error_get_source(&saved_src, &saved_file);
             error_init(src, canon);
             Parser parser;
             parser_init(&parser, src);
             AstNode *prog = parser_parse_program(&parser);
             parser_close(&parser);
+            if (!prog) error_init(saved_src, saved_file);
             if (prog) {
                 const char **exported_names = NULL;
                 int exported_count = 0;
@@ -2082,6 +2085,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 Env *module_env = env_create(module_parent);
 
                 if (!module_runtime_push_file(canon)) {
+                    error_init(saved_src, saved_file);
                     free(canon);
                     return value_null();
                 }
@@ -2098,6 +2102,7 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 }
 
                 module_runtime_pop_file();
+                error_init(saved_src, saved_file);
 
                 if (!luna_had_error) {
                     const char **names = n->import_stmt.name_count > 0 ? n->import_stmt.names : exported_names;
