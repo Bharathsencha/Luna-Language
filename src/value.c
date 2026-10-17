@@ -933,6 +933,54 @@ int value_box_is_live(Value box) {
     return box.type == VAL_BOX && box_slot_from_handle(box.box.handle) != NULL;
 }
 
+/* A box is freed when the scope that created it ends, so it may not outlive
+ * that scope: no returning it, no storing it in a list, map or global. A box
+ * that belongs to a template is owned by the template and may move freely. */
+int value_box_escape_ok(Value v, const char *where, char *msg, size_t msg_len) {
+    if (v.type != VAL_BOX) return 1;
+    BoxSlot *slot = box_slot_from_handle(v.box.handle);
+    if (slot && slot->owned_by_template) return 1;
+    if (msg && msg_len > 0) {
+        snprintf(msg, msg_len, "a box cannot be %s; it is freed when its scope ends", where);
+    }
+    return 0;
+}
+
+static int box_byte_index(BoxSlot *slot, long long index, size_t *out, char *msg, size_t msg_len) {
+    long long len = (long long)slot->len;
+    if (index < 0) index += len;
+    if (index < 0 || index >= len) {
+        if (msg && msg_len > 0) {
+            snprintf(msg, msg_len, "box index %lld is out of bounds for a box of %lld bytes", index, len);
+        }
+        return 0;
+    }
+    *out = (size_t)index;
+    return 1;
+}
+
+int value_box_get_byte(Value box, long long index, Value *out, char *msg, size_t msg_len) {
+    if (!value_box_check_live(box, msg, msg_len)) return 0;
+    BoxSlot *slot = box_slot_from_handle(box.box.handle);
+    size_t i = 0;
+    if (!box_byte_index(slot, index, &i, msg, msg_len)) return 0;
+    *out = value_int((long long)slot->bytes[i]);
+    return 1;
+}
+
+int value_box_set_byte(Value box, long long index, Value v, char *msg, size_t msg_len) {
+    if (!value_box_check_live(box, msg, msg_len)) return 0;
+    BoxSlot *slot = box_slot_from_handle(box.box.handle);
+    size_t i = 0;
+    if (!box_byte_index(slot, index, &i, msg, msg_len)) return 0;
+    if (v.type != VAL_INT || v.i < 0 || v.i > 255) {
+        if (msg && msg_len > 0) snprintf(msg, msg_len, "box bytes must be integers from 0 to 255");
+        return 0;
+    }
+    slot->bytes[i] = (unsigned char)v.i;
+    return 1;
+}
+
 void value_box_mark_scope(Value box, uint64_t scope_id) {
     BoxSlot *slot = (box.type == VAL_BOX) ? box_slot_from_handle(box.box.handle) : NULL;
     if (!slot || slot->owned_by_template) return;

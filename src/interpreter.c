@@ -117,6 +117,15 @@ static int gc_value_is_young_heap(const Value *value) {
     }
 }
 
+/* Reports a box that would outlive its scope (see value_box_escape_ok). */
+static int interp_box_escape_ok(Value v, const char *where, int line) {
+    char msg[160];
+    if (value_box_escape_ok(v, where, msg, sizeof(msg))) return 1;
+    error_report_with_context(ERR_RUNTIME, line, 0, msg,
+        "Keep the box in a local variable, or store it in a template field.");
+    return 0;
+}
+
 static int interp_name_start(char c) {
     return isalpha((unsigned char)c) || c == '_';
 }
@@ -809,8 +818,9 @@ static Value eval_expr(Env *e, AstNode *n) {
             Value v = value_list();
             for (int i = 0; i < n->list.items.count; i++) {
                 Value item = eval_expr(e, n->list.items.items[i]);
-                if (unsafe_block_depth > 0 && unsafe_runtime_is_pointer(item) &&
-                    !unsafe_runtime_check_gc_store(item, n->line)) {
+                if ((unsafe_block_depth > 0 && unsafe_runtime_is_pointer(item) &&
+                     !unsafe_runtime_check_gc_store(item, n->line)) ||
+                    !interp_box_escape_ok(item, "stored in a list or map", n->line)) {
                     value_free(item);
                     value_free(v);
                     return value_null();
@@ -823,8 +833,9 @@ static Value eval_expr(Env *e, AstNode *n) {
             Value v = value_map();
             for (int i = 0; i < n->map.count; i++) {
                 Value item = eval_expr(e, n->map.values[i]);
-                if (unsafe_block_depth > 0 && unsafe_runtime_is_pointer(item) &&
-                    !unsafe_runtime_check_gc_store(item, n->line)) {
+                if ((unsafe_block_depth > 0 && unsafe_runtime_is_pointer(item) &&
+                     !unsafe_runtime_check_gc_store(item, n->line)) ||
+                    !interp_box_escape_ok(item, "stored in a list or map", n->line)) {
                     value_free(item);
                     value_free(v);
                     return value_null();
@@ -1050,6 +1061,14 @@ static Value eval_expr(Env *e, AstNode *n) {
                     value_free(idx);
                     value_free(target);
                     return value_null();
+                } else if (target.type == VAL_BOX) {
+                    char msg[160];
+                    Value res = value_null();
+                    if (!value_box_get_byte(target, idx.i, &res, msg, sizeof(msg))) {
+                        error_report_with_context(ERR_RUNTIME, n->line, 0, msg,
+                            "Use b[i] with 0 <= i < b.len");
+                    }
+                    return res;
                 }
             } else if (idx.type == VAL_STRING && idx.string && target.type == VAL_MAP && target.map) {
                 Value *slot = value_map_get(&target, intern_string(idx.string->chars));
@@ -1382,8 +1401,9 @@ static Value eval_expr(Env *e, AstNode *n) {
 
                     Value *list_ptr = get_mutable_value(e, n->call.args.items[0]);
                     Value item_val = eval_expr(e, n->call.args.items[1]);
-                    if (unsafe_block_depth > 0 && unsafe_runtime_is_pointer(item_val) &&
-                        !unsafe_runtime_check_gc_store(item_val, n->line)) {
+                    if ((unsafe_block_depth > 0 && unsafe_runtime_is_pointer(item_val) &&
+                         !unsafe_runtime_check_gc_store(item_val, n->line)) ||
+                        !interp_box_escape_ok(item_val, "stored in a list or map", n->line)) {
                         value_free(item_val);
                         return value_null();
                     }
@@ -1593,6 +1613,11 @@ static Value exec_stmt(Env *e, AstNode *n) {
                 value_free(v);
                 return value_null();
             }
+            if (current_executing_fn && v.type == VAL_BOX && !env_has_local(e, n->assign.name) &&
+                env_get(e, n->assign.name) == env_get(env_root(e), n->assign.name) &&
+                !interp_box_escape_ok(v, "assigned to a global from inside a function", n->line)) {
+                return value_null();
+            }
             if (n->assign.cached_val && n->assign.cached_env_version == env_scope_id(e)) {
                 // O(0) cache hit update
                 value_free(*(n->assign.cached_val));
@@ -1622,6 +1647,26 @@ static Value exec_stmt(Env *e, AstNode *n) {
             Value *target = get_mutable_value(e, n->assign_index.list);
             
             // Verify target is actually a list
+            if (target && target->type == VAL_BOX) {
+                Value bidx = eval_expr(e, n->assign_index.index);
+                char msg[160];
+                if (bidx.type != VAL_INT) {
+                    error_report_with_context(ERR_TYPE, n->line, 0,
+                        "box index must be an integer", "Use b[i] = byte with 0 <= i < b.len");
+                } else if (!value_box_set_byte(*target, bidx.i, val, msg, sizeof(msg))) {
+                    error_report_with_context(ERR_RUNTIME, n->line, 0, msg,
+                        "Use b[i] = byte with 0 <= i < b.len and 0 <= byte <= 255");
+                }
+                value_free(bidx);
+                value_free(val);
+                return value_null();
+            }
+            if (target && (target->type == VAL_LIST || target->type == VAL_MAP) &&
+                !interp_box_escape_ok(val, "stored in a list or map", n->line)) {
+                value_free(val);
+                return value_null();
+            }
+
             if (!target || (target->type != VAL_LIST && target->type != VAL_DENSE_LIST &&
                             target->type != VAL_MAP && target->type != VAL_TEMPLATE)) {
                 // Use node line number
@@ -2173,6 +2218,9 @@ static Value exec_stmt(Env *e, AstNode *n) {
             
             // Normal return: evaluate and set exception flag
             Value v = n->ret.expr ? eval_expr(e, n->ret.expr) : value_null();
+            if (!interp_box_escape_ok(v, "returned from a function", n->line)) {
+                v = value_null();
+            }
             return_exception.active = 1;
             return_exception.value = v;
             return value_null();

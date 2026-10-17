@@ -81,6 +81,20 @@ static int vm_ptr_store_ok(Value v, int line) {
     return unsafe_runtime_check_gc_store(v, line);
 }
 
+/* Reports a box that would outlive its scope. */
+static int vm_box_escape_ok(Value v, const char *where, int line) {
+    char msg[160];
+    if (value_box_escape_ok(v, where, msg, sizeof(msg))) return 1;
+    error_report_with_context(ERR_RUNTIME, line, 0, msg,
+        "Keep the box in a local variable, or store it in a template field.");
+    return 0;
+}
+
+/* Stores into lists and maps: no raw pointers (R7) and no scoped boxes. */
+static int vm_container_store_ok(Value v, int line) {
+    return vm_ptr_store_ok(v, line) && vm_box_escape_ok(v, "stored in a list or map", line);
+}
+
 static int vm_is_truthy(Value v) {
     switch (v.type) {
         case VAL_BOOL: return v.b;
@@ -1139,6 +1153,14 @@ Value luna_vm_execute(LunaVM *vm) {
             break;
             #endif
         }
+        if (vm->frame_count > 1 &&
+            !vm_box_escape_ok(slots[src], "assigned to a global from inside a function", line)) {
+            #ifdef __GNUC__
+            DISPATCH();
+            #else
+            break;
+            #endif
+        }
         env_def(vm->env, interned, value_copy(slots[src]));
         #ifdef __GNUC__
         DISPATCH();
@@ -1209,7 +1231,7 @@ Value luna_vm_execute(LunaVM *vm) {
         Value *list_val = &slots[list_reg];
         Value val = slots[val_reg];
         if (list_val->type == VAL_LIST &&
-            vm_ptr_store_ok(val, vm_op_line(chunk, ip))) {
+            vm_container_store_ok(val, vm_op_line(chunk, ip))) {
             value_list_append(list_val, value_copy(val));
         }
         #ifdef __GNUC__
@@ -1259,6 +1281,15 @@ Value luna_vm_execute(LunaVM *vm) {
         } else if (target.type == VAL_BLOC && index.type == VAL_STRING) {
             int found = 0;
             ret = value_bloc_get_field(target, intern_string(index.string->chars), &found);
+        } else if (target.type == VAL_BOX) {
+            char msg[160];
+            if (index.type != VAL_INT) {
+                error_report_with_context(ERR_TYPE, vm_op_line(chunk, ip), 0,
+                    "box index must be an integer", "Use b[i] with 0 <= i < b.len");
+            } else if (!value_box_get_byte(target, index.i, &ret, msg, sizeof(msg))) {
+                error_report_with_context(ERR_RUNTIME, vm_op_line(chunk, ip), 0, msg,
+                    "Use b[i] with 0 <= i < b.len");
+            }
         }
         value_free(slots[dst]);
         slots[dst] = ret;
@@ -1286,7 +1317,7 @@ Value luna_vm_execute(LunaVM *vm) {
             long long idx = index.i;
             if (idx < 0) idx += target.list->count;
             if (idx >= 0 && idx < target.list->count &&
-                vm_ptr_store_ok(val, line)) {
+                vm_container_store_ok(val, line)) {
                 value_free(target.list->items[idx]);
                 target.list->items[idx] = value_copy(val);
             }
@@ -1297,8 +1328,17 @@ Value luna_vm_execute(LunaVM *vm) {
                 target.dlist->data[idx] = value_to_double(val);
             }
         } else if (target.type == VAL_MAP) {
-            if (index.type == VAL_STRING && vm_ptr_store_ok(val, line)) {
+            if (index.type == VAL_STRING && vm_container_store_ok(val, line)) {
                 value_map_set(&target, intern_string(index.string->chars), value_copy(val));
+            }
+        } else if (target.type == VAL_BOX) {
+            char msg[160];
+            if (index.type != VAL_INT) {
+                error_report_with_context(ERR_TYPE, line, 0,
+                    "box index must be an integer", "Use b[i] = byte with 0 <= i < b.len");
+            } else if (!value_box_set_byte(target, index.i, val, msg, sizeof(msg))) {
+                error_report_with_context(ERR_RUNTIME, line, 0, msg,
+                    "Use b[i] = byte with 0 <= i < b.len and 0 <= byte <= 255");
             }
         } else if (target.type == VAL_TEMPLATE) {
             if (index.type == VAL_STRING && vm_ptr_store_ok(val, line)) {
@@ -1342,7 +1382,7 @@ Value luna_vm_execute(LunaVM *vm) {
         int line = vm_op_line(chunk, ip);
         Value *map_val = &slots[map_reg];
         Value val = slots[val_reg];
-        if (map_val->type == VAL_MAP && vm_ptr_store_ok(val, line)) {
+        if (map_val->type == VAL_MAP && vm_container_store_ok(val, line)) {
             value_map_set(map_val, vm_intern_const(chunk, key_idx), value_copy(val));
         }
         #ifdef __GNUC__
@@ -1752,6 +1792,10 @@ Value luna_vm_execute(LunaVM *vm) {
     {
         uint8_t val_reg = READ_BYTE();
         Value ret_val = value_copy(slots[val_reg]);
+        if (vm->frame_count > 1 &&
+            !vm_box_escape_ok(ret_val, "returned from a function", vm_op_line(chunk, ip))) {
+            ret_val = value_null();
+        }
 
         // Close upvalues for local stack slots leaving scope
         close_upvalues(vm, slots);
