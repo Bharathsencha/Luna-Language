@@ -119,7 +119,7 @@ There is no stop-the-world pause, but the cost is still paid inside user time.
 ## Measurement
 
 - **Luna.** Run with `LUNA_GC_STATS=1`, which makes `bin/luna` print
-  `LUNA_GC_STATS,<total_ms>,<max_ms>,<events>` to stderr on exit. Every incremental step counts
+  `LUNA_GC_STATS,<total_ms>,<max_ms>,<cycles>,<pauses>` to stderr on exit. Every incremental step counts
   as pause time.
 - **Go.** `GODEBUG=gctrace=1`. The max pause is the larger of the two stop-the-world phases per
   cycle. Concurrent mark runs on background threads and is not counted, which is why Go's GC

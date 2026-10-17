@@ -373,10 +373,11 @@ int main(int argc, char **argv) {
 
     if (getenv("LUNA_GC_STATS")) {
         LunaGCStats stats = gc_stats_snapshot();
-        fprintf(stderr, "LUNA_GC_STATS,%.3f,%.3f,%llu\n",
+        fprintf(stderr, "LUNA_GC_STATS,%.3f,%.3f,%llu,%llu\n",
                 stats.gc_ms_total,
                 stats.gc_ms_max,
-                stats.gc_events);
+                stats.gc_events,
+                stats.gc_pauses);
     }
     unsafe_runtime_shutdown();
     luna_mem_shutdown();

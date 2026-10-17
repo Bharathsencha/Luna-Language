@@ -11,7 +11,8 @@
 typedef struct {
     double gc_ms_total;
     double gc_ms_max;
-    unsigned long long gc_events;
+    unsigned long long gc_events;   /* collection cycles */
+    unsigned long long gc_pauses;   /* individual pauses (incremental steps) */
 } LunaGCStats;
 
 typedef void (*GCRootMarker)(void *ctx);
@@ -116,6 +117,7 @@ struct GCHeap {
     bool         sweep_reclaim_empty;
     double       gc_ms_total;
     double       gc_ms_max;
+    unsigned long long gc_pause_count;
     uint64_t     target_pause_ns;
     GCRootMarker root_marker;
     void        *root_marker_ctx;

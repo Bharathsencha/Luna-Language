@@ -66,7 +66,7 @@ Every knob is an environment variable, read once at heap creation.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `LUNA_GC_STATS` | unset | On exit, print `LUNA_GC_STATS,<total_ms>,<max_ms>,<events>` to stderr |
+| `LUNA_GC_STATS` | unset | On exit, print `LUNA_GC_STATS,<total_ms>,<max_ms>,<cycles>,<pauses>` to stderr |
 | `LUNA_GC_PAUSE_TARGET_US` | 64 | Wall-clock budget per incremental step |
 | `LUNA_GC_INITIAL_HEAP_LIMIT` | 4 MB | Heap size that triggers the first major collection |
 | `LUNA_GC_YOUNG_LIMIT` | derived from heap limit | Young allocation volume that triggers a minor |

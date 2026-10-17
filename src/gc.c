@@ -122,11 +122,13 @@ LunaGCStats gc_stats_snapshot(void) {
         stats.gc_ms_total = runtime_heap->gc_ms_total;
         stats.gc_ms_max = runtime_heap->gc_ms_max;
         stats.gc_events = runtime_heap->total_collections;
+        stats.gc_pauses = runtime_heap->gc_pause_count;
         return stats;
     }
     stats.gc_ms_total = (double)total_pause_ns / 1000000.0;
     stats.gc_ms_max = (double)max_pause_ns / 1000000.0;
     stats.gc_events = pause_events;
+    stats.gc_pauses = pause_events;
     return stats;
 }
 
@@ -244,6 +246,7 @@ static void gc_heap_record_pause(GCHeap *heap, uint64_t start_ns) {
     double pause_ms = (double)(gc_now_ns() - start_ns) / 1000000.0;
     heap->gc_ms_total += pause_ms;
     if (pause_ms > heap->gc_ms_max) heap->gc_ms_max = pause_ms;
+    heap->gc_pause_count++;
 }
 
 static inline uint64_t gc_phase_begin(GCHeap *heap) {
