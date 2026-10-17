@@ -1489,6 +1489,35 @@ Value _value_copy_refcount(Value v) {
     return v;
 }
 
+static Value **value_root_slots = NULL;
+static int value_root_count = 0;
+static int value_root_cap = 0;
+
+static void value_root_stack_mark(void *ctx) {
+    for (int i = 0; i < value_root_count; i++) {
+        if (value_root_slots[i]) value_gc_mark(value_root_slots[i], ctx);
+    }
+}
+
+void value_root_push(Value *slot) {
+    if (value_root_count == 0 && value_root_cap == 0) {
+        luna_gc_runtime_add_static_root_marker(value_root_stack_mark);
+    }
+    if (value_root_count >= value_root_cap) {
+        int cap = value_root_cap ? value_root_cap * 2 : 64;
+        Value **slots = realloc(value_root_slots, sizeof(Value *) * (size_t)cap);
+        if (!slots) abort();
+        value_root_slots = slots;
+        value_root_cap = cap;
+    }
+    value_root_slots[value_root_count++] = slot;
+}
+
+void value_root_pop(int count) {
+    value_root_count -= count;
+    if (value_root_count < 0) value_root_count = 0;
+}
+
 void value_gc_mark(Value *value, void *ctx) {
     if (!value || !VALUE_IS_HEAP(*value)) return;
 

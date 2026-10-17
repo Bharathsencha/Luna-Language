@@ -15,6 +15,14 @@ static unsigned long long max_pause_ns = 0;
 static unsigned long long pause_events = 0;
 static GCHeap *runtime_heap = NULL;
 
+#define GC_STATIC_ROOT_MARKERS_MAX 8
+static GCRootMarker static_root_markers[GC_STATIC_ROOT_MARKERS_MAX];
+static int static_root_marker_count = 0;
+
+static void gc_run_static_root_markers(void *ctx) {
+    for (int i = 0; i < static_root_marker_count; i++) static_root_markers[i](ctx);
+}
+
 #define GC_REMEMBER_SCAN_MAX 1024
 
 typedef struct {
@@ -349,15 +357,12 @@ static void gc_verify_heap(GCHeap *heap) {
     for (size_t i = 0; i < heap->root_count; i++) {
         gc_verify_visit(&ctx, heap->roots[i]);
     }
-    if (heap->root_marker) {
-        if (heap->minor_collection) {
-            bool saved_minor = heap->minor_collection;
-            heap->minor_collection = false;
-            heap->root_marker(&ctx);
-            heap->minor_collection = saved_minor;
-        } else {
-            heap->root_marker(&ctx);
-        }
+    {
+        bool saved_minor = heap->minor_collection;
+        heap->minor_collection = false;
+        if (heap->root_marker) heap->root_marker(&ctx);
+        gc_run_static_root_markers(&ctx);
+        heap->minor_collection = saved_minor;
     }
 
     GCObject *obj = NULL;
@@ -647,6 +652,7 @@ static void mark_roots(GCHeap *heap) {
     if (heap->root_marker) {
         heap->root_marker(&ctx);
     }
+    gc_run_static_root_markers(&ctx);
 
     gc_phase_end(heap, phase_ns, "mark_roots");
 }
@@ -1280,6 +1286,16 @@ void luna_gc_runtime_safe_point(void) {
 
 void luna_gc_runtime_set_root_marker(GCRootMarker marker, void *ctx) {
     if (runtime_heap) gc_heap_set_root_marker(runtime_heap, marker, ctx);
+}
+
+void luna_gc_runtime_add_static_root_marker(GCRootMarker marker) {
+    if (!marker) return;
+    for (int i = 0; i < static_root_marker_count; i++) {
+        if (static_root_markers[i] == marker) return;
+    }
+    if (static_root_marker_count < GC_STATIC_ROOT_MARKERS_MAX) {
+        static_root_markers[static_root_marker_count++] = marker;
+    }
 }
 
 void luna_gc_runtime_add_root(void *payload) {

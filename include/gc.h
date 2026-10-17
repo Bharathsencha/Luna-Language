@@ -184,6 +184,9 @@ GCHeap     *luna_gc_runtime_heap(void);
 void       *luna_gc_alloc(size_t size, GCTracer trace, GCFinalizer fin);
 void        luna_gc_runtime_safe_point(void);
 void        luna_gc_runtime_set_root_marker(GCRootMarker marker, void *ctx);
+/* Markers that run on every collection in addition to the engine's root
+ * marker (for example the C root stack in value.c). Registered once. */
+void        luna_gc_runtime_add_static_root_marker(GCRootMarker marker);
 void        luna_gc_runtime_add_root(void *payload);
 void        luna_gc_runtime_remember(void *payload);
 void        luna_gc_runtime_write_barrier(void *payload);

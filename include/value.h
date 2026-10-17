@@ -234,4 +234,14 @@ Value value_map_values(Value map);
 Value value_map_items(Value map);
 void value_gc_mark(Value *value, void *ctx);
 
+/* C root stack. Native code that holds a GC value in a C local while it may
+ * call back into Luna (and so trigger a collection) must root that local:
+ *     Value result = value_list();
+ *     value_root_push(&result);
+ *     ... luna_call_value(...) ...
+ *     value_root_pop(1);
+ * The GC marks whatever each pushed slot holds at collection time. */
+void value_root_push(Value *slot);
+void value_root_pop(int count);
+
 #endif

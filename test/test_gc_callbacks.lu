@@ -1,0 +1,44 @@
+// map / filter / reduce keep their partial results in C while calling back
+// into Luna. The callbacks below allocate enough to trigger collections, so
+// those results must stay rooted (value_root_push in list_lib.c).
+print("Testing GC safety of map/filter/reduce callbacks...")
+
+func churn(x) {
+    let junk = []
+    for (let i in range(20)) {
+        append(junk, "s" + to_string(i * x))
+    }
+    return len(junk)
+}
+
+let src = range(2000)
+
+let mapped = map(src, func(x) {
+    churn(x)
+    return "v" + to_string(x)
+})
+assert(len(mapped) == 2000)
+let bad = 0
+for (let i in range(2000)) {
+    if (mapped[i] != "v" + to_string(i)) { bad += 1 }
+}
+assert(bad == 0)
+
+let kept = filter(src, func(x) {
+    churn(x)
+    return x % 2 == 0
+})
+assert(len(kept) == 1000)
+assert(kept[999] == 1998)
+
+// Named reducer: an inline func literal followed by another argument hits a
+// separate VM compiler bug (the next argument is overwritten).
+func join_digits(acc, x) {
+    churn(x)
+    if (x < 50) { return acc + to_string(x % 10) }
+    return acc
+}
+let joined = reduce(src, join_digits, "")
+assert(len(joined) == 50)
+
+print("GC callback tests passed!")

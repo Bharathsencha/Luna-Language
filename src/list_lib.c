@@ -301,6 +301,7 @@ Value lib_list_map(int argc, Value *argv, Env *env) {
     Value result = value_list();
     ListObj *list = argv[0].list;
     if (!list) return result;
+    value_root_push(&result);   /* the callback may trigger a collection */
     for (int i = 0; i < list->count; i++) {
         Value args[1];
         args[0] = value_copy(list->items[i]);
@@ -308,6 +309,7 @@ Value lib_list_map(int argc, Value *argv, Env *env) {
         value_free(args[0]);
         value_list_append_move(&result, &mapped);
     }
+    value_root_pop(1);
     return result;
 }
 
@@ -324,6 +326,7 @@ Value lib_list_filter(int argc, Value *argv, Env *env) {
     Value result = value_list();
     ListObj *list = argv[0].list;
     if (!list) return result;
+    value_root_push(&result);   /* the callback may trigger a collection */
     for (int i = 0; i < list->count; i++) {
         Value args[1];
         args[0] = value_copy(list->items[i]);
@@ -334,6 +337,7 @@ Value lib_list_filter(int argc, Value *argv, Env *env) {
         }
         value_free(keep);
     }
+    value_root_pop(1);
     return result;
 }
 
@@ -350,6 +354,7 @@ Value lib_list_reduce(int argc, Value *argv, Env *env) {
     Value acc = value_copy(argv[2]);
     ListObj *list = argv[0].list;
     if (!list) return acc;
+    value_root_push(&acc);      /* the callback may trigger a collection */
     for (int i = 0; i < list->count; i++) {
         Value args[2];
         args[0] = value_copy(acc);
@@ -360,6 +365,7 @@ Value lib_list_reduce(int argc, Value *argv, Env *env) {
         value_free(acc);
         acc = next;
     }
+    value_root_pop(1);
     return acc;
 }
 
