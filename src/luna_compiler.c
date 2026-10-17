@@ -284,7 +284,9 @@ static int compile_expr_to_any_reg(Compiler *c, AstNode *n) {
 
 /* Compiles a function definition into a subchunk, emits VM_OP_CLOSURE with
  * upvalue capture data, and returns the register holding the closure. */
-static int compile_function_value(Compiler *c, AstNode *n, int line) {
+/* Emits the closure into target_reg when given (-1: a fresh register), so a
+ * function literal used as a call argument stays in its argument slot. */
+static int compile_function_value(Compiler *c, AstNode *n, int line, int target_reg) {
     Compiler fn_compiler;
     compiler_init(&fn_compiler, c, n->funcdef.name);
     fn_compiler.chunk->param_count = n->funcdef.param_count;
@@ -325,7 +327,7 @@ static int compile_function_value(Compiler *c, AstNode *n, int line) {
     int sub_idx = luna_chunk_add_subchunk(c->chunk, fn_compiler.chunk);
 
     // Instantiate closure at runtime
-    int dst = allocate_reg(c);
+    int dst = (target_reg != -1) ? target_reg : allocate_reg(c);
     emit_2(c, VM_OP_CLOSURE, dst, line);
     emit_16(c, sub_idx, line);
 
@@ -706,12 +708,7 @@ static int compile_expr(Compiler *c, AstNode *n, int target_reg) {
             return dst;
         }
         case NODE_FUNC_DEF: {
-            int dst = compile_function_value(c, n, line);
-            if (target_reg != -1 && target_reg != dst) {
-                emit_3(c, VM_OP_MOVE, target_reg, dst, line);
-                return target_reg;
-            }
-            return dst;
+            return compile_function_value(c, n, line, target_reg);
         }
         case NODE_CALL: {
             // Builtin optimizations / fast-paths (like append, len, clock)
@@ -1216,7 +1213,7 @@ static void compile_stmt(Compiler *c, AstNode *n) {
             break;
         }
         case NODE_FUNC_DEF: {
-            int dst = compile_function_value(c, n, line);
+            int dst = compile_function_value(c, n, line, -1);
 
             if (n->funcdef.name) {
                 if (c->parent == NULL && c->scope_depth == 0) {

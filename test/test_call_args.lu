@@ -1,0 +1,25 @@
+// Every argument must land in its own slot, whatever expression produces it.
+// An inline func literal used to shift the arguments after it by one register.
+print("Testing call arguments...")
+
+func two(a, b) {
+    return "{a}|{b}"
+}
+
+assert(reduce(range(3), func(a, b) { return a + b }, 100) == 103)
+assert(reduce(range(3), func(acc, x) { return acc + to_string(x) }, "z") == "z012")
+assert(two(func() { return 1 }(), 9) == "1|9")
+
+let m = {"k": 3}
+let l = [1, 2, 3]
+template T { v }
+assert(two([1, 2], 9) == "[1, 2]|9")
+assert(two(m.k, 9) == "3|9")
+assert(two(l[1], 9) == "2|9")
+assert(two(true and 1 < 2, 9) == "true|9")
+assert(two("x{l[2]}y", 9) == "x3y|9")
+assert(two(two(1, 2), 9) == "1|2|9")
+assert(two(T(5).v, 9) == "5|9")
+assert(two(repeat("ab", 2) + to_string(5), 9) == "abab5|9")
+
+print("Call argument tests passed!")

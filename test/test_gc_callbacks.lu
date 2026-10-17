@@ -31,8 +31,6 @@ let kept = filter(src, func(x) {
 assert(len(kept) == 1000)
 assert(kept[999] == 1998)
 
-// Named reducer: an inline func literal followed by another argument hits a
-// separate VM compiler bug (the next argument is overwritten).
 func join_digits(acc, x) {
     churn(x)
     if (x < 50) { return acc + to_string(x % 10) }
