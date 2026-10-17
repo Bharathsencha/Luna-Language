@@ -984,13 +984,16 @@ static void gc_sweep_some_blocks(GCHeap *heap, size_t budget, uint64_t deadline)
     }
 
     /* Pass 2: walk the swept chain once more — free empty blocks (when
-     * allowed) and reattach the rest to the live block list. */
+     * allowed) and reattach the rest to the live block list. sweep_chain is
+     * advanced as each block is taken off it, so if the deadline interrupts
+     * this pass, the chain still holds exactly the blocks not yet reclaimed
+     * (never a block already moved to heap->blocks or freed). */
     if (heap->sweep_chain) {
-        if (!heap->reclaim_cursor) heap->reclaim_cursor = heap->sweep_chain;
+        heap->reclaim_cursor = NULL;
         size_t n = 0;
-        while (heap->reclaim_cursor) {
-            ImixBlock *block = heap->reclaim_cursor;
-            heap->reclaim_cursor = block->next;
+        while (heap->sweep_chain) {
+            ImixBlock *block = heap->sweep_chain;
+            heap->sweep_chain = block->next;
 
             int empty = 1;
             for (size_t i = 0; i < IMIX_LINES_PER_BLOCK; i++) {
