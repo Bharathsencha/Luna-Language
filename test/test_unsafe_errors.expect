@@ -251,3 +251,10 @@ Argument Error in /tmp/luna_test_case.lu at line 2:
    2 | let p = Pair(42)
 
 Hint: Pass one value for each declared data field
+# CASE list write out of bounds
+Index Error in /tmp/luna_test_case.lu at line 2:
+  Index 5 is out of bounds for list of length 3
+
+   2 | l[5] = 1
+
+Hint: Ensure your index is between 0 and len(list)-1

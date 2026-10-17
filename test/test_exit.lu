@@ -1,0 +1,6 @@
+// args() is empty when no arguments follow the script name, and exit()
+// stops the program immediately (the last print must not run).
+assert(len(args()) == 0)
+print("before exit")
+exit(0)
+print("after exit")

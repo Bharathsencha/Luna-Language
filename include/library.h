@@ -12,6 +12,8 @@
 
 // Registers all built-in native functions (Math, String, Time, Vec) 
 // into the given environment so they can be called from Luna scripts.
+/* Command-line arguments that follow the script name, for args(). */
+void library_set_args(int argc, char **argv);
 void env_register_stdlib(Env *env);
 
 #endif

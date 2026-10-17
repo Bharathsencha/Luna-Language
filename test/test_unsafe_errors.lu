@@ -148,3 +148,6 @@ template A { y }
 # CASE template wrong arity
 template Pair { left, right }
 let p = Pair(42)
+# CASE list write out of bounds
+let l = [1, 2, 3]
+l[5] = 1

@@ -419,6 +419,38 @@ static Value lib_range(int argc, Value *argv, Env *env) {
     return out;
 }
 
+static int script_argc = 0;
+static char **script_argv = NULL;
+
+void library_set_args(int argc, char **argv) {
+    script_argc = argc > 0 ? argc : 0;
+    script_argv = argv;
+}
+
+// args(): the command-line arguments after the script name, as strings.
+static Value lib_args(int argc, Value *argv, Env *env) {
+    if (argc != 0) {
+        error_report(ERR_ARGUMENT, 0, 0, "args() takes no arguments", "Use args()");
+        return value_null();
+    }
+    Value out = value_list();
+    for (int i = 0; i < script_argc; i++) {
+        value_list_append(&out, value_string(script_argv[i]));
+    }
+    return out;
+}
+
+// exit(code = 0): stop the program immediately with an exit status.
+static Value lib_exit(int argc, Value *argv, Env *env) {
+    if (argc > 1 || (argc == 1 && argv[0].type != VAL_INT)) {
+        error_report(ERR_ARGUMENT, 0, 0, "exit() takes an optional integer status",
+            "Use exit() or exit(1)");
+        return value_null();
+    }
+    fflush(stdout);
+    exit(argc == 1 ? (int)argv[0].i : 0);
+}
+
 /* Target of address_of() calls the VM cannot compile (non-name argument or
  * wrong arity). Reports the same errors as the interpreter. */
 static Value lib_address_of_invalid(int argc, Value *argv, Env *env) {
@@ -467,6 +499,8 @@ void env_register_stdlib(Env *env) {
     env_def(env, intern_string("map_values"), value_native(lib_map_values));
     env_def(env, intern_string("map_items"), value_native(lib_map_items));
     env_def(env, intern_string("range"), value_native(lib_range));
+    env_def(env, intern_string("args"), value_native(lib_args));
+    env_def(env, intern_string("exit"), value_native(lib_exit));
 
     // Math Library
     env_def(env, intern_string("abs"), value_native(lib_math_abs));

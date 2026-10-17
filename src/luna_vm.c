@@ -1373,8 +1373,13 @@ Value luna_vm_execute(LunaVM *vm) {
         if (target.type == VAL_LIST && index.type == VAL_INT) {
             long long idx = index.i;
             if (idx < 0) idx += target.list->count;
-            if (idx >= 0 && idx < target.list->count &&
-                vm_container_store_ok(val, line)) {
+            if (idx < 0 || idx >= target.list->count) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Index %lld is out of bounds for list of length %d",
+                         index.i, target.list->count);
+                error_report_with_context(ERR_INDEX, line, 0, msg,
+                    "Ensure your index is between 0 and len(list)-1");
+            } else if (vm_container_store_ok(val, line)) {
                 value_free(target.list->items[idx]);
                 target.list->items[idx] = value_copy(val);
             }

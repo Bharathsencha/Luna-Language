@@ -321,6 +321,7 @@ int main(int argc, char **argv) {
             return 1;
         }
         module_runtime_set_main_script(argv[1]);
+        library_set_args(argc - 2, argv + 2);
 
         // Initialize error system with file source
         error_init(src, argv[1]);
