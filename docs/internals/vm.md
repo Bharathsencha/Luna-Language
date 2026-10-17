@@ -84,6 +84,6 @@ API (`src/luna_runtime.c`) and by the Zig tests, and it runs host-side native ca
 (dispatching VM closures through `luna_vm_call_closure`). Set `LUNA_USE_INTERPRETER=1` to run a
 whole script on it.
 
-The two engines currently differ. The interpreter accepts the aliases `ptr_add`, `deref` and
-`addr`, and enforces unsafe rules R5, R9 and R11; the VM does not. See
-[unsafe.md](unsafe.md#engine-status).
+Both engines enforce the same data and memory rules; `test/check_engines.sh` (part of
+`make test`) holds the interpreter to the VM's error cases. A reported runtime error stops the
+VM, as it does the interpreter.

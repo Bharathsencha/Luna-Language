@@ -47,5 +47,4 @@
 | Page | Covers |
 |---|---|
 | [testing.md](testing.md) | Test layers and how to add tests |
-| [known-issues.md](known-issues.md) | Open bugs, to fix one at a time |
 | [../rust/readme.md](../rust/readme.md) | Rust runtime crates |

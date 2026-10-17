@@ -1,0 +1,150 @@
+# CASE R1 address_of a pointer
+unsafe {
+    let a = alloc(1)
+    let b = address_of(a)
+}
+# CASE R2 pointer escapes the block
+let g = null
+unsafe {
+    let a = alloc(1)
+    g = a
+}
+# CASE R3 ptr_offset out of bounds
+unsafe {
+    let a = alloc(1)
+    let b = ptr_offset(a, 1)
+}
+# CASE R4 use after free
+unsafe {
+    let a = alloc(1)
+    free(a)
+    print(load(a))
+}
+# CASE R5 address_of a temporary
+unsafe {
+    let p = address_of(1 + 2)
+}
+# CASE R5 address_of outside unsafe
+let p = address_of(1 + 2)
+# CASE R6 nested unsafe
+unsafe {
+    unsafe {
+        let a = alloc(1)
+    }
+}
+# CASE R7 pointer stored in a list
+unsafe {
+    let a = alloc(1)
+    let l = [a]
+}
+# CASE R8 invalid alloc size
+unsafe {
+    let a = alloc(0)
+}
+# CASE R9 compare pointers from different allocations
+unsafe {
+    let a = alloc(1)
+    let b = alloc(1)
+    let bad = a < b
+}
+# CASE R10 invalid pointer cast
+unsafe {
+    let a = alloc(1)
+    let f = float(a)
+}
+# CASE R11 user call inside unsafe
+func touch(x) {
+    return 1
+}
+unsafe {
+    let a = alloc(1)
+    touch(a)
+}
+# CASE R12 conditional free
+unsafe {
+    let a = alloc(1)
+    if (true) { free(a) }
+}
+# CASE box inside unsafe
+unsafe {
+    let b = box[8]
+}
+# CASE bloc inside unsafe
+bloc V { x }
+unsafe {
+    let v = V{1}
+}
+# CASE box returned from a function
+func mk() {
+    let x = box[4]
+    return x
+}
+let r = mk()
+# CASE box stored in a list
+let b = box[4]
+let l = [b]
+# CASE box stored in a map
+let b = box[4]
+let m = {"k": b}
+# CASE box appended to a list
+let b = box[4]
+let l = []
+append(l, b)
+# CASE box assigned to a global from a function
+let g = null
+func leak() {
+    let y = box[2]
+    g = y
+}
+leak()
+# CASE box use after free
+let b = box[4]
+free(b)
+print(b.len)
+# CASE box double free
+let b = box[4]
+free(b)
+free(b)
+# CASE box index out of bounds
+let b = box[2]
+b[2] = 1
+# CASE box byte out of range
+let b = box[2]
+b[0] = 256
+# CASE box size too large
+let b = box[5000]
+# CASE bloc is immutable
+bloc P { x, y }
+let p = P{1, 2}
+p.x = 5
+# CASE bloc unknown field
+bloc P { x, y }
+let p = P{1, 2}
+print(p.z)
+# CASE bloc field must be a primitive
+bloc Tag { name }
+let t = Tag{"hello"}
+# CASE bloc wrong arity
+bloc P { x, y }
+let p = P{1}
+# CASE bloc duplicate field
+bloc B { x, x }
+# CASE bloc oversize
+bloc B { a, b, c, d, e }
+# CASE bloc redefined with different fields
+bloc W { x }
+bloc W { y }
+# CASE template unknown field read
+template T { x, y }
+let t = T(1, 2)
+print(t.z)
+# CASE template unknown field write
+template T { x, y }
+let t = T(1, 2)
+t.z = 3
+# CASE template redefined with different fields
+template A { x }
+template A { y }
+# CASE template wrong arity
+template Pair { left, right }
+let p = Pair(42)

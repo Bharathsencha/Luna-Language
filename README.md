@@ -280,8 +280,7 @@ Everything starts at [docs/README.md](docs/README.md). Some good places to begin
 - **Curious how it works inside?** [Architecture](docs/internals/architecture.md),
   [the VM](docs/internals/vm.md), [the garbage collector](docs/internals/gc.md),
   [unsafe memory](docs/internals/unsafe.md).
-- **Want to help?** [Testing](docs/testing.md) and the list of
-  [known issues](docs/known-issues.md).
+- **Want to help?** Start with [Testing](docs/testing.md).
 
 ## Project Layout
 

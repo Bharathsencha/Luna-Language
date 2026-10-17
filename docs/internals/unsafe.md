@@ -22,8 +22,7 @@ Available only inside `unsafe { }`:
 | `address_of(name)` | Pointer to a named variable |
 | `int(ptr)` | The only allowed pointer cast |
 
-The older names `deref`, `ptr_add` and `addr` still work on the legacy interpreter, but the
-bytecode VM does not recognize them (see [Engine status](#engine-status)). Use the names above.
+The older names `deref`, `ptr_add` and `addr` still work as aliases.
 
 Outside `unsafe`, `defer(call(...))` schedules a call for scope exit, for example
 `defer(close(file))`. Deferred calls run in LIFO order.
@@ -144,13 +143,13 @@ unsafe {
 | `R2` | Pointers cannot escape the current `unsafe` block | enforced | enforced |
 | `R3` | `ptr_offset()` cannot go out of bounds | enforced | enforced |
 | `R4` | No use-after-free and no double free | enforced | enforced |
-| `R5` | `address_of()` only works on named values | enforced | not enforced: reports a Name Error instead |
+| `R5` | `address_of()` only works on named values | enforced | enforced |
 | `R6` | Nested `unsafe` blocks are rejected | enforced | enforced |
 | `R7` | Pointers cannot be stored in GC-managed values | enforced | enforced |
 | `R8` | `alloc()` size must be a positive integer | enforced | enforced |
-| `R9` | Ordered pointer comparisons need the same base allocation | enforced | not enforced |
+| `R9` | Ordered pointer comparisons need the same base allocation | enforced | enforced |
 | `R10` | Pointers may only be cast with `int(ptr)` | enforced | enforced |
-| `R11` | Only builtin calls are allowed inside `unsafe` | enforced | not enforced |
+| `R11` | Only builtin calls are allowed inside `unsafe` | enforced | enforced |
 | `R12` | `free()` inside conditional control flow is rejected (static lint) | enforced | enforced |
 
 R11 is more policy than memory safety. It keeps pointer lifetime analysis simple by forbidding
@@ -158,19 +157,16 @@ user-defined calls inside `unsafe`.
 
 ## Engine status
 
-Scripts run on the bytecode VM by default. The VM currently differs from the interpreter
-(`LUNA_USE_INTERPRETER=1`) in two ways:
+All 12 rules are enforced by both the bytecode VM and the legacy interpreter
+(`LUNA_USE_INTERPRETER=1`), with the same messages. `box` and `bloc` values are also rejected
+inside `unsafe` blocks. A rule violation stops the program.
 
-- R5, R9 and R11 are not checked, so the corresponding examples below run without an error on
-  the VM.
-- The legacy aliases `deref`, `ptr_add` and `addr` are undefined.
-
-These are open bugs on `luna-beta`.
+`make test` checks this: `test/test_unsafe_errors.lu` has one case per rule, compared against
+the VM's exact output, and `test/check_engines.sh` runs every case on the interpreter too.
 
 ## Error Cases
 
-These examples intentionally fail. The messages are what the interpreter prints; see
-[Engine status](#engine-status) for the rules the VM does not check.
+These examples intentionally fail, with the same message on both engines.
 
 ### R1: `address_of()` of a pointer
 

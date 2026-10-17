@@ -1,0 +1,112 @@
+print("=== Running Data and Memory Rule Tests ===")
+
+func say(t) {
+    print(t)
+}
+
+# --- bloc: GC-allocated, no 4096 limit, per-instance kinds ---
+bloc V { x, y }
+let made = 0
+for (let i in range(10000)) {
+    let v = V{i, i * 0.5}
+    if (v.x == i) { made += 1 }
+}
+assert(made == 10000)
+
+let vi = V{1, 2}
+let vf = V{1.5, 2.5}
+assert(vf.x == 1.5)
+assert(vi == V{1, 2})
+assert(vi != V{1.0, 2.0})
+assert(shape(vi) == "V")
+
+bloc R { lo, hi }
+let r = R{V{0, 0.5}, V{10, true}}
+assert(r.lo.y == 0.5)
+assert(r.hi.y == true)
+assert(r.hi.x == 10)
+
+# --- box: slot reuse, byte access, template ownership ---
+let boxes = 0
+for (let i in range(10000)) {
+    let b = box[8]
+    b[0] = i % 256
+    if (b[0] == i % 256) { boxes += 1 }
+}
+assert(boxes == 10000)
+
+let buf = box[4]
+buf[0] = 200
+buf[-1] = 7
+assert(buf[0] == 200)
+assert(buf[3] == 7)
+assert(buf[1] == 0)
+free(buf)
+assert(to_string(buf) == "<box freed>")
+
+template Holder { bytes }
+func make_holder() {
+    let x = box[4]
+    x[2] = 9
+    return Holder(x)
+}
+let h = make_holder()
+let kept = [h]
+assert(kept[0].bytes[2] == 9)
+assert(kept[0].bytes.len == 4)
+
+# --- template: identical redefinition is allowed ---
+template Point { x, y }
+template Point { x, y }
+let p = Point(1, 2)
+p.x = 5
+assert(p.x == 5)
+
+# --- loop scopes: continue and break unwind correctly ---
+let odd = 0
+for (let j = 0; j < 10; j++) {
+    if (j % 2 == 0) { continue }
+    odd += 1
+}
+assert(odd == 5)
+
+let sum = 0
+for (let i in range(6)) {
+    if (i == 1) { continue }
+    if (i == 4) { break }
+    sum += i
+}
+assert(sum == 5)
+
+let w = 0
+let n = 0
+while (n < 3000) {
+    n += 1
+    let tmp = box[2]
+    if (n % 3 == 0) { continue }
+    w += 1
+}
+assert(w == 2000)
+
+func defer_in_loop() {
+    for (let i in range(3)) {
+        defer(say("defer {i}"))
+        if (i == 1) { break }
+    }
+}
+defer_in_loop()
+
+# --- unsafe: aliases and same-allocation compares ---
+unsafe {
+    let a = alloc(4)
+    defer(a)
+    store(ptr_add(a, 1), 42)
+    assert(deref(ptr_add(a, 1)) == 42)
+    assert(load(ptr_offset(a, 1)) == 42)
+    assert(a < ptr_offset(a, 2))
+    let x = 5
+    let px = addr(x)
+    assert(load(px) == 5)
+}
+
+print("Data and memory rule tests passed!")

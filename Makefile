@@ -179,6 +179,7 @@ test: $(BINDIR)/$(TARGET)
 	@./$(BINDIR)/$(TARGET) test/balls.lu
 	@echo ""
 	@./test_runner.sh
+	@./test/check_engines.sh
 	@$(CARGO) test --manifest-path rust/unsafe_rt/Cargo.toml
 	@$(CARGO) test --manifest-path rust/data_rt/Cargo.toml
 	@echo "All tests passed!"

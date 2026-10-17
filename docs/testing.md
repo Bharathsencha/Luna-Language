@@ -4,7 +4,7 @@ Luna has three test layers. Run all of them before committing a change to the co
 
 | Command | What it checks |
 |---|---|
-| `make test` | Luna script tests (`test/`), then `cargo test` for both Rust crates |
+| `make test` | Luna script tests (`test/`), the engine check (`test/check_engines.sh`), then `cargo test` for both Rust crates |
 | `make test-gc-safety` | The GC safety scripts under `LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1` |
 | `make zig-test` | Host-side Zig tests that call the C API directly |
 | `make test-rust-data` | Rust `data_rt` tests only |
@@ -27,6 +27,8 @@ Luna has three test layers. Run all of them before committing a change to the co
 | `test_import_private_error.lu` | Importing a non-exported name fails with the expected message |
 | `test_bloc.lu`, `test_box.lu`, `test_template.lu`, `test_data_types.lu` | Structured data types |
 | `test_unsafe.lu` | `unsafe` blocks and pointer operations |
+| `test_rules.lu` | bloc / box / template / unsafe behavior that must work (10k blocs and boxes, byte access, loop scopes, aliases) |
+| `test_unsafe_errors.lu` + `.expect` | One `# CASE` per rule violation (R1-R12, box, bloc, template), each run on its own |
 | `test_gc_safety.lu`, `test_gc_large_safety.lu` | GC liveness under churn and large heaps |
 | `test_doc_examples.lu` | Examples from the docs |
 | `balls.lu` | Keyword aliases |
@@ -65,8 +67,8 @@ VM. Add a Zig test when changing tokenization, grammar, AST construction or erro
 
 ## Coverage gaps
 
-- No test runs the same scripts on both the VM and the interpreter, so the two engines have
-  drifted apart (see [known-issues.md](known-issues.md)).
-- No test covers `continue` inside a C-style `for` loop, or recursion deeper than 64 calls.
+- Only the data and memory rules run on both engines; the other script tests run on the VM
+  only.
+- No test covers recursion deeper than 64 calls.
 - Graphics and audio have no automated tests. `docs/examples/fun/scene3d.lu` and
   `scene_models.lu` are manual smoke tests.

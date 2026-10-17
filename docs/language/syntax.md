@@ -119,10 +119,6 @@ switch (choice) {
 
 `break` and `continue` work in all loops. `range(start, end, step)` builds a list for `for-in`.
 
-Known VM bug: `continue` inside a C-style `for (init; cond; step)` loop skips the step
-expression, so the loop never advances. Use `for-in` over `range()` or a `while` loop until it
-is fixed.
-
 ## Functions
 
 ```javascript

@@ -42,3 +42,4 @@ zig-test/.zig-global-cache/
 zig-test/zig-out/
 __pycache__/
 *.csv
+docs/known-issues.md
