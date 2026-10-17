@@ -81,6 +81,14 @@ static int vm_ptr_store_ok(Value v, int line) {
     return unsafe_runtime_check_gc_store(v, line);
 }
 
+/* R11: inside unsafe, only builtin calls are allowed (same rule as the interpreter). */
+static int vm_unsafe_call_ok(Value callee, int line) {
+    if (!unsafe_runtime_inside_block()) return 1;
+    int user = (callee.type == VAL_VM_CLOSURE || callee.type == VAL_CLOSURE ||
+                callee.type == VAL_FUNCTION);
+    return unsafe_runtime_check_call(user ? 0 : 1, line);
+}
+
 /* Unknown field on a template or bloc; same wording as the interpreter. */
 static void vm_report_missing_field(Value target, const char *field, int line) {
     char msg[256];
@@ -886,6 +894,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
+        if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
+            !unsafe_runtime_check_compare(l, r, 0, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool eq = false;
         if (l.type == r.type) {
             if (l.type == VAL_INT) eq = (l.i == r.i);
@@ -920,6 +930,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
+        if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
+            !unsafe_runtime_check_compare(l, r, 1, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool eq = false;
         if (l.type == r.type) {
             if (l.type == VAL_INT) eq = (l.i == r.i);
@@ -954,6 +966,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
+        if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
+            !unsafe_runtime_check_compare(l, r, 2, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
         if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr < r.ptr);
         else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i < r.i);
@@ -978,6 +992,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
+        if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
+            !unsafe_runtime_check_compare(l, r, 4, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
         if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr <= r.ptr);
         else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i <= r.i);
@@ -1002,6 +1018,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
+        if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
+            !unsafe_runtime_check_compare(l, r, 3, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
         if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr > r.ptr);
         else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i > r.i);
@@ -1026,6 +1044,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
+        if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
+            !unsafe_runtime_check_compare(l, r, 5, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
         if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr >= r.ptr);
         else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i >= r.i);
@@ -1624,7 +1644,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t callee_reg = READ_BYTE();
         uint8_t argc = READ_BYTE();
         Value callee = slots[callee_reg];
-        
+        if (!vm_unsafe_call_ok(callee, vm_op_line(chunk, ip))) goto vm_runtime_error;
+
         if (callee.type == VAL_VM_CLOSURE) {
             VMClosureObj *closure = callee.vm_closure;
             LunaChunk *sub = closure->chunk;
@@ -1718,6 +1739,7 @@ Value luna_vm_execute(LunaVM *vm) {
         uint16_t name_idx = READ_SHORT();
         int line = vm_op_line(chunk, ip);
         Value callee = slots[callee_reg];
+        if (!vm_unsafe_call_ok(callee, line)) goto vm_runtime_error;
 
         int callable = (callee.type == VAL_VM_CLOSURE || callee.type == VAL_DATA_TYPE ||
                         callee.type == VAL_BLOC_TYPE || callee.type == VAL_NATIVE ||

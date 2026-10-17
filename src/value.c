@@ -12,6 +12,7 @@
 #include "data_runtime.h"
 #include "luna_vm.h"
 #include "luna_chunk.h"
+#include "unsafe_runtime.h"
 
 typedef enum {
     BLOC_FIELD_UNSET = 0,
@@ -863,6 +864,10 @@ Value value_pointer(uintptr_t ptr) {
 }
 
 Value value_box(size_t size, char *msg, size_t msg_len) {
+    if (unsafe_runtime_inside_block()) {
+        if (msg && msg_len > 0) snprintf(msg, msg_len, "box and bloc values are not allowed inside unsafe blocks");
+        return value_null();
+    }
     if (luna_data_box_size_ok(size) != 0) {
         if (msg && msg_len > 0) {
             snprintf(msg, msg_len,
@@ -1049,6 +1054,10 @@ Value value_bloc_type(const char *name, const char **fields, int field_count, ch
 }
 
 int value_bloc_check_construct(Value descriptor, int argc, Value *argv, char *msg, size_t msg_len) {
+    if (unsafe_runtime_inside_block()) {
+        snprintf(msg, msg_len, "box and bloc values are not allowed inside unsafe blocks");
+        return 0;
+    }
     if (descriptor.type != VAL_BLOC_TYPE || !descriptor.bloc_type) {
         snprintf(msg, msg_len, "Value is not a bloc constructor");
         return 0;

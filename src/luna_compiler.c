@@ -748,6 +748,25 @@ static int compile_expr(Compiler *c, AstNode *n, int target_reg) {
                     return dst;
                 }
             }
+            // address_of on anything but a plain name (or with the wrong arity) is
+            // rejected at run time by a hidden builtin, with the interpreter's wording.
+            if (n->call.kind == CALL_ADDRESS_OF) {
+                int dst = (target_reg != -1) ? target_reg : allocate_reg(c);
+                int callee = allocate_reg(c);
+                Value fn_name = value_string("__address_of_invalid");
+                int fn_idx = luna_chunk_add_constant(c->chunk, fn_name);
+                emit_2(c, VM_OP_GET_GLOBAL, callee, line);
+                emit_16(c, fn_idx, line);
+                int arg_reg = allocate_reg(c);
+                emit_opcode(c, VM_OP_LOAD_INT, line);
+                emit_byte(c, arg_reg, line);
+                long long argc_val = n->call.args.count;
+                for (int b = 0; b < 8; b++) emit_byte(c, (uint8_t)((argc_val >> (b * 8)) & 0xFF), line);
+                emit_4(c, VM_OP_CALL_NAMED, dst, callee, 1, line);
+                emit_16(c, fn_idx, line);
+                c->next_reg = (target_reg == -1) ? dst + 1 : callee;
+                return dst;
+            }
 
             // defer(call): capture the call now, run it at scope exit.
             if (n->call.kind == CALL_DEFER && n->call.args.count == 1 &&

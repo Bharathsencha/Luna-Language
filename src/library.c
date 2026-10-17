@@ -419,6 +419,26 @@ static Value lib_range(int argc, Value *argv, Env *env) {
     return out;
 }
 
+/* Target of address_of() calls the VM cannot compile (non-name argument or
+ * wrong arity). Reports the same errors as the interpreter. */
+static Value lib_address_of_invalid(int argc, Value *argv, Env *env) {
+    long long given = (argc > 0 && argv[0].type == VAL_INT) ? argv[0].i : 1;
+    if (!unsafe_runtime_inside_block()) {
+        error_report_with_context(ERR_RUNTIME, 0, 0,
+            "address_of() may only be used inside unsafe blocks",
+            "Wrap pointer operations in unsafe { ... }");
+    } else if (given != 1) {
+        error_report_with_context(ERR_ARGUMENT, 0, 0,
+            "address_of() expects exactly 1 argument",
+            "Use address_of(variableName)");
+    } else {
+        error_report_with_context(ERR_RUNTIME, 0, 0,
+            "address_of() only works on named values",
+            "address_of() needs a variable name such as address_of(x), not a temporary expression.");
+    }
+    return value_null();
+}
+
 void env_register_stdlib(Env *env) {
     env_def(env, intern_string("null"), value_null());
     
@@ -433,9 +453,12 @@ void env_register_stdlib(Env *env) {
     env_def(env, intern_string("alloc"), value_native(lib_alloc));
     env_def(env, intern_string("free"), value_native(lib_free));
     env_def(env, intern_string("load"), value_native(lib_load));
+    env_def(env, intern_string("deref"), value_native(lib_load));      // legacy alias
     env_def(env, intern_string("store"), value_native(lib_store));
     env_def(env, intern_string("ptr_offset"), value_native(lib_ptr_offset));
+    env_def(env, intern_string("ptr_add"), value_native(lib_ptr_offset)); // legacy alias
     env_def(env, intern_string("defer"), value_native(lib_defer));
+    env_def(env, intern_string("__address_of_invalid"), value_native(lib_address_of_invalid));
     env_def(env, intern_string("map_set"), value_native(lib_map_set));
     env_def(env, intern_string("map_get"), value_native(lib_map_get));
     env_def(env, intern_string("map_has"), value_native(lib_map_has));
