@@ -1,0 +1,12 @@
+print("Testing use \"file\"...")
+
+// Whole-file form: every exported name is available.
+use "modules_fixtures/shapes.lu"
+assert(area(2, 3) == 6)
+assert(UNIT == "cm")
+
+// Pick-names form still works, and the module is not run twice.
+use { area } from "modules_fixtures/shapes.lu"
+assert(area(4, 5) == 20)
+
+print("use \"file\" tests passed!")

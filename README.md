@@ -171,13 +171,15 @@ export func greet(name) {
 }
 ```
 
-Then bring it in with `use`:
+Then bring the file in with `use`. Only the exported names are visible:
 
 ```javascript
 # main.lu
-use { greet } from "utils.lu"
+use "utils.lu"
 print(greet("Luna"))
 ```
+
+If you only need some names, pick them: `use { greet } from "utils.lu"`.
 
 ### Cleaning up automatically
 

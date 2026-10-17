@@ -1,0 +1,6 @@
+Name Error in test/test_use_private_error.lu at line 2:
+  Variable 'scale' is not defined
+
+   2 | scale(3)
+
+Hint: Declare variables with 'let' before using them

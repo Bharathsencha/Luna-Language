@@ -1,0 +1,10 @@
+// Fixture for test_use_file.lu: two exports and one private helper.
+export let UNIT = "cm"
+
+export func area(w, h) {
+    return scale(w * h)
+}
+
+func scale(x) {
+    return x
+}
