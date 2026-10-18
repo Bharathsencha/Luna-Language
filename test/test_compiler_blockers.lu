@@ -1,0 +1,24 @@
+// Features the Luna-written compiler depends on.
+print("Testing compiler blockers...")
+
+// join is linear: 100k pieces must be fast and exact
+let parts = []
+for (let i in range(100000)) { append(parts, "x") }
+let joined = join(parts, "")
+assert(len(joined) == 100000)
+assert(join(["a", 1, 2.5, true], "-") == "a-1-2.5-true")
+assert(join([], ",") == "")
+
+// \{ and \} are literal braces, even next to interpolation
+let n = 3
+assert("int main(void) \{ return {n}; \}" == "int main(void) " + "{" + " return 3; " + "}")
+assert(len("\{\}") == 2)
+
+// deep recursion (the parser and code generator recurse)
+func depth(k) {
+    if (k == 0) { return 0 }
+    return 1 + depth(k - 1)
+}
+assert(depth(3000) == 3000)
+
+print("Compiler blocker tests passed!")

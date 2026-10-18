@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "luna_vm.h"
 #include "env.h"
 #include "luna_chunk.h"
@@ -5,17 +6,22 @@
 
 /* Active VM registry: nested VMs (e.g. module imports executed through the
  * VM) must keep the outer VM's roots alive while they run. */
-#define VM_REGISTRY_MAX 16
-static LunaVM *vm_registry[VM_REGISTRY_MAX];
+static LunaVM **vm_registry = NULL;
 static int vm_registry_count = 0;
+static int vm_registry_cap = 0;
 
 void luna_vm_register(LunaVM *vm) {
     for (int i = 0; i < vm_registry_count; i++) {
         if (vm_registry[i] == vm) return;
     }
-    if (vm_registry_count < VM_REGISTRY_MAX) {
-        vm_registry[vm_registry_count++] = vm;
+    if (vm_registry_count >= vm_registry_cap) {
+        int cap = vm_registry_cap ? vm_registry_cap * 2 : 16;
+        LunaVM **grown = realloc(vm_registry, sizeof(LunaVM *) * (size_t)cap);
+        if (!grown) abort();   /* an unregistered VM would lose its GC roots */
+        vm_registry = grown;
+        vm_registry_cap = cap;
     }
+    vm_registry[vm_registry_count++] = vm;
 }
 
 void luna_vm_unregister(LunaVM *vm) {

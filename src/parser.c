@@ -107,9 +107,23 @@ static char *slice_text(const char *src, size_t start, size_t len) {
     return out;
 }
 
+/* Replaces the lexer's \{ / \} markers with real braces, in place. */
+static void restore_literal_braces(char *s) {
+    for (; s && *s; s++) {
+        if (*s == LUNA_LITERAL_LBRACE) *s = '{';
+        else if (*s == LUNA_LITERAL_RBRACE) *s = '}';
+    }
+}
+
 static AstNode *parse_inline_expr(const char *src, int line) {
     Parser inner;
-    parser_init(&inner, src);
+    /* Same as parser_init, but tokens report the string's own line. */
+    inner.lx = lexer_create(src);
+    inner.lx.line = line;
+    inner.has_cur = 0;
+    inner.inside_function = 0;
+    inner.had_error = 0;
+    advance(&inner);
     AstNode *expr = expression(&inner);
     while (match(&inner, T_NEWLINE));
     if (!inner.had_error && !check(&inner, T_EOF)) {
@@ -139,6 +153,7 @@ static AstNode *parse_string_literal_or_template(Parser *p, int line) {
         }
     }
     if (!has_interp) {
+        restore_literal_braces(s);
         AstNode *n = ast_string(s, line);
         free(s);
         return n;
@@ -219,6 +234,7 @@ static AstNode *parse_string_literal_or_template(Parser *p, int line) {
     }
 
     chunks[expr_count] = slice_text(s, chunk_start, len - chunk_start);
+    for (int i = 0; i <= expr_count; i++) restore_literal_braces((char *)chunks[i]);
     AstNode *templ = ast_template(chunks, exprs, expr_count, line);
     for (int i = 0; i < expr_count + 1; i++) free((void *)chunks[i]);
     free(chunks);

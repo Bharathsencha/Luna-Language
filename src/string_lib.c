@@ -520,36 +520,55 @@ Value lib_str_split(int argc, Value *argv, Env *env) {
 
 Value lib_str_join(int argc, Value *argv, Env *env) {
     if (!check_args(argc, 2, "join")) return value_null();
-    
+
     // Arg 0 is LIST, Arg 1 is Delimiter
     if (argv[0].type != VAL_LIST || !argv[0].list) return value_string("");
     const char *delim = get_str_arg(argv, 1);
     if (!delim) delim = "";
-    
-    // Calculate total length
-    size_t total_len = 0;
+
     size_t delim_len = strlen(delim);
     int count = argv[0].list->count;
-    
+    if (count == 0) return value_string("");
+
+    /* One pass to size the result, one pass to copy: linear in the output.
+     * String items are used in place; other values are converted once. */
+    const char **parts = malloc(sizeof(char *) * (size_t)count);
+    size_t *lens = malloc(sizeof(size_t) * (size_t)count);
+    char **owned = calloc((size_t)count, sizeof(char *));
+    if (!parts || !lens || !owned) abort();
+
+    size_t total_len = delim_len * (size_t)(count - 1);
     for (int i = 0; i < count; i++) {
-        char *s = value_to_string(argv[0].list->items[i]);
-        total_len += strlen(s);
-        free(s);
-        if (i < count - 1) total_len += delim_len;
+        Value item = argv[0].list->items[i];
+        if (item.type == VAL_STRING && item.string && item.string->chars) {
+            parts[i] = item.string->chars;
+        } else {
+            owned[i] = value_to_string(item);
+            parts[i] = owned[i];
+        }
+        lens[i] = strlen(parts[i]);
+        total_len += lens[i];
     }
-    
+
     char *res = malloc(total_len + 1);
-    res[0] = '\0';
-    
+    if (!res) abort();
+    size_t pos = 0;
     for (int i = 0; i < count; i++) {
-        char *s = value_to_string(argv[0].list->items[i]);
-        strcat(res, s);
-        free(s);
-        if (i < count - 1) strcat(res, delim);
+        memcpy(res + pos, parts[i], lens[i]);
+        pos += lens[i];
+        if (i < count - 1 && delim_len) {
+            memcpy(res + pos, delim, delim_len);
+            pos += delim_len;
+        }
+        free(owned[i]);
     }
-    
-    Value v = value_string(res);
+    res[pos] = '\0';
+
+    Value v = value_string_len(res, pos);
     free(res);
+    free(parts);
+    free(lens);
+    free(owned);
     return v;
 }
 

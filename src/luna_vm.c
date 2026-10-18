@@ -19,7 +19,23 @@
 #include "vec_lib.h"
 #include "module_runtime.h"
 
+/* Frame and stack buffers are reused across VMs: a callback from map() or a
+ * cross-module call creates a short-lived VM for every call. */
+#define VM_BUFFER_POOL_MAX 32
+static VMCallFrame *vm_frame_pool[VM_BUFFER_POOL_MAX];
+static Value *vm_stack_pool[VM_BUFFER_POOL_MAX];
+static int vm_buffer_pool_count = 0;
+
 void luna_vm_init(LunaVM *vm, GCHeap *heap) {
+    if (vm_buffer_pool_count > 0) {
+        vm_buffer_pool_count--;
+        vm->frames = vm_frame_pool[vm_buffer_pool_count];
+        vm->stack = vm_stack_pool[vm_buffer_pool_count];
+    } else {
+        vm->frames = aligned_alloc(64, sizeof(VMCallFrame) * FRAMES_MAX);
+        vm->stack = aligned_alloc(64, sizeof(Value) * STACK_MAX);
+        if (!vm->frames || !vm->stack) abort();
+    }
     vm->frame_count = 0;
     vm->stack_top = vm->stack;
     vm->open_upvalues = NULL;
@@ -31,8 +47,26 @@ void luna_vm_init(LunaVM *vm, GCHeap *heap) {
 }
 
 void luna_vm_free(LunaVM *vm) {
-    // Free open upvalues
     vm->open_upvalues = NULL;
+    luna_vm_unregister(vm);
+    if (!vm->frames) return;
+    if (vm_buffer_pool_count < VM_BUFFER_POOL_MAX) {
+        vm_frame_pool[vm_buffer_pool_count] = vm->frames;
+        vm_stack_pool[vm_buffer_pool_count] = vm->stack;
+        vm_buffer_pool_count++;
+    } else {
+        free(vm->frames);
+        free(vm->stack);
+    }
+    vm->frames = NULL;
+    vm->stack = NULL;
+    vm->stack_top = NULL;
+}
+
+static void vm_report_stack_overflow(int line) {
+    error_report_with_context(ERR_RUNTIME, line, 0,
+        "stack overflow: recursion is too deep",
+        "Luna allows 4096 nested calls. Check for a recursion that never stops.");
 }
 
 static void close_upvalues(LunaVM *vm, Value *last) {
@@ -520,6 +554,7 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
     luna_vm_init(&module_vm, vm->heap);
     module_vm.env = module_env;
     luna_vm_run(&module_vm, module_chunk);
+    luna_vm_free(&module_vm);
 
     module_runtime_pop_file();
     error_init(saved_src, saved_file);
@@ -540,9 +575,9 @@ static void vm_run_import(LunaVM *vm, uint16_t path_idx, const uint16_t *name_id
 }
 
 Value luna_vm_run(LunaVM *vm, LunaChunk *chunk) {
-    if (vm->frame_count >= FRAMES_MAX) {
-        fprintf(stderr, "VM Error: stack overflow\n");
-        abort();
+    if (vm->frame_count >= FRAMES_MAX || chunk->reg_count > STACK_MAX) {
+        vm_report_stack_overflow(0);
+        return value_null();
     }
 
     // Set up frame 0
@@ -570,6 +605,11 @@ Value luna_vm_run(LunaVM *vm, LunaChunk *chunk) {
 static Value vm_execute_closure(LunaVM *vm, VMClosureObj *closure,
                                 int argc, const Value *argv) {
     if (argc > 255) argc = 255;
+    if (closure->chunk->reg_count > STACK_MAX) {
+        vm_report_stack_overflow(0);
+        return value_null();
+    }
+    luna_vm_register(vm);   /* the callback's registers are GC roots too */
     VMCallFrame *frame = &vm->frames[vm->frame_count++];
     frame->chunk = closure->chunk;
     frame->ip = closure->chunk->code;
@@ -602,7 +642,9 @@ static Value vm_call_cross_env(GCHeap *heap, VMClosureObj *closure,
     LunaVM vm;
     luna_vm_init(&vm, heap);
     if (closure->env) vm.env = closure->env;
-    return vm_execute_closure(&vm, closure, argc, argv);
+    Value ret = vm_execute_closure(&vm, closure, argc, argv);
+    luna_vm_free(&vm);
+    return ret;
 }
 
 Value luna_vm_call_closure(GCHeap *heap, Env *env, VMClosureObj *closure,
@@ -611,7 +653,9 @@ Value luna_vm_call_closure(GCHeap *heap, Env *env, VMClosureObj *closure,
     LunaVM vm;
     luna_vm_init(&vm, heap);
     vm.env = env;
-    return vm_execute_closure(&vm, closure, argc, argv);
+    Value ret = vm_execute_closure(&vm, closure, argc, argv);
+    luna_vm_free(&vm);
+    return ret;
 }
 
 Value luna_vm_execute(LunaVM *vm) {
@@ -1792,9 +1836,10 @@ Value luna_vm_execute(LunaVM *vm) {
                 slots[dst] = ret;
                 DISPATCH();
             }
-            if (vm->frame_count >= FRAMES_MAX) {
-                fprintf(stderr, "VM Error: stack overflow\n");
-                abort();
+            if (vm->frame_count >= FRAMES_MAX ||
+                slots + callee_reg + 1 + sub->reg_count > vm->stack + STACK_MAX) {
+                vm_report_stack_overflow(vm_op_line(chunk, ip));
+                goto vm_runtime_error;
             }
 
             // Save IP back to frame
@@ -1906,9 +1951,10 @@ Value luna_vm_execute(LunaVM *vm) {
                 slots[dst] = ret;
                 DISPATCH();
             }
-            if (vm->frame_count >= FRAMES_MAX) {
-                fprintf(stderr, "VM Error: stack overflow\n");
-                abort();
+            if (vm->frame_count >= FRAMES_MAX ||
+                slots + callee_reg + 1 + sub->reg_count > vm->stack + STACK_MAX) {
+                vm_report_stack_overflow(vm_op_line(chunk, ip));
+                goto vm_runtime_error;
             }
 
             frame->ip = ip;

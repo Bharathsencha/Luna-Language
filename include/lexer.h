@@ -7,6 +7,10 @@
 #include <stddef.h>
 #include "token.h"
 
+/* Markers the lexer stores for \{ and \} inside string literals. */
+#define LUNA_LITERAL_LBRACE '\x01'
+#define LUNA_LITERAL_RBRACE '\x02'
+
 typedef struct {
     const char *src;
     size_t pos;

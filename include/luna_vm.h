@@ -24,8 +24,10 @@ typedef struct {
     int        scope_base; // VM scope depth when this frame was entered
 } VMCallFrame;
 
-#define FRAMES_MAX 64
-#define STACK_MAX 1024
+/* Call depth and value-stack slots per VM. The buffers are heap allocated
+ * (and pooled), so nested VMs for callbacks do not grow the C stack. */
+#define FRAMES_MAX 4096
+#define STACK_MAX 65536
 #define VM_SCOPE_MAX 256
 #define VM_DEFERRED_MAX 64
 
@@ -37,10 +39,10 @@ typedef struct {
 } VMDeferred;
 
 typedef struct {
-    VMCallFrame frames[FRAMES_MAX];
+    VMCallFrame *frames;   /* FRAMES_MAX entries */
     int frame_count;
 
-    Value stack[STACK_MAX];
+    Value *stack;          /* STACK_MAX slots */
     Value *stack_top;
 
     VMUpvalue *open_upvalues;

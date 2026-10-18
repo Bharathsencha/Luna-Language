@@ -162,6 +162,10 @@ Token lexer_next(Lexer *L) {
                     case 'r':  buf[i++] = '\r'; break;
                     case '"':  buf[i++] = '"';  break;
                     case '\\': buf[i++] = '\\'; break;
+                    /* \{ and \} are literal braces, never interpolation. The parser
+                     * turns these markers back into '{' and '}'. */
+                    case '{':  buf[i++] = LUNA_LITERAL_LBRACE; break;
+                    case '}':  buf[i++] = LUNA_LITERAL_RBRACE; break;
                     default:   buf[i++] = (char)next; break; 
                 }
             } else {
