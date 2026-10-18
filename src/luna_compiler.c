@@ -641,8 +641,11 @@ static int compile_expr(Compiler *c, AstNode *n, int target_reg) {
             return dst;
         }
         case NODE_TEMPLATE: {
-            /* String interpolation compiled as a chain of string concats. */
+            /* String interpolation compiled as a chain of string concats.
+             * Each {expr} goes through to_string, since + only joins strings. */
             int dst = (target_reg != -1) ? target_reg : allocate_reg(c);
+            Value ts_name = value_string("to_string");
+            int ts_idx = luna_chunk_add_constant(c->chunk, ts_name);
             Value head = value_string(n->template_string.chunks[0] ?
                                        n->template_string.chunks[0] : "");
             int head_idx = luna_chunk_add_constant(c->chunk, head);
@@ -650,7 +653,15 @@ static int compile_expr(Compiler *c, AstNode *n, int target_reg) {
             emit_16(c, head_idx, line);
             for (int i = 0; i < n->template_string.expr_count; i++) {
                 int part = compile_expr_to_any_reg(c, n->template_string.exprs[i]);
-                emit_4(c, VM_OP_ADD, dst, dst, part, line);
+                int text = allocate_reg(c);
+                int callee = allocate_reg(c);
+                emit_2(c, VM_OP_GET_GLOBAL, callee, line);
+                emit_16(c, ts_idx, line);
+                int arg = allocate_reg(c);
+                emit_3(c, VM_OP_MOVE, arg, part, line);
+                emit_4(c, VM_OP_CALL_NAMED, text, callee, 1, line);
+                emit_16(c, ts_idx, line);
+                emit_4(c, VM_OP_ADD, dst, dst, text, line);
                 const char *chunk = n->template_string.chunks[i + 1] ?
                                     n->template_string.chunks[i + 1] : "";
                 Value cv = value_string(chunk);

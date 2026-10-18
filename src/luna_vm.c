@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <limits.h>
 #include "luna_vm.h"
 #include "luna_opcode.h"
 #include "env.h"
@@ -79,6 +81,168 @@ static int vm_ptr_store_ok(Value v, int line) {
     if (!unsafe_runtime_inside_block()) return 1;
     if (!unsafe_runtime_is_pointer(v)) return 1;
     return unsafe_runtime_check_gc_store(v, line);
+}
+
+/* ---- Strict operator rules ------------------------------------------------
+ * Numbers mix (int with float gives float); + also joins two strings; lists
+ * combine element-wise with lists. Anything else is a type error. Integer
+ * overflow and division by zero are errors. int / int is integer division. */
+enum { VM_AR_ADD, VM_AR_SUB, VM_AR_MUL, VM_AR_DIV, VM_AR_MOD };
+static const char *const vm_ar_names[] = { "+", "-", "*", "/", "%" };
+
+static int vm_is_num(Value v) { return v.type == VAL_INT || v.type == VAL_FLOAT; }
+static double vm_num(Value v) { return v.type == VAL_INT ? (double)v.i : v.f; }
+static int vm_is_listish(Value v) { return v.type == VAL_LIST || v.type == VAL_DENSE_LIST; }
+
+__attribute__((noinline, cold)) static Value vm_operand_error(const char *op, Value l, Value r, int line) {
+    char msg[160];
+    snprintf(msg, sizeof(msg), "cannot use '%s' on %s and %s", op,
+             value_type_name(l), value_type_name(r));
+    error_report_with_context(ERR_TYPE, line, 0, msg,
+        op[0] == '+' && op[1] == '\0'
+            ? "Both sides must be numbers, or both strings. Build text with \"{x}\" or to_string(x)."
+            : "Both sides must be numbers.");
+    return value_null();
+}
+
+__attribute__((noinline, cold)) static Value vm_overflow_error(const char *op, int line) {
+    char msg[96];
+    snprintf(msg, sizeof(msg), "integer overflow in '%s'", op);
+    error_report_with_context(ERR_RUNTIME, line, 0, msg,
+        "The result does not fit in a 64-bit int. Use floats for very large numbers.");
+    return value_null();
+}
+
+__attribute__((noinline, cold)) static Value vm_div_zero_error(int line) {
+    error_report_with_context(ERR_RUNTIME, line, 0, "division by zero",
+        "Check the divisor before dividing.");
+    return value_null();
+}
+
+__attribute__((noinline, cold)) static Value vm_arith(int op, Value l, Value r, int line) {
+    if (vm_is_listish(l) && vm_is_listish(r)) {
+        switch (op) {
+            case VM_AR_ADD: return vec_add_values(l, r);
+            case VM_AR_SUB: return vec_sub_values(l, r);
+            case VM_AR_MUL: return vec_mul_values(l, r);
+            case VM_AR_DIV: return vec_div_values(l, r);
+            default: break;
+        }
+    }
+    if (l.type == VAL_INT && r.type == VAL_INT) {
+        long long out = 0;
+        switch (op) {
+            case VM_AR_ADD:
+                if (__builtin_add_overflow(l.i, r.i, &out)) return vm_overflow_error("+", line);
+                return value_int(out);
+            case VM_AR_SUB:
+                if (__builtin_sub_overflow(l.i, r.i, &out)) return vm_overflow_error("-", line);
+                return value_int(out);
+            case VM_AR_MUL:
+                if (__builtin_mul_overflow(l.i, r.i, &out)) return vm_overflow_error("*", line);
+                return value_int(out);
+            case VM_AR_DIV:
+                if (r.i == 0) return vm_div_zero_error(line);
+                if (l.i == LLONG_MIN && r.i == -1) return vm_overflow_error("/", line);
+                return value_int(l.i / r.i);
+            case VM_AR_MOD:
+                if (r.i == 0) return vm_div_zero_error(line);
+                if (r.i == -1) return value_int(0);
+                return value_int(l.i % r.i);
+        }
+    }
+    if (vm_is_num(l) && vm_is_num(r)) {
+        double a = vm_num(l), b = vm_num(r);
+        switch (op) {
+            case VM_AR_ADD: return value_float(a + b);
+            case VM_AR_SUB: return value_float(a - b);
+            case VM_AR_MUL: return value_float(a * b);
+            case VM_AR_DIV:
+                if (b == 0.0) return vm_div_zero_error(line);
+                return value_float(a / b);
+            case VM_AR_MOD:
+                if (b == 0.0) return vm_div_zero_error(line);
+                return value_float(fmod(a, b));
+        }
+    }
+    if (op == VM_AR_ADD && l.type == VAL_STRING && r.type == VAL_STRING) {
+        const char *lc = (l.string && l.string->chars) ? l.string->chars : "";
+        const char *rc = (r.string && r.string->chars) ? r.string->chars : "";
+        return value_string_concat_raw(lc, strlen(lc), rc, strlen(rc));
+    }
+    return vm_operand_error(vm_ar_names[op], l, r, line);
+}
+
+/* == and != need comparable values: the same type, two numbers, two lists, two
+ * functions, or a null on either side. */
+static int vm_type_family(Value v) {
+    switch (v.type) {
+        case VAL_INT: case VAL_FLOAT: return 1;
+        case VAL_LIST: case VAL_DENSE_LIST: return 2;
+        case VAL_NATIVE: case VAL_FUNCTION: case VAL_CLOSURE: case VAL_VM_CLOSURE: return 3;
+        default: return 100 + (int)v.type;
+    }
+}
+
+__attribute__((noinline, cold)) static int vm_values_equal(Value l, Value r, int line, int *ok) {
+    *ok = 1;
+    if (l.type == VAL_NULL || r.type == VAL_NULL) return l.type == r.type;
+    if (vm_type_family(l) != vm_type_family(r)) {
+        char msg[160];
+        snprintf(msg, sizeof(msg), "cannot compare %s with %s",
+                 value_type_name(l), value_type_name(r));
+        error_report_with_context(ERR_TYPE, line, 0, msg,
+            "Compare values of the same type (comparing with null is always allowed).");
+        *ok = 0;
+        return 0;
+    }
+    if (vm_is_num(l)) return vm_num(l) == vm_num(r) &&
+                             !(l.type == VAL_INT && r.type == VAL_INT && l.i != r.i);
+    switch (l.type) {
+        case VAL_BOOL: return l.b == r.b;
+        case VAL_CHAR: return l.c == r.c;
+        case VAL_POINTER: return l.ptr == r.ptr;
+        case VAL_BLOC: return value_bloc_equal(l, r);
+        case VAL_STRING: return strcmp(l.string->chars, r.string->chars) == 0;
+        case VAL_BOX: return l.box.handle == r.box.handle;
+        case VAL_DENSE_LIST: return r.type == VAL_DENSE_LIST && l.dlist == r.dlist;
+        case VAL_LIST: return r.type == VAL_LIST && l.list == r.list;
+        default: return l.native == r.native; /* identity for other reference values */
+    }
+}
+
+/* <, <=, >, >= order numbers, strings, chars and (in unsafe) pointers. */
+__attribute__((noinline, cold)) static int vm_compare_order(Value l, Value r, int line, int *ok) {
+    *ok = 1;
+    if (vm_is_num(l) && vm_is_num(r)) {
+        if (l.type == VAL_INT && r.type == VAL_INT) return (l.i > r.i) - (l.i < r.i);
+        double a = vm_num(l), b = vm_num(r);
+        return (a > b) - (a < b);
+    }
+    if (l.type == VAL_STRING && r.type == VAL_STRING) {
+        int c = strcmp(l.string->chars, r.string->chars);
+        return (c > 0) - (c < 0);
+    }
+    if (l.type == VAL_CHAR && r.type == VAL_CHAR) return (l.c > r.c) - (l.c < r.c);
+    if (l.type == VAL_POINTER && r.type == VAL_POINTER) return (l.ptr > r.ptr) - (l.ptr < r.ptr);
+    char msg[160];
+    snprintf(msg, sizeof(msg), "cannot order %s and %s with <, <=, > or >=",
+             value_type_name(l), value_type_name(r));
+    error_report_with_context(ERR_TYPE, line, 0, msg,
+        "Ordering works on two numbers, two strings or two chars.");
+    *ok = 0;
+    return 0;
+}
+
+/* Conditions (if, while, for, and, or, not) must be booleans. */
+__attribute__((noinline, cold)) static int vm_condition(Value v, int line, int *ok) {
+    if (v.type == VAL_BOOL) { *ok = 1; return v.b != 0; }
+    char msg[128];
+    snprintf(msg, sizeof(msg), "condition must be a boolean, got %s", value_type_name(v));
+    error_report_with_context(ERR_TYPE, line, 0, msg,
+        "Write the test explicitly, for example x != 0, len(s) > 0 or v != null.");
+    *ok = 0;
+    return 0;
 }
 
 /* R11: inside unsafe, only builtin calls are allowed (same rule as the interpreter). */
@@ -660,25 +824,11 @@ Value luna_vm_execute(LunaVM *vm) {
         Value l = slots[lhs];
         Value r = slots[rhs];
         Value res;
-        if ((l.type == VAL_LIST || l.type == VAL_DENSE_LIST) &&
-            (r.type == VAL_LIST || r.type == VAL_DENSE_LIST)) {
-            res = vec_add_values(l, r);
-        } else if (l.type == VAL_INT && r.type == VAL_INT) {
-            res = value_int(l.i + r.i);
-        } else if (l.type == VAL_STRING && r.type == VAL_STRING) {
-            /* Fast path: direct concat, no malloc round-trip. */
-            const char *lc = (l.string && l.string->chars) ? l.string->chars : "";
-            const char *rc = (r.string && r.string->chars) ? r.string->chars : "";
-            size_t ll = strlen(lc), rl = strlen(rc);
-            res = value_string_concat_raw(lc, ll, rc, rl);
-        } else if (l.type == VAL_STRING || r.type == VAL_STRING) {
-            char *sl = value_to_string(l);
-            char *sr = value_to_string(r);
-            res = value_string_concat_raw(sl, strlen(sl), sr, strlen(sr));
-            free(sl);
-            free(sr);
+        long long ires;
+        if (l.type == VAL_INT && r.type == VAL_INT && !__builtin_add_overflow(l.i, r.i, &ires)) {
+            res = value_int(ires);
         } else {
-            res = value_float(value_to_double(l) + value_to_double(r));
+            res = vm_arith(VM_AR_ADD, l, r, vm_op_line(chunk, ip));
         }
         value_free(slots[dst]);
         slots[dst] = res;
@@ -779,13 +929,11 @@ Value luna_vm_execute(LunaVM *vm) {
         Value l = slots[lhs];
         Value r = slots[rhs];
         Value res;
-        if ((l.type == VAL_LIST || l.type == VAL_DENSE_LIST) &&
-            (r.type == VAL_LIST || r.type == VAL_DENSE_LIST)) {
-            res = vec_sub_values(l, r);
-        } else if (l.type == VAL_INT && r.type == VAL_INT) {
-            res = value_int(l.i - r.i);
+        long long ires;
+        if (l.type == VAL_INT && r.type == VAL_INT && !__builtin_sub_overflow(l.i, r.i, &ires)) {
+            res = value_int(ires);
         } else {
-            res = value_float(value_to_double(l) - value_to_double(r));
+            res = vm_arith(VM_AR_SUB, l, r, vm_op_line(chunk, ip));
         }
         value_free(slots[dst]);
         slots[dst] = res;
@@ -808,13 +956,11 @@ Value luna_vm_execute(LunaVM *vm) {
         Value l = slots[lhs];
         Value r = slots[rhs];
         Value res;
-        if ((l.type == VAL_LIST || l.type == VAL_DENSE_LIST) &&
-            (r.type == VAL_LIST || r.type == VAL_DENSE_LIST)) {
-            res = vec_mul_values(l, r);
-        } else if (l.type == VAL_INT && r.type == VAL_INT) {
-            res = value_int(l.i * r.i);
+        long long ires;
+        if (l.type == VAL_INT && r.type == VAL_INT && !__builtin_mul_overflow(l.i, r.i, &ires)) {
+            res = value_int(ires);
         } else {
-            res = value_float(value_to_double(l) * value_to_double(r));
+            res = vm_arith(VM_AR_MUL, l, r, vm_op_line(chunk, ip));
         }
         value_free(slots[dst]);
         slots[dst] = res;
@@ -836,18 +982,7 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
-        Value res;
-        if ((l.type == VAL_LIST || l.type == VAL_DENSE_LIST) &&
-            (r.type == VAL_LIST || r.type == VAL_DENSE_LIST)) {
-            res = vec_div_values(l, r);
-        } else if (l.type == VAL_INT && r.type == VAL_INT) {
-            if (r.i == 0) res = value_int(0);
-            else if (l.i % r.i == 0) res = value_int(l.i / r.i);
-            else res = value_float((double)l.i / (double)r.i);
-        } else {
-            double dr = value_to_double(r);
-            res = value_float(dr == 0.0 ? 0.0 : value_to_double(l) / dr);
-        }
+        Value res = vm_arith(VM_AR_DIV, l, r, vm_op_line(chunk, ip));
         value_free(slots[dst]);
         slots[dst] = res;
         #ifdef __GNUC__
@@ -868,12 +1003,7 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t rhs = READ_BYTE();
         Value l = slots[lhs];
         Value r = slots[rhs];
-        Value res;
-        if (l.type == VAL_INT && r.type == VAL_INT) {
-            res = value_int(r.i == 0 ? 0 : l.i % r.i);
-        } else {
-            res = value_int(r.f == 0.0 ? 0 : (long long)value_to_double(l) % (long long)value_to_double(r));
-        }
+        Value res = vm_arith(VM_AR_MOD, l, r, vm_op_line(chunk, ip));
         value_free(slots[dst]);
         slots[dst] = res;
         #ifdef __GNUC__
@@ -896,20 +1026,9 @@ Value luna_vm_execute(LunaVM *vm) {
         Value r = slots[rhs];
         if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
             !unsafe_runtime_check_compare(l, r, 0, vm_op_line(chunk, ip))) goto vm_runtime_error;
-        bool eq = false;
-        if (l.type == r.type) {
-            if (l.type == VAL_INT) eq = (l.i == r.i);
-            else if (l.type == VAL_FLOAT) eq = (l.f == r.f);
-            else if (l.type == VAL_BOOL) eq = (l.b == r.b);
-            else if (l.type == VAL_CHAR) eq = (l.c == r.c);
-            else if (l.type == VAL_POINTER) eq = (l.ptr == r.ptr);
-            else if (l.type == VAL_BLOC) eq = value_bloc_equal(l, r);
-            else if (l.type == VAL_STRING) eq = (strcmp(l.string->chars, r.string->chars) == 0);
-            else if (l.type == VAL_NULL) eq = true;
-        } else if ((l.type == VAL_INT && r.type == VAL_FLOAT) ||
-                   (l.type == VAL_FLOAT && r.type == VAL_INT)) {
-            eq = (value_to_double(l) == value_to_double(r));
-        }
+        int cmp_ok = 1;
+        bool eq = (l.type == VAL_INT && r.type == VAL_INT) ? (l.i == r.i)
+                : vm_values_equal(l, r, vm_op_line(chunk, ip), &cmp_ok);
         value_free(slots[dst]);
         slots[dst] = value_bool(eq ? 1 : 0);
         #ifdef __GNUC__
@@ -932,20 +1051,9 @@ Value luna_vm_execute(LunaVM *vm) {
         Value r = slots[rhs];
         if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
             !unsafe_runtime_check_compare(l, r, 1, vm_op_line(chunk, ip))) goto vm_runtime_error;
-        bool eq = false;
-        if (l.type == r.type) {
-            if (l.type == VAL_INT) eq = (l.i == r.i);
-            else if (l.type == VAL_FLOAT) eq = (l.f == r.f);
-            else if (l.type == VAL_BOOL) eq = (l.b == r.b);
-            else if (l.type == VAL_CHAR) eq = (l.c == r.c);
-            else if (l.type == VAL_POINTER) eq = (l.ptr == r.ptr);
-            else if (l.type == VAL_BLOC) eq = value_bloc_equal(l, r);
-            else if (l.type == VAL_STRING) eq = (strcmp(l.string->chars, r.string->chars) == 0);
-            else if (l.type == VAL_NULL) eq = true;
-        } else if ((l.type == VAL_INT && r.type == VAL_FLOAT) ||
-                   (l.type == VAL_FLOAT && r.type == VAL_INT)) {
-            eq = (value_to_double(l) == value_to_double(r));
-        }
+        int cmp_ok = 1;
+        bool eq = (l.type == VAL_INT && r.type == VAL_INT) ? (l.i == r.i)
+                : vm_values_equal(l, r, vm_op_line(chunk, ip), &cmp_ok);
         value_free(slots[dst]);
         slots[dst] = value_bool(eq ? 0 : 1);
         #ifdef __GNUC__
@@ -969,9 +1077,12 @@ Value luna_vm_execute(LunaVM *vm) {
         if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
             !unsafe_runtime_check_compare(l, r, 2, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
-        if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr < r.ptr);
-        else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i < r.i);
-        else res = (value_to_double(l) < value_to_double(r));
+        if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i < r.i);
+        else {
+            int cmp_ok = 1;
+            int c = vm_compare_order(l, r, vm_op_line(chunk, ip), &cmp_ok);
+            res = (c < 0);
+        }
         value_free(slots[dst]);
         slots[dst] = value_bool(res ? 1 : 0);
         #ifdef __GNUC__
@@ -995,9 +1106,12 @@ Value luna_vm_execute(LunaVM *vm) {
         if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
             !unsafe_runtime_check_compare(l, r, 4, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
-        if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr <= r.ptr);
-        else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i <= r.i);
-        else res = (value_to_double(l) <= value_to_double(r));
+        if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i <= r.i);
+        else {
+            int cmp_ok = 1;
+            int c = vm_compare_order(l, r, vm_op_line(chunk, ip), &cmp_ok);
+            res = (c <= 0);
+        }
         value_free(slots[dst]);
         slots[dst] = value_bool(res ? 1 : 0);
         #ifdef __GNUC__
@@ -1021,9 +1135,12 @@ Value luna_vm_execute(LunaVM *vm) {
         if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
             !unsafe_runtime_check_compare(l, r, 3, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
-        if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr > r.ptr);
-        else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i > r.i);
-        else res = (value_to_double(l) > value_to_double(r));
+        if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i > r.i);
+        else {
+            int cmp_ok = 1;
+            int c = vm_compare_order(l, r, vm_op_line(chunk, ip), &cmp_ok);
+            res = (c > 0);
+        }
         value_free(slots[dst]);
         slots[dst] = value_bool(res ? 1 : 0);
         #ifdef __GNUC__
@@ -1047,9 +1164,12 @@ Value luna_vm_execute(LunaVM *vm) {
         if (l.type == VAL_POINTER && r.type == VAL_POINTER &&
             !unsafe_runtime_check_compare(l, r, 5, vm_op_line(chunk, ip))) goto vm_runtime_error;
         bool res;
-        if (l.type == VAL_POINTER && r.type == VAL_POINTER) res = (l.ptr >= r.ptr);
-        else if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i >= r.i);
-        else res = (value_to_double(l) >= value_to_double(r));
+        if (l.type == VAL_INT && r.type == VAL_INT) res = (l.i >= r.i);
+        else {
+            int cmp_ok = 1;
+            int c = vm_compare_order(l, r, vm_op_line(chunk, ip), &cmp_ok);
+            res = (c >= 0);
+        }
         value_free(slots[dst]);
         slots[dst] = value_bool(res ? 1 : 0);
         #ifdef __GNUC__
@@ -1068,7 +1188,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t dst = READ_BYTE();
         uint8_t src = READ_BYTE();
         Value v = slots[src];
-        bool falsy = !vm_is_truthy(v);
+        int cond_ok = 1;
+        bool falsy = !vm_condition(v, vm_op_line(chunk, ip), &cond_ok);
         value_free(slots[dst]);
         slots[dst] = value_bool(falsy ? 1 : 0);
         #ifdef __GNUC__
@@ -1088,8 +1209,16 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t src = READ_BYTE();
         Value v = slots[src];
         Value res;
-        if (v.type == VAL_INT) res = value_int(-v.i);
-        else res = value_float(-value_to_double(v));
+        if (v.type == VAL_INT && v.i != LLONG_MIN) res = value_int(-v.i);
+        else if (v.type == VAL_INT) res = vm_overflow_error("-", vm_op_line(chunk, ip));
+        else if (v.type == VAL_FLOAT) res = value_float(-v.f);
+        else {
+            char msg[96];
+            snprintf(msg, sizeof(msg), "cannot negate %s", value_type_name(v));
+            error_report_with_context(ERR_TYPE, vm_op_line(chunk, ip), 0, msg,
+                "Only numbers can be negated.");
+            res = value_null();
+        }
         value_free(slots[dst]);
         slots[dst] = res;
         #ifdef __GNUC__
@@ -1123,7 +1252,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t cond_reg = READ_BYTE();
         int16_t offset = (int16_t)READ_SHORT();
         Value v = slots[cond_reg];
-        bool truthy = vm_is_truthy(v);
+        int cond_ok = 1;
+        bool truthy = (v.type == VAL_BOOL) ? (v.b != 0) : vm_condition(v, vm_op_line(chunk, ip), &cond_ok);
         if (truthy) ip += offset;
         #ifdef __GNUC__
         DISPATCH();
@@ -1141,7 +1271,8 @@ Value luna_vm_execute(LunaVM *vm) {
         uint8_t cond_reg = READ_BYTE();
         int16_t offset = (int16_t)READ_SHORT();
         Value v = slots[cond_reg];
-        bool truthy = vm_is_truthy(v);
+        int cond_ok = 1;
+        bool truthy = (v.type == VAL_BOOL) ? (v.b != 0) : vm_condition(v, vm_op_line(chunk, ip), &cond_ok);
         if (!truthy) ip += offset;
         #ifdef __GNUC__
         DISPATCH();

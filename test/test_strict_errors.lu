@@ -1,0 +1,38 @@
+# CASE string plus int
+let s = "a" + 1
+# CASE int plus bool
+let s = 1 + true
+# CASE null plus int
+let s = null + 1
+# CASE list plus int
+let s = [1, 2] + 1
+# CASE integer overflow
+let big = 9223372036854775807
+let s = big + 1
+# CASE integer overflow in multiply
+let big = 4611686018427387904
+let s = big * 2
+# CASE integer division by zero
+let z = 0
+let s = 1 / z
+# CASE float division by zero
+let z = 0.0
+let s = 1.5 / z
+# CASE modulo by zero
+let z = 0
+let s = 5 % z
+# CASE if on an int
+if (5) { print("no") }
+# CASE while on a string
+while ("x") { print("no") }
+# CASE not on an int
+let s = not 0
+# CASE and on an int
+let s = 1 and true
+# CASE compare int with string
+let s = 1 == "1"
+# CASE order int and string
+let s = 1 < "a"
+# CASE negate a string
+let t = "x"
+let s = -t

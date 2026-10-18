@@ -88,7 +88,8 @@ for src in "$TEST_DIR"/*.lu; do
     base_name=$(basename "$src")
     expect_file="${src%.lu}.expect"
 
-    if [ "$base_name" = "test_unsafe_errors.lu" ]; then
+    # Files made of "# CASE <name>" sections run each case on its own.
+    if grep -q '^# CASE ' "$src"; then
         run_split_golden_test "$src" "$expect_file"
         continue
     fi

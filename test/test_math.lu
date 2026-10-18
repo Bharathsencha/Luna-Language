@@ -52,10 +52,10 @@ assert(true or false)
 # true || false && false -> true || (false) -> true
 assert(true || false && false)
 
-# Truthiness (Numbers/Strings)
-assert(1 and "hello")
-assert(not 0)
-assert(not "")
+# Conditions are booleans: test numbers and strings explicitly
+assert(1 != 0 and len("hello") > 0)
+assert(not (0 != 0))
+assert(len("") == 0)
 
 print("  ✓ Logical Operators passed")
 

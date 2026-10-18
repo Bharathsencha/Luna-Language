@@ -1489,6 +1489,33 @@ Value _value_copy_refcount(Value v) {
     return v;
 }
 
+/* Type name as reported by type() and in error messages. */
+const char *value_type_name(Value v) {
+    switch (v.type) {
+        case VAL_INT: return "int";
+        case VAL_FLOAT: return "float";
+        case VAL_STRING: return "string";
+        case VAL_CHAR: return "char";
+        case VAL_BOOL: return "boolean";
+        case VAL_POINTER: return "pointer";
+        case VAL_BLOC: return "bloc";
+        case VAL_BLOC_TYPE: return "bloc_type";
+        case VAL_BOX: return "box";
+        case VAL_LIST:
+        case VAL_DENSE_LIST: return "list";
+        case VAL_MAP: return "map";
+        case VAL_TEMPLATE: return "template";
+        case VAL_DATA_TYPE: return "data_type";
+        case VAL_NATIVE: return "native_function";
+        case VAL_FUNCTION:
+        case VAL_CLOSURE:
+        case VAL_VM_CLOSURE: return "function";
+        case VAL_NULL: return "null";
+        case VAL_FILE: return "file";
+    }
+    return "unknown";
+}
+
 static Value **value_root_slots = NULL;
 static int value_root_count = 0;
 static int value_root_cap = 0;

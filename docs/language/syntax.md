@@ -29,7 +29,8 @@ print("Hello, {name}!")
 [stdlib/math.md](../stdlib/math.md)). `data`, `bloc`, `box` and `template` define structured
 values (see [data-types.md](data-types.md)).
 
-Integer division is exact when it can be: `8 / 2` is `4`, and `7 / 2` is `3.5`.
+`/` follows the operand types: two ints give an int (`7 / 2` is `3`, `-7 / 2` is `-3`), and if
+either side is a float the result is a float (`7 / 2.0` is `3.5`).
 
 ## Variables
 
@@ -64,8 +65,21 @@ Indexing a string returns a `char`, and negative indices count from the end: `"L
 | Logical | `and` / `&&`, `or` / `\|\|`, `not` / `!` (short-circuit) |
 | Assignment | `= += -= *= /= ++ --` |
 
-`+` concatenates strings. Between two lists of numbers, `+ - * /` work element by element and
-return a dense list: `[1, 2] + [3, 4]` gives `d[4, 6]`.
+Operators are strict: there are no hidden conversions.
+
+| Rule | Example | Result |
+|---|---|---|
+| Numbers mix: int with float gives a float | `1 + 1.5` | `2.5` |
+| `+` joins two strings only | `"a" + 1` | error: build text with `"a{1}"` or `"a" + to_string(1)` |
+| Other types don't do arithmetic | `null + 1`, `1 + true` | error |
+| Integer overflow is an error, never a wrap-around | `9223372036854775807 + 1` | error |
+| Division or `%` by zero is an error | `1 / 0`, `5 % 0` | error |
+| `==` / `!=` need the same kind of value; comparing with `null` always works | `1 == "1"` | error |
+| `<`, `<=`, `>`, `>=` order two numbers, two strings or two chars | `1 < "a"` | error |
+| Conditions (`if`, `while`, `for`, `and`, `or`, `not`) must be booleans | `if (5)` | error: write `if (x != 0)` or `if (len(s) > 0)` |
+
+Between two lists of numbers, `+ - * /` work element by element and return a dense list:
+`[1, 2] + [3, 4]` gives `d[4, 6]`.
 
 ## Lists and maps
 

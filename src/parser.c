@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "parser.h"
 #include "ast.h"
 #include "token.h"
@@ -718,16 +719,17 @@ static AstNode *try_fold(BinOpKind op, AstNode *left, AstNode *right, int line) 
     if (left->kind == NODE_NUMBER && right->kind == NODE_NUMBER) {
         long long l = left->number.value;
         long long r = right->number.value;
+        long long out = 0;
         switch (op) {
-            case OP_ADD: return ast_number(l + r, line);
-            case OP_SUB: return ast_number(l - r, line);
-            case OP_MUL: return ast_number(l * r, line);
+            /* Overflow and division by zero are left to the runtime error. */
+            case OP_ADD: if (__builtin_add_overflow(l, r, &out)) break; return ast_number(out, line);
+            case OP_SUB: if (__builtin_sub_overflow(l, r, &out)) break; return ast_number(out, line);
+            case OP_MUL: if (__builtin_mul_overflow(l, r, &out)) break; return ast_number(out, line);
             case OP_DIV:
-                if (r == 0) break; // don't fold div by zero
-                if (l % r == 0) return ast_number(l / r, line);
-                return ast_float((double)l / (double)r, line);
+                if (r == 0 || (l == LLONG_MIN && r == -1)) break;
+                return ast_number(l / r, line);   /* int / int is integer division */
             case OP_MOD:
-                if (r == 0) break;
+                if (r == 0 || r == -1) break;
                 return ast_number(l % r, line);
             case OP_EQ:  return ast_bool(l == r, line);
             case OP_NEQ: return ast_bool(l != r, line);

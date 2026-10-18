@@ -232,6 +232,7 @@ int value_map_delete(Value *map, const char *key);
 Value value_map_keys(Value map);
 Value value_map_values(Value map);
 Value value_map_items(Value map);
+const char *value_type_name(Value v);
 void value_gc_mark(Value *value, void *ctx);
 
 /* C root stack. Native code that holds a GC value in a C local while it may

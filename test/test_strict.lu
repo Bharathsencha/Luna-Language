@@ -1,0 +1,29 @@
+print("Testing strict operator rules...")
+
+# int / int is integer division (truncates toward zero); floats divide exactly
+assert(7 / 2 == 3)
+assert(-7 / 2 == -3)
+assert(8 / 2 == 4)
+assert(7.0 / 2.0 == 3.5)
+assert(7 / 2.0 == 3.5)
+assert(7 % 3 == 1)
+assert(type(7 / 2) == "int")
+assert(type(7 / 2.0) == "float")
+
+# numbers mix; strings join only with strings
+assert(1 + 1.5 == 2.5)
+assert("a" + "b" == "ab")
+assert("n={7}" == "n=7")
+assert("f={1.5} b={true}" == "f=1.5 b=true")
+
+# comparisons
+assert(1 == 1.0)
+assert("apple" < "banana")
+assert('a' < 'b')
+let missing = null
+assert(missing == null)
+assert(5 != null)
+let l = [1]
+assert(l == l)
+
+print("Strict operator tests passed!")
