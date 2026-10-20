@@ -1,0 +1,879 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# emit_c.lu: the C backend: expressions, statements, functions and modules.
+
+use { die, path_dir, path_join, path_norm, split_lines } from "util.lu"
+use { lex } from "lexer.lu"
+use { parse_program } from "parser.lu"
+use { BINOPS, CONSTS, FN_BODIES, FN_DECLS, GLOBAL_DECLS, MODULES } from "cstate.lu"
+use { MOD_BODIES, MOD_DECLS, MOD_LIST, USED_ORDER, c_escape, emit } from "cstate.lu"
+use { emit_tmp, gname, kstr, mark, new_ctx, reg_global } from "cstate.lu"
+use { uid, use_builtin } from "cstate.lu"
+use { args_array, at_top, declare, pop_scope, push_scope, resolve } from "scope.lu"
+use { run_defers, var_get, var_set } from "scope.lu"
+use { collect_exports, has_zero_arg_main, p_prompt_text, used_names, walk_nested } from "analysis.lu"
+use { lint_program } from "lint.lu"
+use { ST } from "state.lu"
+
+func ex_list(nodes) {
+    let res = []
+    for (let n in nodes) {
+        append(res, ex(n))
+    }
+    return res
+}
+
+func ex_id(n) {
+    let r = resolve(n.name)
+    if (r.kind == "local") {
+        return var_get(r.v)
+    }
+    if (r.kind == "cap") {
+        return emit_tmp("*self->cells[{r.i}]")
+    }
+    if (r.kind == "null") {
+        return "lv_null()"
+    }
+    if (r.kind == "builtin") {
+        return emit_tmp("lv_native(lb_{n.name}, \"{n.name}\")")
+    }
+    reg_global(n.name)
+    mark(n.line)
+    return emit_tmp("lv_gget({gname(n.name)}, \"{n.name}\")")
+}
+
+func ex_call(n) {
+    mark(n.line)
+    let callee = n.callee
+    if (callee.k == "id") {
+        if (callee.name == "defer" and len(n.args) == 1 and n.args[0].k == "call") {
+            return ex_defer(n)
+        }
+        if ((callee.name == "address_of" or callee.name == "addr") and resolve(callee.name).kind != "local") {
+            return ex_address_of(n)
+        }
+        if (callee.name == "append" and len(n.args) == 2 and resolve("append").kind == "builtin") {
+            let argv = ex_list(n.args)
+            emit("lv_container_check({argv[1]});")
+            use_builtin("append")
+            mark(n.line)
+            return emit_tmp("lb_append(&nf_append, 2, {args_array(argv)})")
+        }
+        let r = resolve(callee.name)
+        if (r.kind == "builtin") {
+            let argv = ex_list(n.args)
+            use_builtin(callee.name)
+            mark(n.line)
+            return emit_tmp("lb_{callee.name}(&nf_{callee.name}, {len(argv)}, {args_array(argv)})")
+        }
+    }
+    let f = ex(callee)
+    let argv = ex_list(n.args)
+    mark(n.line)
+    return emit_tmp("lv_call({f}, {len(argv)}, {args_array(argv)})")
+}
+
+# address_of(name): a pointer to the variable's own storage.
+func ex_address_of(n) {
+    if (len(n.args) == 1 and n.args[0].k == "id") {
+        let name = n.args[0].name
+        let r = resolve(name)
+        mark(n.line)
+        if (r.kind == "local") {
+            if (r.v.cell) {
+                return emit_tmp("lv_addr({r.v.c})")
+            }
+            return emit_tmp("lv_addr(&{r.v.c})")
+        }
+        if (r.kind == "cap") {
+            return emit_tmp("lv_addr(self->cells[{r.i}])")
+        }
+        if (r.kind == "global") {
+            reg_global(name)
+            return emit_tmp("lv_addr(&{gname(name)})")
+        }
+    }
+    mark(n.line)
+    return emit_tmp("lv_addr_invalid({len(n.args)})")
+}
+
+# defer(f(args)): the callee and arguments are captured now and called when the scope exits.
+func ex_defer(n) {
+    if (len(n.args) != 1 or n.args[0].k != "call") {
+        die("Compile Error", n.line, "defer expects a call, like defer(close(f))")
+    }
+    let inner = n.args[0]
+    let f = emit_tmp(ex(inner.callee))
+    let saved = []
+    for (let a in ex_list(inner.args)) {
+        append(saved, emit_tmp(a))
+    }
+    append(ST.ctx.defers[len(ST.ctx.defers) - 1], {"kind": "call", "f": f, "args": saved})
+    return "lv_null()"
+}
+
+func ex_bin(n) {
+    if (n.op == "and" or n.op == "or") {
+        let a = ex(n.l)
+        mark(n.line)
+        let t = emit_tmp(a)
+        if (n.op == "and") {
+            emit("if (lv_truth({t})) \{")
+        } else {
+            emit("if (!lv_truth({t})) \{")
+        }
+        ST.ctx.line = -1
+        let b = ex(n.r)
+        emit("{t} = {b};")
+        emit("}")
+        ST.ctx.line = -1
+        return t
+    }
+    let a = ex(n.l)
+    let b = ex(n.r)
+    mark(n.line)
+    return emit_tmp("{BINOPS[n.op]}({a}, {b})")
+}
+
+func ex_incdec(n) {
+    mark(n.line)
+    let fn_name = "lv_add_fast"
+    if (n.op == "--") {
+        fn_name = "lv_sub_fast"
+    }
+    let cur = ex_id(n)
+    let t = emit_tmp("{fn_name}({cur}, lv_int(1))")
+    store_name(n.name, t)
+    return t
+}
+
+func ex_tmpl(n) {
+    let items = []
+    for (let part in n.parts) {
+        if (type(part) == "string") {
+            if (len(part) > 0) {
+                append(items, kstr(part))
+            }
+        } else {
+            append(items, ex(part))
+        }
+    }
+    mark(n.line)
+    return emit_tmp("lv_interp({len(items)}, {args_array(items)})")
+}
+
+func ex(n) {
+    let k = n.k
+    if (k == "num") {
+        return "lv_int(INT64_C({n.v}))"
+    }
+    if (k == "float") {
+        return "lv_float({n.v})"
+    }
+    if (k == "str") {
+        return kstr(n.v)
+    }
+    if (k == "char") {
+        return "lv_char((char){n.v})"
+    }
+    if (k == "bool") {
+        if (n.v) {
+            return "lv_bool(1)"
+        }
+        return "lv_bool(0)"
+    }
+    if (k == "id") {
+        return ex_id(n)
+    }
+    if (k == "tmpl") {
+        return ex_tmpl(n)
+    }
+    if (k == "bin") {
+        return ex_bin(n)
+    }
+    if (k == "not") {
+        let a = ex(n.e)
+        mark(n.line)
+        return emit_tmp("lv_not({a})")
+    }
+    if (k == "call") {
+        return ex_call(n)
+    }
+    if (k == "index") {
+        let t = ex(n.target)
+        let i = ex(n.index)
+        mark(n.line)
+        return emit_tmp("lv_index({t}, {i})")
+    }
+    if (k == "field") {
+        let t = ex(n.target)
+        mark(n.line)
+        return emit_tmp("lv_field({t}, {kstr(n.field)})")
+    }
+    if (k == "list") {
+        let items = ex_list(n.items)
+        if (len(items) == 0) {
+            return emit_tmp("lv_list_new(0)")
+        }
+        for (let it in items) {
+            emit("lv_container_check({it});")
+        }
+        return emit_tmp("lv_list_of({len(items)}, {args_array(items)})")
+    }
+    if (k == "map") {
+        let t = emit_tmp("lv_map_new()")
+        for (let i = 0; i < len(n.keys); i++) {
+            let v = ex(n.vals[i])
+            emit("lv_container_check({v});")
+            emit("lv_map_put({t}, {kstr(n.keys[i])}.s, {v});")
+        }
+        return t
+    }
+    if (k == "func") {
+        return compile_function(n)
+    }
+    if (k == "incdec") {
+        return ex_incdec(n)
+    }
+    if (k == "box") {
+        let size = ex(n.size)
+        mark(n.line)
+        return emit_tmp("lv_box_new({size}, {box_scope_id()})")
+    }
+    if (k == "input") {
+        mark(n.line)
+        use_builtin("input")
+        if (n.prompt == null) {
+            return emit_tmp("lb_input(&nf_input, 0, NULL)")
+        }
+        let prompt = p_prompt_text(n.prompt)
+        return emit_tmp("lb_input(&nf_input, 1, {args_array([kstr(prompt)])})")
+    }
+    die("Compile Error", n.line, "cannot compile expression of kind '{k}'")
+}
+
+
+# The id that ties a box to the scope it was created in; 0 at the top level,
+# where boxes live until freed.
+func box_scope_id() {
+    if (ST.ctx.is_main and len(ST.ctx.scopes) == 1) {
+        return "0"
+    }
+    let top = len(ST.ctx.defers) - 1
+    for (let d in ST.ctx.defers[top]) {
+        if (d.kind == "boxes") {
+            return d.id
+        }
+    }
+    let id = "bs{uid()}"
+    emit("uint64_t {id} = lv_scope_new();")
+    append(ST.ctx.defers[top], {"kind": "boxes", "id": id})
+    return id
+}
+
+func compile_function(n) {
+    let fid = uid()
+    let fname = "fn_{fid}"
+    let parent = ST.ctx
+
+    let caps = []
+    let capmap = {}
+    for (let nm in used_names(n)) {
+        let r = resolve(nm)
+        if (r.kind == "local") {
+            capmap[nm] = len(caps)
+            append(caps, r.v.c)
+        } else if (r.kind == "cap") {
+            capmap[nm] = len(caps)
+            append(caps, "self->cells[{r.i}]")
+        }
+    }
+
+    let child = new_ctx(false)
+    let nested = {}
+    walk_nested(n.body, nested)
+    walk_nested(n.defaults, nested)
+    child.nested = nested
+    child.capmap = capmap
+    ST.ctx = child
+
+    let min_args = 0
+    for (let i = 0; i < len(n.params); i++) {
+        if (n.defaults[i] == null) {
+            min_args = i + 1
+        }
+    }
+    emit("static LV {fname}(LvFunc *self, int argc, LV *argv) \{")
+    emit("lv_pos_mod = &mod_{ST.mod.id};")
+    emit("lv_arity(self, argc, {min_args}, {len(n.params)});")
+    for (let i = 0; i < len(n.params); i++) {
+        if (n.defaults[i] == null) {
+            declare(n.params[i], "argv[{i}]")
+        } else {
+            let v = declare(n.params[i], "lv_null()")
+            emit("if (argc > {i}) \{")
+            var_set(v, "argv[{i}]")
+            emit("} else {")
+            ST.ctx.line = -1
+            let d = ex(n.defaults[i])
+            var_set(v, d)
+            emit("}")
+            ST.ctx.line = -1
+        }
+    }
+    for (let s in n.body) {
+        st(s)
+    }
+    run_defers(0)
+    emit("return lv_null();")
+    emit("}")
+    append(FN_BODIES, join(child.out, "\n"))
+    append(FN_DECLS, "static LV {fname}(LvFunc *self, int argc, LV *argv);")
+    ST.ctx = parent
+
+    let name = "<anonymous>"
+    if (n.name != null) {
+        name = n.name
+    }
+    if (len(caps) == 0) {
+        return emit_tmp("lv_closure({fname}, \"{name}\", 0, NULL)")
+    }
+    let arr = "cl{fid}"
+    let capstr = join(caps, ", ")
+    emit("LV *{arr}[] = \{{capstr}\};")
+    return emit_tmp("lv_closure({fname}, \"{name}\", {len(caps)}, {arr})")
+}
+
+func store_name(name, value) {
+    let r = resolve(name)
+    if (r.kind == "local") {
+        var_set(r.v, value)
+    } else if (r.kind == "cap") {
+        emit("*self->cells[{r.i}] = {value};")
+    } else {
+        reg_global(name)
+        emit("lv_global_store_check({value}, {global_in_function()});")
+        emit("{gname(name)} = {value};")
+    }
+}
+
+func global_in_function() {
+    if (ST.ctx.is_main) {
+        return "0"
+    }
+    return "1"
+}
+
+func st_block(stmts) {
+    emit("{")
+    push_scope()
+    ST.ctx.line = -1
+    for (let s in stmts) {
+        st(s)
+    }
+    pop_scope()
+    emit("}")
+    ST.ctx.line = -1
+}
+
+func st_let(n) {
+    mark(n.line)
+    let init_expr = "lv_null()"
+    if (n.init != null) {
+        init_expr = ex(n.init)
+    }
+    if (at_top()) {
+        reg_global(n.name)
+        emit("lv_global_store_check({init_expr}, 0);")
+        emit("{gname(n.name)} = {init_expr};")
+    } else {
+        declare(n.name, init_expr)
+    }
+}
+
+func st_funcdef(n) {
+    mark(n.line)
+    if (n.name == null) {
+        ex(n)
+        return null
+    }
+    if (at_top()) {
+        reg_global(n.name)
+        let f = compile_function(n)
+        emit("{gname(n.name)} = {f};")
+    } else {
+        let v = declare(n.name, "lv_null()")
+        let f = compile_function(n)
+        var_set(v, f)
+    }
+}
+
+func st_setidx(n) {
+    let t = ex(n.target)
+    let i = ex(n.index)
+    let v = ex(n.e)
+    mark(n.line)
+    if (n.op != null) {
+        let cur = emit_tmp("lv_index({t}, {i})")
+        v = emit_tmp("{BINOPS[n.op]}({cur}, {v})")
+    }
+    emit("lv_index_set({t}, {i}, {v});")
+}
+
+func st_if(n) {
+    let c = ex(n.cond)
+    mark(n.line)
+    emit("if (lv_truth({c})) \{")
+    push_scope()
+    ST.ctx.line = -1
+    for (let s in n.then) {
+        st(s)
+    }
+    pop_scope()
+    if (len(n.els) > 0) {
+        emit("} else {")
+        push_scope()
+        ST.ctx.line = -1
+        for (let s in n.els) {
+            st(s)
+        }
+        pop_scope()
+    }
+    emit("}")
+    ST.ctx.line = -1
+}
+
+func loop_push(kind) {
+    let l = {"kind": kind, "id": uid(), "used_cont": false, "used_brk": false,
+             "depth": len(ST.ctx.scopes)}
+    append(ST.ctx.loops, l)
+    return l
+}
+
+func loop_pop() {
+    remove(ST.ctx.loops, len(ST.ctx.loops) - 1)
+}
+
+func st_while(n) {
+    let lp = loop_push("loop")
+    emit("for (;;) \{")
+    ST.ctx.line = -1
+    let c = ex(n.cond)
+    mark(n.line)
+    emit("if (!lv_truth({c})) break;")
+    st_block(n.body)
+    emit("}")
+    loop_pop()
+    ST.ctx.line = -1
+}
+
+func st_for(n) {
+    emit("{")
+    push_scope()
+    ST.ctx.line = -1
+    st(n.init)
+    let lp = loop_push("for")
+    emit("for (;;) \{")
+    ST.ctx.line = -1
+    let c = ex(n.cond)
+    mark(n.line)
+    emit("if (!lv_truth({c})) break;")
+    st_block(n.body)
+    if (lp.used_cont) {
+        emit("cnt_{lp.id}:;")
+    }
+    ST.ctx.line = -1
+    st(n.incr)
+    emit("}")
+    loop_pop()
+    pop_scope()
+    emit("}")
+    ST.ctx.line = -1
+}
+
+func st_forin(n) {
+    emit("{")
+    push_scope()
+    let it = ex(n.iter)
+    mark(n.line)
+    let id = uid()
+    emit("LV it{id} = lv_iter_prepare({it});")
+    emit("int64_t n{id} = lv_iter_len(it{id});")
+    let lp = loop_push("loop")
+    emit("for (int64_t i{id} = 0; i{id} < n{id}; i{id}++) \{")
+    push_scope()
+    ST.ctx.line = -1
+    mark(n.line)
+    declare(n.name, "lv_iter_at(it{id}, i{id})")
+    for (let s in n.body) {
+        st(s)
+    }
+    pop_scope()
+    emit("}")
+    loop_pop()
+    pop_scope()
+    emit("}")
+    ST.ctx.line = -1
+}
+
+func st_switch(n) {
+    emit("{")
+    push_scope()
+    let sv = emit_tmp(ex(n.e))
+    let lp = loop_push("switch")
+    let depth = 0
+    for (let c in n.cases) {
+        ST.ctx.line = -1
+        let cv = ex(c.value)
+        mark(c.line)
+        emit("if (lv_eq({sv}, {cv}).b) \{")
+        st_scoped(c.body)
+        emit("} else {")
+        depth += 1
+    }
+    st_scoped(n.dflt)
+    for (let i = 0; i < depth; i++) {
+        emit("}")
+    }
+    if (lp.used_brk) {
+        emit("sw_{lp.id}:;")
+    }
+    loop_pop()
+    pop_scope()
+    emit("}")
+    ST.ctx.line = -1
+}
+
+func st_scoped(stmts) {
+    push_scope()
+    ST.ctx.line = -1
+    for (let s in stmts) {
+        st(s)
+    }
+    pop_scope()
+}
+
+func st_unsafe(n) {
+    mark(n.line)
+    emit("lv_unsafe_begin();")
+    emit("{")
+    push_scope()
+    append(ST.ctx.defers[len(ST.ctx.defers) - 1], {"kind": "unsafe"})
+    ST.ctx.line = -1
+    for (let s in n.body) {
+        st(s)
+    }
+    pop_scope()
+    emit("}")
+    ST.ctx.line = -1
+}
+
+func st_break(n) {
+    if (len(ST.ctx.loops) == 0) {
+        die("Compile Error", n.line, "break statement outside loop")
+    }
+    let lp = ST.ctx.loops[len(ST.ctx.loops) - 1]
+    run_defers(lp.depth)
+    if (lp.kind == "switch") {
+        lp.used_brk = true
+        emit("goto sw_{lp.id};")
+    } else {
+        emit("break;")
+    }
+}
+
+func st_continue(n) {
+    let i = len(ST.ctx.loops) - 1
+    while (i >= 0 and ST.ctx.loops[i].kind == "switch") {
+        i -= 1
+    }
+    if (i < 0) {
+        die("Compile Error", n.line, "continue statement outside loop")
+    }
+    let lp = ST.ctx.loops[i]
+    run_defers(lp.depth)
+    if (lp.kind == "for") {
+        lp.used_cont = true
+        emit("goto cnt_{lp.id};")
+    } else {
+        emit("continue;")
+    }
+}
+
+func st(n) {
+    let k = n.k
+    if (k == "let") {
+        st_let(n)
+    } else if (k == "group") {
+        for (let s in n.items) {
+            st(s)
+        }
+    } else if (k == "func") {
+        st_funcdef(n)
+    } else if (k == "assign") {
+        mark(n.line)
+        let v = ex(n.e)
+        store_name(n.name, v)
+    } else if (k == "setidx") {
+        st_setidx(n)
+    } else if (k == "print") {
+        for (let arg in n.args) {
+            let v = ex(arg)
+            mark(n.line)
+            emit("lv_print({v});")
+        }
+    } else if (k == "return") {
+        mark(n.line)
+        let v = "lv_null()"
+        if (n.e != null) {
+            v = ex(n.e)
+        }
+        if (ST.ctx.is_main) {
+            run_defers(0)
+            emit("return;")
+        } else {
+            v = emit_tmp(v)
+            emit("lv_box_escape_check({v}, \"returned from a function\");")
+            run_defers(0)
+            emit("return {v};")
+        }
+    } else if (k == "break") {
+        st_break(n)
+    } else if (k == "continue") {
+        st_continue(n)
+    } else if (k == "if") {
+        st_if(n)
+    } else if (k == "while") {
+        st_while(n)
+    } else if (k == "for") {
+        st_for(n)
+    } else if (k == "forin") {
+        st_forin(n)
+    } else if (k == "switch") {
+        st_switch(n)
+    } else if (k == "use") {
+        st_use(n)
+    } else if (k == "unsafe") {
+        st_unsafe(n)
+    } else if (k == "typedef") {
+        mark(n.line)
+    } else {
+        mark(n.line)
+        ex(n)
+    }
+}
+
+func new_module(display, canon) {
+    let id = len(MOD_LIST)
+    let m = {"id": id, "path": display, "canon": canon, "prefix": "g_", "globals": {},
+             "exports": [], "state": "compiling"}
+    if (id > 0) {
+        m.prefix = "m{id}_"
+    }
+    append(MOD_LIST, m)
+    MODULES[canon] = m
+    append(MOD_DECLS, "static int mod_{id}_state;")
+    return m
+}
+
+
+func decl_module_source(m, lines) {
+    append(MOD_DECLS, "static const char *const srcl_{m.id}[] = \{")
+    for (let line_text in lines) {
+        append(MOD_DECLS, "\"{c_escape(line_text)}\",")
+    }
+    append(MOD_DECLS, "NULL};")
+    append(MOD_DECLS, "static const LvModule mod_{m.id} = \{\"{c_escape(m.path)}\", srcl_{m.id}, {len(lines)}};")
+}
+
+# Compiles the statements of module m into a C function named `fname`.
+func compile_module_body(m, stmts, fname) {
+    ST.ctx = new_ctx(true)
+    walk_nested(stmts, ST.ctx.nested)
+    prescan_globals(stmts)
+    emit("static void {fname}(void) \{")
+    emit("lv_pos_mod = &mod_{m.id};")
+    if (m.id == 0) {
+        define_types(stmts)
+    }
+    for (let s in stmts) {
+        st(s)
+    }
+    if (m.id == 0 and has_zero_arg_main(stmts)) {
+        let main_var = gname("main")
+        emit("lv_call({main_var}, 0, NULL);")
+    }
+    run_defers(0)
+    emit("}")
+    append(MOD_BODIES, join(ST.ctx.out, "\n"))
+    append(FN_DECLS, "static void {fname}(void);")
+}
+
+# Loads, parses and compiles an imported file. Returns null if it cannot be read.
+func compile_module(canon) {
+    let f = open(canon, "r")
+    if (f == null) {
+        return null
+    }
+    let text = read(f)
+    close(f)
+    let saved_mod = ST.mod
+    let saved_ctx = ST.ctx
+    let saved_file = ST.src_file
+    let saved_lines = ST.src_lines
+    let m = new_module(canon, canon)
+    ST.mod = m
+    ST.src_file = canon
+    ST.src_lines = split_lines(text)
+    decl_module_source(m, ST.src_lines)
+    let stmts = parse_program(lex(text, 1))
+    collect_exports(stmts, m.exports)
+    compile_module_body(m, stmts, "mod_{m.id}_run")
+    m.state = "done"
+    ST.mod = saved_mod
+    ST.ctx = saved_ctx
+    ST.src_file = saved_file
+    ST.src_lines = saved_lines
+    return m
+}
+
+func emit_name_error(hint, fmt_text, arg_a, arg_b) {
+    let args_text = ""
+    if (arg_a != null) {
+        args_text = ", \"{c_escape(arg_a)}\""
+    }
+    if (arg_b != null) {
+        let prefix = args_text
+        args_text = "{prefix}, \"{c_escape(arg_b)}\""
+    }
+    emit("lv_errorf(LV_ERR_NAME, \"{hint}\", \"{fmt_text}\"{args_text});")
+}
+
+func st_use(n) {
+    mark(n.line)
+    let canon = path_norm(path_join(path_dir(ST.mod.canon), n.path))
+    let m2 = MODULES[canon]
+    if (m2 == null) {
+        m2 = compile_module(canon)
+    }
+    if (m2 == null) {
+        let hint = "Check that the import path exists and ends with .lu"
+        emit_name_error(hint, "Could not import file '%s'", n.path, null)
+        return null
+    }
+    if (m2.state == "compiling") {
+        let hint = "Modules must not import each other in a cycle; move shared code to a third module"
+        emit_name_error(hint, "Circular import detected: '%s' is already loading", n.path, null)
+        return null
+    }
+    let id = m2.id
+    emit("if (mod_{id}_state == 0) \{ mod_{id}_state = 1; mod_{id}_run(); mod_{id}_state = 2; }")
+    emit("lv_pos_mod = &mod_{ST.mod.id};")
+    ST.ctx.line = -1
+    mark(n.line)
+    let names = n.names
+    if (len(names) == 0) {
+        names = m2.exports
+    }
+    for (let name in names) {
+        if (find(m2.exports, name) < 0) {
+            let hint = "Export names explicitly in the module before using them"
+            emit_name_error(hint, "Module '%s' does not export '%s'", n.path, name)
+            return null
+        }
+        reg_global(name)
+        emit("{gname(name)} = {m2.prefix}{name};")
+    }
+}
+
+func prescan_globals(stmts) {
+    for (let s in stmts) {
+        if (s.k == "let") {
+            reg_global(s.name)
+        } else if (s.k == "func" and s.name != null) {
+            reg_global(s.name)
+        } else if (s.k == "group") {
+            prescan_globals(s.items)
+        }
+    }
+}
+
+# data, template and bloc names exist before the program starts (main file only).
+func define_types(stmts) {
+    for (let s in stmts) {
+        if (s.k == "typedef") {
+            reg_global(s.name)
+            let field_names = []
+            for (let f in s.fields) {
+                append(field_names, "\"{c_escape(f)}\"")
+            }
+            let fields_text = join(field_names, ", ")
+            let arr = "NULL"
+            if (len(field_names) > 0) {
+                arr = "(const char *const[])\{{fields_text}}"
+            }
+            mark(s.line)
+            let target = gname(s.name)
+            let template_flag = 0
+            if (s.is_template) {
+                template_flag = 1
+            }
+            if (s.is_bloc) {
+                emit("{target} = lv_define_bloc(\"{s.name}\", {len(field_names)}, {arr});")
+            } else {
+                emit("{target} = lv_define_data(\"{s.name}\", {len(field_names)}, {arr}, {template_flag});")
+            }
+        }
+    }
+}
+
+
+export func compile_program(stmts) {
+    let m = new_module(ST.src_file, path_norm(path_join(ST.cwd, ST.src_file)))
+    ST.mod = m
+    decl_module_source(m, ST.src_lines)
+    let static_err = lint_program(stmts)
+    if (static_err != null) {
+        ST.ctx = new_ctx(true)
+        emit("static void entry(void) \{")
+        emit("lv_pos_mod = &mod_0;")
+        emit("lv_static_error({static_err.line}, \"{c_escape(static_err.msg)}\", \"{c_escape(static_err.hint)}\");")
+        emit("}")
+        append(MOD_BODIES, join(ST.ctx.out, "\n"))
+        append(FN_DECLS, "static void entry(void);")
+    } else {
+        collect_exports(stmts, m.exports)
+        compile_module_body(m, stmts, "entry")
+    }
+
+    let out = []
+    append(out, "/* generated by lunac from {ST.src_file} */")
+    append(out, "#include \"luna_rt.h\"")
+    for (let d in MOD_DECLS) {
+        append(out, d)
+    }
+    append(out, "static LV K[{len(CONSTS) + 1}];")
+    for (let d in GLOBAL_DECLS) {
+        append(out, d)
+    }
+    for (let b in USED_ORDER) {
+        append(out, "static LvFunc nf_{b} = \{lb_{b}, \"{b}\", 1, 0, NULL};")
+    }
+    for (let d in FN_DECLS) {
+        append(out, d)
+    }
+    append(out, "static void lv_init_consts(void) \{")
+    for (let c in CONSTS) {
+        append(out, c)
+    }
+    append(out, "}")
+    for (let b in FN_BODIES) {
+        append(out, b)
+    }
+    for (let b in MOD_BODIES) {
+        append(out, b)
+    }
+    append(out, "int main(int argc, char **argv) \{ lv_init_consts(); return lv_main(argc, argv, entry); }")
+    return join(out, "\n") + "\n"
+}

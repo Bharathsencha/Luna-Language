@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# ll_scope.lu: variable scopes and deferred calls of the LLVM IR backend.
+
+use { BUILTINS, uid } from "cstate.lu"
+use { ll, ll_alloca, ll_args_array, ll_call_out, ll_copy, ll_reg, ll_slot } from "ll_state.lu"
+use { ST } from "state.lu"
+
+export func push_scope() {
+    append(ST.ctx.scopes, {})
+    append(ST.ctx.defers, [])
+}
+
+# Emits the deferred calls of every scope from index `from_depth` inward, innermost first.
+export func run_defers(from_depth) {
+    let i = len(ST.ctx.defers) - 1
+    while (i >= from_depth) {
+        let list = ST.ctx.defers[i]
+        let j = len(list) - 1
+        while (j >= 0) {
+            let d = list[j]
+            if (d.kind == "boxes") {
+                let id = ll_reg()
+                ll("{id} = load i64, ptr {d.slot}")
+                ll("call void @lv_box_release_scope(i64 {id})")
+            } else if (d.kind == "unsafe") {
+                ll("call void @lv_unsafe_end()")
+            } else {
+                let argv = ll_args_array(d.args)
+                let sink = ll_slot()
+                ll("call void @lvp_call(ptr {sink}, ptr {d.f}, i32 {len(d.args)}, ptr {argv})")
+            }
+            j -= 1
+        }
+        i -= 1
+    }
+}
+
+export func pop_scope() {
+    run_defers(len(ST.ctx.defers) - 1)
+    remove(ST.ctx.scopes, len(ST.ctx.scopes) - 1)
+    remove(ST.ctx.defers, len(ST.ctx.defers) - 1)
+}
+
+export func at_top() {
+    return ST.ctx.is_main and len(ST.ctx.scopes) == 1
+}
+
+# A variable holding a copy of the LV that init_ptr points to. A variable captured by a
+# nested function lives in a heap cell; its slot then holds the cell's address.
+export func declare(name, init_ptr) {
+    let id = uid()
+    let is_cell = ST.ctx.nested[name] != null
+    let v = {"name": name, "cell": is_cell, "c": ""}
+    if (is_cell) {
+        v.c = ll_alloca("ptr")
+        let cell = ll_reg()
+        ll("{cell} = call ptr @lvp_cell(ptr {init_ptr})")
+        ll("store ptr {cell}, ptr {v.c}")
+    } else {
+        v.c = ll_alloca("%LV")
+        ll_copy(v.c, init_ptr)
+    }
+    ST.ctx.scopes[len(ST.ctx.scopes) - 1][name] = v
+    return v
+}
+
+# The variable's value as a slot pointer. A cell is copied out, so a later write through
+# another closure does not change a value that is already part of an expression.
+export func var_get(v) {
+    if (v.cell) {
+        let cell = ll_reg()
+        ll("{cell} = load ptr, ptr {v.c}")
+        let t = ll_slot()
+        ll_copy(t, cell)
+        return t
+    }
+    return v.c
+}
+
+export func var_set(v, expr) {
+    if (v.cell) {
+        let cell = ll_reg()
+        ll("{cell} = load ptr, ptr {v.c}")
+        ll_copy(cell, expr)
+    } else {
+        ll_copy(v.c, expr)
+    }
+}
+
+export func find_local(name) {
+    let i = len(ST.ctx.scopes) - 1
+    while (i >= 0) {
+        let v = ST.ctx.scopes[i][name]
+        if (v != null) {
+            return v
+        }
+        i -= 1
+    }
+    return null
+}
+
+export func resolve(name) {
+    let v = find_local(name)
+    if (v != null) {
+        return {"kind": "local", "v": v}
+    }
+    let ci = ST.ctx.capmap[name]
+    if (ci != null) {
+        return {"kind": "cap", "i": ci}
+    }
+    if (ST.mod.globals[name] != null) {
+        return {"kind": "global"}
+    }
+    if (name == "null") {
+        return {"kind": "null"}
+    }
+    if (BUILTINS[name] != null) {
+        return {"kind": "builtin"}
+    }
+    return {"kind": "global"}
+}
+
+# The address of captured cell i of the running closure.
+export func cap_cell(i) {
+    let cp = ll_reg()
+    ll("{cp} = getelementptr inbounds %LvFunc, ptr %self, i32 0, i32 4")
+    let cells = ll_reg()
+    ll("{cells} = load ptr, ptr {cp}")
+    let ep = ll_reg()
+    ll("{ep} = getelementptr inbounds ptr, ptr {cells}, i64 {i}")
+    let cell = ll_reg()
+    ll("{cell} = load ptr, ptr {ep}")
+    return cell
+}

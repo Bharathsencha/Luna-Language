@@ -25,6 +25,7 @@ Configuration and operational instructions for Claude Code when working in the L
 - Interactive REPL: `make repl` (or `./bin/luna`)
 - Run Car Game demo: `make run-cargame` (runs `docs/examples/cargame/cargame.lu`)
 - Run Music Player demo: `make run-music` (runs `docs/examples/musicplayer/music.lu`)
+- Compiler: `make lunac` (C self-host), `make lunac-ll` (LLVM IR self-host), `make bootstrap` (VM-free build from `bootstrap/lunac.ll`), `make build-c` (generated C into `C/`), `make test-lunac`, `make test-ll`; see `docs/internals/lunac.md`
 - Run 3D racer: `make run-racer`; any fun/ program: `make run-fun NAME=<file>`
 
 ---

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# lint.lu: static check for rule R12.
+
+# Static lint (rule R12): free() may not sit inside conditional control flow in an
+# unsafe block. The first violation is kept; the program then reports it at start-up.
+let STATIC_ERR = null
+
+func lint_children(x, in_unsafe, in_cond) {
+    if (type(x) == "list") {
+        for (let y in x) {
+            lint(y, in_unsafe, in_cond)
+        }
+    } else if (type(x) == "map") {
+        for (let y in map_values(x)) {
+            if (type(y) == "list" or type(y) == "map") {
+                lint(y, in_unsafe, in_cond)
+            }
+        }
+    }
+}
+
+func lint(x, in_unsafe, in_cond) {
+    if (type(x) == "list") {
+        lint_children(x, in_unsafe, in_cond)
+        return null
+    }
+    if (type(x) != "map") {
+        return null
+    }
+    let k = x.k
+    let inner = in_cond
+    if (in_unsafe) {
+        inner = true
+    }
+    if (k == "call" and x.callee.k == "id" and x.callee.name == "free" and in_unsafe and in_cond) {
+        if (STATIC_ERR == null) {
+            STATIC_ERR = {"line": x.line, "msg": "free() may not appear inside conditional control flow", "hint": "Move free(ptr) out of the branch/loop, or use defer(ptr) instead"}
+        }
+    } else if (k == "unsafe") {
+        lint(x.body, true, in_cond)
+    } else if (k == "if") {
+        lint(x.cond, in_unsafe, inner)
+        lint(x.then, in_unsafe, inner)
+        lint(x.els, in_unsafe, inner)
+    } else if (k == "while") {
+        lint(x.cond, in_unsafe, inner)
+        lint(x.body, in_unsafe, inner)
+    } else if (k == "for") {
+        lint(x.init, in_unsafe, in_cond)
+        lint(x.cond, in_unsafe, inner)
+        lint(x.incr, in_unsafe, inner)
+        lint(x.body, in_unsafe, inner)
+    } else if (k == "forin") {
+        lint(x.iter, in_unsafe, in_cond)
+        lint(x.body, in_unsafe, inner)
+    } else if (k == "switch") {
+        lint(x.e, in_unsafe, in_cond)
+        for (let c in x.cases) {
+            lint(c.value, in_unsafe, in_cond)
+            lint(c.body, in_unsafe, inner)
+        }
+        lint(x.dflt, in_unsafe, inner)
+    } else {
+        lint_children(x, in_unsafe, in_cond)
+    }
+    return null
+}
+
+# The first violation as {"line", "msg", "hint"}, or null.
+export func lint_program(stmts) {
+    lint(stmts, false, false)
+    return STATIC_ERR
+}

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# state.lu: state shared between the compiler modules.
+
+# State shared between modules. An imported name is a copy, so a value that several
+# modules assign lives in this map, not in a top-level variable.
+#   src_file, src_lines  the file being compiled and its lines
+#   cwd                  directory that relative paths resolve against
+#   ctx                  the function being compiled
+#   mod                  the module being compiled
+#   uid                  counter for unique names
+export let ST = {"src_file": "", "src_lines": [], "cwd": "", "ctx": null, "mod": null,
+                 "uid": 0}

@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# cstate.lu: state and small helpers of the C backend (emit, temporaries, constants).
+
+use { ST } from "state.lu"
+
+export let BUILTINS = {}
+for (let nm in split("len str_len append list_append type int float to_string to_int to_float assert input debug range args exit system clock map_set map_get map_has map_delete map_keys map_values map_items remove find slice sort map filter reduce is_empty concat substring char_at index_of last_index_of contains starts_with ends_with to_upper to_lower trim trim_left trim_right replace reverse repeat pad_left pad_right format split join is_digit is_alpha is_alnum is_space abs min max clamp sign pow sqrt cbrt exp ln log10 sin cos tan asin acos atan atan2 sinh cosh tanh floor ceil round trunc fract mod lerp deg_to_rad rad_to_deg open close read read_line write file_exists remove_file flush alloc free load deref store ptr_offset ptr_add defer dense_list vec_add vec_sub vec_mul vec_div vec_mul_inline mat_mul rand srand trand shuffle ssort shape", " ")) {
+    BUILTINS[nm] = true
+}
+
+export let BINOPS = {
+    "+": "lv_add_fast", "-": "lv_sub_fast", "*": "lv_mul_fast", "/": "lv_div", "%": "lv_mod",
+    "==": "lv_eq_fast", "!=": "lv_ne_fast", "<": "lv_lt_fast", "<=": "lv_le_fast",
+    ">": "lv_gt_fast", ">=": "lv_ge_fast"
+}
+
+export let MODULES = {}
+export let MOD_LIST = []
+export let GLOBAL_DECLS = []
+export let MOD_DECLS = []
+export let MOD_BODIES = []
+export let FN_BODIES = []
+export let FN_DECLS = []
+export let CONSTS = []
+let CONST_IDS = {}
+let USED_BUILTINS = {}
+export let USED_ORDER = []
+
+export func uid() {
+    ST.uid += 1
+    return ST.uid
+}
+
+export func new_ctx(is_main) {
+    return {"out": [], "scopes": [{}], "defers": [[]], "nested": {}, "capmap": {},
+            "is_main": is_main, "line": -1, "loops": []}
+}
+
+export func gname(name) {
+    return "{ST.mod.prefix}{name}"
+}
+
+export func emit(text) {
+    append(ST.ctx.out, text)
+}
+
+export func emit_tmp(expr) {
+    let t = "t{uid()}"
+    emit("LV {t} = {expr};")
+    return t
+}
+
+export func mark(line) {
+    if (ST.ctx.line != line) {
+        emit("lv_pos_line = {line};")
+        ST.ctx.line = line
+    }
+}
+
+export func c_escape(text) {
+    let parts = []
+    for (let ch in text) {
+        let code = int(ch)
+        if (code < 0) {
+            code += 256
+        }
+        if (ch == '"') {
+            append(parts, "\\\"")
+        } else if (ch == '\\') {
+            append(parts, "\\\\")
+        } else if (ch == '\n') {
+            append(parts, "\\n")
+        } else if (ch == '\t') {
+            append(parts, "\\t")
+        } else if (ch == '?') {
+            append(parts, "\\?")
+        } else if (code < 32 or code > 126) {
+            let a = (code / 64) % 8
+            let b = (code / 8) % 8
+            let c = code % 8
+            append(parts, "\\{a}{b}{c}")
+        } else {
+            append(parts, "{ch}")
+        }
+    }
+    return join(parts, "")
+}
+
+export func kstr(text) {
+    let key = "s{text}"
+    let idx = CONST_IDS[key]
+    if (idx == null) {
+        idx = len(CONSTS)
+        append(CONSTS, "K[{idx}] = lv_str_n(\"{c_escape(text)}\", {len(text)});")
+        CONST_IDS[key] = idx
+    }
+    return "K[{idx}]"
+}
+
+export func use_builtin(name) {
+    if (USED_BUILTINS[name] == null) {
+        USED_BUILTINS[name] = true
+        append(USED_ORDER, name)
+    }
+}
+
+export func reg_global(name) {
+    if (ST.mod.globals[name] == null) {
+        ST.mod.globals[name] = true
+        append(GLOBAL_DECLS, "static LV {gname(name)} = \{.tag = LV_UNDEF};")
+    }
+}

@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# analysis.lu: which names a function uses and which are captured by nested functions.
+
+# Shared by the C and LLVM backends.
+# Every name read or written anywhere inside x (in order of first use).
+func walk_names(x, seen, order) {
+    if (type(x) == "list") {
+        for (let y in x) {
+            walk_names(y, seen, order)
+        }
+        return null
+    }
+    if (type(x) != "map") {
+        return null
+    }
+    let k = x.k
+    if (k == "id" or k == "assign" or k == "incdec") {
+        if (seen[x.name] == null) {
+            seen[x.name] = true
+            append(order, x.name)
+        }
+    }
+    for (let y in map_values(x)) {
+        if (type(y) == "list" or type(y) == "map") {
+            walk_names(y, seen, order)
+        }
+    }
+    return null
+}
+
+export func used_names(fn_node) {
+    let order = []
+    walk_names(fn_node, {}, order)
+    return order
+}
+
+# Names used inside any function literal nested within x.
+export func walk_nested(x, out) {
+    if (type(x) == "list") {
+        for (let y in x) {
+            walk_nested(y, out)
+        }
+        return null
+    }
+    if (type(x) != "map") {
+        return null
+    }
+    if (x.k == "func") {
+        let order = []
+        walk_names(x, out, order)
+        return null
+    }
+    for (let y in map_values(x)) {
+        if (type(y) == "list" or type(y) == "map") {
+            walk_nested(y, out)
+        }
+    }
+    return null
+}
+
+export func p_prompt_text(parts) {
+    let pieces = []
+    for (let part in parts) {
+        if (type(part) == "string") {
+            append(pieces, part)
+        }
+    }
+    return join(pieces, "")
+}
+
+export func collect_exports(stmts, out) {
+    for (let s in stmts) {
+        if (s.k == "group") {
+            collect_exports(s.items, out)
+        } else if ((s.k == "let" or s.k == "func") and s.exported and s.name != null) {
+            append(out, s.name)
+        }
+    }
+}
+
+export func has_zero_arg_main(stmts) {
+    for (let s in stmts) {
+        if (s.k == "func" and s.name == "main" and len(s.params) == 0) {
+            return true
+        }
+    }
+    return false
+}

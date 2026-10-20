@@ -1,0 +1,215 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# lexer.lu: source text to tokens.
+
+use { die } from "util.lu"
+use { KEYWORDS, ONE_CHAR, TWO_CHAR } from "token.lu"
+
+func is_dig(c) {
+    return c >= '0' and c <= '9'
+}
+
+func is_ident_start(c) {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_'
+}
+
+func is_ident_char(c) {
+    return is_ident_start(c) or is_dig(c)
+}
+
+func make_tok(t, v, line) {
+    return {"t": t, "v": v, "line": line}
+}
+
+# Reads the string whose opening quote is at index i. Returns [parts, next_i,
+# next_line]. A part is either a string or {"expr": source, "line": n}.
+func lex_string(src, i, line) {
+    let n = len(src)
+    let pcs = []
+    let start_line = line
+    i += 1
+    while (i < n and src[i] != '"') {
+        let c = src[i]
+        if (c == '\\') {
+            i += 1
+            if (i >= n) {
+                break
+            }
+            let e = src[i]
+            if (e == 'n') {
+                append(pcs, "\n")
+            } else if (e == 't') {
+                append(pcs, "\t")
+            } else if (e == 'r') {
+                append(pcs, "\r")
+            } else if (e == '{') {
+                append(pcs, "<LB>")
+            } else if (e == '}') {
+                append(pcs, "<RB>")
+            } else {
+                append(pcs, "{e}")
+            }
+        } else {
+            if (c == '\n') {
+                line += 1
+            }
+            append(pcs, "{c}")
+        }
+        i += 1
+    }
+    if (i < n) {
+        i += 1
+    }
+
+    let parts = []
+    let cur = []
+    let j = 0
+    let m = len(pcs)
+    while (j < m) {
+        let p = pcs[j]
+        if (p == "<LB>") {
+            append(cur, "\{")
+        } else if (p == "<RB>") {
+            append(cur, "\}")
+        } else if (p == "\{" and j + 1 < m and pcs[j + 1] != "\}") {
+            let depth = 1
+            let k = j + 1
+            let ex = []
+            while (k < m) {
+                let q = pcs[k]
+                if (q == "\{") {
+                    depth += 1
+                } else if (q == "\}") {
+                    depth -= 1
+                    if (depth == 0) {
+                        break
+                    }
+                }
+                if (q == "<LB>") {
+                    append(ex, "\{")
+                } else if (q == "<RB>") {
+                    append(ex, "\}")
+                } else {
+                    append(ex, q)
+                }
+                k += 1
+            }
+            if (k >= m) {
+                die("Syntax Error", start_line, "Unclosed string interpolation expression")
+            }
+            if (len(cur) > 0) {
+                append(parts, join(cur, ""))
+                cur = []
+            }
+            append(parts, {"expr": join(ex, ""), "line": start_line})
+            j = k
+        } else {
+            append(cur, p)
+        }
+        j += 1
+    }
+    if (len(cur) > 0 or len(parts) == 0) {
+        append(parts, join(cur, ""))
+    }
+    return [parts, i, line]
+}
+
+export func lex(src, first_line) {
+    let toks = []
+    let n = len(src)
+    let i = 0
+    let line = first_line
+    while (i < n) {
+        let c = src[i]
+        if (c == '\n') {
+            append(toks, make_tok("nl", null, line))
+            line += 1
+            i += 1
+        } else if (c == ' ' or c == '\t' or int(c) == 13) {
+            i += 1
+        } else if (c == '#' or (c == '/' and i + 1 < n and src[i + 1] == '/')) {
+            while (i < n and src[i] != '\n') {
+                i += 1
+            }
+        } else if (c == '"') {
+            let start_line = line
+            let r = lex_string(src, i, line)
+            append(toks, make_tok("str", r[0], start_line))
+            i = r[1]
+            line = r[2]
+        } else if (c == '\'') {
+            i += 1
+            let code = 0
+            if (i < n) {
+                code = int(src[i])
+            }
+            if (i < n and src[i] == '\\') {
+                i += 1
+                let e = src[i]
+                if (e == 'n') {
+                    code = 10
+                } else if (e == 't') {
+                    code = 9
+                } else if (e == '0') {
+                    code = 0
+                } else {
+                    code = int(e)
+                }
+            }
+            i += 1
+            if (i < n and src[i] == '\'') {
+                i += 1
+            }
+            append(toks, make_tok("char", code, line))
+        } else if (is_dig(c)) {
+            let s = i
+            while (i < n and is_dig(src[i])) {
+                i += 1
+            }
+            let is_float = false
+            if (i + 1 < n and src[i] == '.' and is_dig(src[i + 1])) {
+                is_float = true
+                i += 1
+                while (i < n and is_dig(src[i])) {
+                    i += 1
+                }
+            }
+            if (is_float) {
+                append(toks, make_tok("float", slice(src, s, i), line))
+            } else {
+                append(toks, make_tok("num", slice(src, s, i), line))
+            }
+        } else if (is_ident_start(c)) {
+            let s = i
+            while (i < n and is_ident_char(src[i])) {
+                i += 1
+            }
+            let word = slice(src, s, i)
+            let kw = KEYWORDS[word]
+            if (kw != null) {
+                append(toks, make_tok(kw, word, line))
+            } else {
+                append(toks, make_tok("id", word, line))
+            }
+        } else {
+            let two = ""
+            if (i + 1 < n) {
+                two = slice(src, i, i + 2)
+            }
+            let one = "{c}"
+            if (TWO_CHAR[two] != null) {
+                append(toks, make_tok(TWO_CHAR[two], two, line))
+                i += 2
+            } else if (ONE_CHAR[one] != null) {
+                append(toks, make_tok(ONE_CHAR[one], one, line))
+                i += 1
+            } else {
+                append(toks, make_tok("id", one, line))
+                i += 1
+            }
+        }
+    }
+    append(toks, make_tok("eof", null, line))
+    return toks
+}

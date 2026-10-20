@@ -43,3 +43,4 @@ zig-test/zig-out/
 __pycache__/
 *.csv
 docs/known-issues.md
+C/

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# token.lu: keyword and operator tables.
+
+export let KEYWORDS = {
+    "and": "and", "or": "or", "not": "not",
+    "let": "let", "balls": "let", "big_balls": "let", "shared_balls": "let",
+    "const": "const",
+    "func": "func", "grab_balls": "func",
+    "if": "if", "if_balls": "if", "else": "else", "else_balls": "else",
+    "while": "while", "spin_balls": "while",
+    "for": "for", "loop_your_balls": "for", "in": "in",
+    "return": "return", "break": "break", "drop_balls": "break",
+    "continue": "continue", "jiggle_balls": "continue",
+    "switch": "switch", "switch_balls": "switch", "case": "case", "default": "default",
+    "print": "print", "input": "input", "true": "true", "false": "false",
+    "use": "use", "from": "from", "export": "export", "import": "import",
+    "data": "data", "template": "template", "bloc": "bloc", "box": "box", "unsafe": "unsafe"
+}
+
+export let TWO_CHAR = {
+    "==": "==", "!=": "!=", "<=": "<=", ">=": ">=", "++": "++", "+=": "+=",
+    "--": "--", "-=": "-=", "*=": "*=", "/=": "/=", "&&": "and", "||": "or"
+}
+
+export let ONE_CHAR = {
+    "=": "=", "+": "+", "-": "-", "*": "*", "/": "/", "%": "%", "<": "<", ">": ">",
+    "(": "(", ")": ")", "{": "{", "}": "}", "[": "[", "]": "]", ",": ",", ".": ".",
+    ":": ":", ";": ";", "!": "not"
+}

@@ -1,0 +1,250 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# ll_state.lu: state and small helpers of the LLVM IR backend.
+#
+# Every Luna value is an LV in memory (%LV = { i64 tag, i64 payload }). An expression
+# compiles to the name of a pointer to its LV. Runtime calls that take or return an
+# LV go through the pointer wrappers in compiler/runtime/luna_rt_ir.c.
+
+use { MODULES, MOD_LIST, uid } from "cstate.lu"
+use { ST } from "state.lu"
+
+export let LL_STRS = []        # private string constants
+export let LL_STR_IDS = {}
+export let LL_CONSTS = []      # private constant LV values
+export let LL_CONST_IDS = {}
+export let LL_GLOBALS = []     # one definition per Luna global
+export let LL_MODDECLS = []    # per-module state, source tables and descriptors
+export let LL_FUNCS = []       # finished function bodies
+export let LL_KSTRS = []       # text of each K[] string constant
+export let LL_K_IDS = {}
+export let LL_BUILTINS = []    # builtin names whose lb_ function is declared
+export let LL_BUILTIN_IDS = {}
+export let LL_NATIVES = []     # builtins called directly: names that need an nf_ global
+export let LL_NATIVE_IDS = {}
+
+func ll_hex_digit(n) {
+    return "0123456789ABCDEF"[n]
+}
+
+# Text for an LLVM c"..." constant (without the surrounding quotes).
+export func ll_escape(text) {
+    let parts = []
+    for (let ch in text) {
+        let code = int(ch)
+        if (code < 0) {
+            code += 256
+        }
+        if (ch == '"' or ch == '\\' or code < 32 or code > 126) {
+            let hi = ll_hex_digit(code / 16)
+            let lo = ll_hex_digit(code % 16)
+            append(parts, "\\{hi}{lo}")
+        } else {
+            append(parts, "{ch}")
+        }
+    }
+    return join(parts, "")
+}
+
+# A NUL-terminated string constant; returns its global name.
+export func ll_cstr(text) {
+    let key = "s{text}"
+    let name = LL_STR_IDS[key]
+    if (name == null) {
+        name = "@.s{len(LL_STRS)}"
+        append(LL_STRS, "{name} = private unnamed_addr constant [{len(text) + 1} x i8] c\"{ll_escape(text)}\\00\"")
+        LL_STR_IDS[key] = name
+    }
+    return name
+}
+
+# A constant LV with the given tag and payload text; returns its global name.
+export func ll_const(tag, payload) {
+    let key = "{tag}:{payload}"
+    let name = LL_CONST_IDS[key]
+    if (name == null) {
+        name = "@.c{len(LL_CONSTS)}"
+        append(LL_CONSTS, "{name} = private constant %LV \{ i64 {tag}, i64 {payload} }")
+        LL_CONST_IDS[key] = name
+    }
+    return name
+}
+
+export func ll_null() {
+    return ll_const(0, "0")
+}
+
+export func ll_int(text) {
+    return ll_const(2, text)
+}
+
+# Float literal text such as 3.14, 1e-05 or 2. as an LLVM double constant expression.
+export func ll_float(text) {
+    let t = text
+    if (index_of(t, ".") < 0) {
+        let e = index_of(t, "e")
+        if (e < 0) {
+            e = index_of(t, "E")
+        }
+        if (e < 0) {
+            t = "{t}.0"
+        } else {
+            let head = slice(t, 0, e)
+            let tail = slice(t, e, len(t))
+            t = "{head}.0{tail}"
+        }
+    }
+    return ll_const(3, "bitcast (double {t} to i64)")
+}
+
+export func ll_char(code) {
+    return ll_const(4, "{code}")
+}
+
+export func ll_bool(b) {
+    if (b) {
+        return ll_const(1, "1")
+    }
+    return ll_const(1, "0")
+}
+
+# The K[] slot for a string literal, as a constant pointer expression.
+export func ll_kstr(text) {
+    let idx = LL_K_IDS[text]
+    if (idx == null) {
+        idx = len(LL_KSTRS)
+        append(LL_KSTRS, text)
+        LL_K_IDS[text] = idx
+    }
+    return "getelementptr inbounds (%LV, ptr @K, i64 {idx})"
+}
+
+export func ll_use_builtin(name) {
+    if (LL_BUILTIN_IDS[name] == null) {
+        LL_BUILTIN_IDS[name] = true
+        append(LL_BUILTINS, name)
+    }
+}
+
+# Builtins called with their own LvFunc (nf_<name>) need a global for it.
+export func ll_use_native(name) {
+    ll_use_builtin(name)
+    if (LL_NATIVE_IDS[name] == null) {
+        LL_NATIVE_IDS[name] = true
+        append(LL_NATIVES, name)
+    }
+}
+
+export func ll_new_ctx(is_main) {
+    return {"out": [], "allocas": [], "scopes": [{}], "defers": [[]], "nested": {}, "capmap": {},
+            "is_main": is_main, "line": -1, "loops": [], "dead": false}
+}
+
+# One instruction. After a terminator a fresh block starts first, so unreachable code
+# after return, break or continue is still valid IR.
+export func ll(text) {
+    let c = ST.ctx
+    if (c.dead) {
+        c.dead = false
+        append(c.out, "d{uid()}:")
+    }
+    append(c.out, "  {text}")
+}
+
+export func ll_label(name) {
+    let c = ST.ctx
+    c.dead = false
+    c.line = -1
+    append(c.out, "{name}:")
+}
+
+export func ll_br(label) {
+    ll("br label %{label}")
+    ST.ctx.dead = true
+}
+
+export func ll_condbr(cond, yes, no) {
+    ll("br i1 {cond}, label %{yes}, label %{no}")
+    ST.ctx.dead = true
+}
+
+export func ll_new_label(prefix) {
+    return "{prefix}{uid()}"
+}
+
+# A fresh LV slot, allocated in the entry block.
+export func ll_slot() {
+    let name = "%t{uid()}"
+    append(ST.ctx.allocas, "  {name} = alloca %LV, align 8")
+    return name
+}
+
+export func ll_alloca(kind_text) {
+    let name = "%a{uid()}"
+    append(ST.ctx.allocas, "  {name} = alloca {kind_text}, align 8")
+    return name
+}
+
+export func ll_reg() {
+    return "%r{uid()}"
+}
+
+export func ll_copy(dst, src) {
+    let r = ll_reg()
+    ll("{r} = load %LV, ptr {src}")
+    ll("store %LV {r}, ptr {dst}")
+}
+
+export func ll_mark(line) {
+    if (ST.ctx.line != line) {
+        ll("store i32 {line}, ptr @lv_pos_line")
+        ST.ctx.line = line
+    }
+}
+
+# Calls a pointer-ABI wrapper that writes its result through the first argument.
+export func ll_call_out(fn_name, args_text) {
+    let t = ll_slot()
+    if (args_text == "") {
+        ll("call void @{fn_name}(ptr {t})")
+    } else {
+        ll("call void @{fn_name}(ptr {t}, {args_text})")
+    }
+    return t
+}
+
+# Calls a runtime function that returns an LV by value and stores the result in a slot.
+export func ll_call_lv(callee, args_text) {
+    let r = ll_reg()
+    ll("{r} = call %LV @{callee}({args_text})")
+    let t = ll_slot()
+    ll("store %LV {r}, ptr {t}")
+    return t
+}
+
+export func ll_gname(name) {
+    return "@{ST.mod.prefix}{name}"
+}
+
+export func ll_reg_global(name) {
+    if (ST.mod.globals[name] == null) {
+        ST.mod.globals[name] = true
+        append(LL_GLOBALS, "{ll_gname(name)} = internal global %LV \{ i64 17, i64 0 }")
+    }
+}
+
+# An array of LVs holding copies of the given slots; returns a pointer to its first element.
+export func ll_args_array(items) {
+    if (len(items) == 0) {
+        return "null"
+    }
+    let n = len(items)
+    let arr = ll_alloca("[{n} x %LV]")
+    for (let i = 0; i < n; i++) {
+        let p = ll_reg()
+        ll("{p} = getelementptr inbounds [{n} x %LV], ptr {arr}, i64 0, i64 {i}")
+        ll_copy(p, items[i])
+    }
+    return arr
+}

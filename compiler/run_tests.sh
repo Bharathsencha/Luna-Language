@@ -3,25 +3,28 @@
 # C, and stdout, stderr and the exit code must match. Files made of
 # "# CASE <name>" sections run each case on its own, like test_runner.sh.
 # Usage: compiler/run_tests.sh [file.lu ...]   (default: test/*.lu)
+# LUNAC_BACKEND=llvm tests the LLVM IR backend (built with clang) instead of the C backend.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 [ $# -eq 0 ] && set -- test/*.lu
 RT=compiler/runtime
+EXT=c; CC="gcc -std=gnu11"
+if [ "$LUNAC_BACKEND" = "llvm" ]; then EXT=ll; CC="clang"; fi
 CASE_FILE=/tmp/luna_test_case.lu
 pass=0; fail=0; skip=0
 
 # check_one <source> <label>: compiles and runs <source> on both engines.
 check_one() {
     src=$1; label=$2; name=bin_$$
-    if ! "$ROOT/bin/luna" compiler/lunac.lu "$src" "$TMP/$name.c" "$ROOT" > "$TMP/cerr" 2>&1; then
+    if ! "$ROOT/bin/luna" compiler/lunac.lu "$src" "$TMP/$name.$EXT" "$ROOT" > "$TMP/cerr" 2>&1; then
         if grep -q "not supported by lunac" "$TMP/cerr"; then
             skip=$((skip + 1)); echo "[SKIP] $label"; return
         fi
         fail=$((fail + 1)); echo "[FAIL] $label (lunac)"; head -3 "$TMP/cerr"; return
     fi
-    if ! gcc -std=gnu11 -O1 -w -I $RT "$TMP/$name.c" $RT/luna_rt.c $RT/luna_rt_data.c $RT/luna_gc.c \
+    if ! $CC -O1 -w -I $RT "$TMP/$name.$EXT" $RT/luna_rt.c $RT/luna_rt_data.c $RT/luna_gc.c $RT/luna_rt_ir.c \
          -L lib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl -o "$TMP/$name" 2> "$TMP/gerr"; then
         fail=$((fail + 1)); echo "[FAIL] $label (gcc)"; head -5 "$TMP/gerr"; return
     fi
@@ -48,8 +51,8 @@ check_one() {
 check_golden() {
     src=$1; name=gold_$$
     gold="${src%.lu}.golden"
-    if ! "$ROOT/bin/luna" compiler/lunac.lu "$src" "$TMP/$name.c" "$ROOT" > "$TMP/cerr" 2>&1 ||
-       ! gcc -std=gnu11 -O1 -w -I $RT "$TMP/$name.c" $RT/luna_rt.c $RT/luna_rt_data.c $RT/luna_gc.c \
+    if ! "$ROOT/bin/luna" compiler/lunac.lu "$src" "$TMP/$name.$EXT" "$ROOT" > "$TMP/cerr" 2>&1 ||
+       ! $CC -O1 -w -I $RT "$TMP/$name.$EXT" $RT/luna_rt.c $RT/luna_rt_data.c $RT/luna_gc.c $RT/luna_rt_ir.c \
             -L lib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl -o "$TMP/$name" 2> "$TMP/gerr"; then
         fail=$((fail + 1)); echo "[FAIL] $src (build)"; head -3 "$TMP/cerr" "$TMP/gerr"; return
     fi

@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# util.lu: compile errors, path handling and file reading.
+
+use { ST } from "state.lu"
+
+export func die(kind, line, msg) {
+    print("{kind} in {ST.src_file} at line {line}:\n  {msg}")
+    exit(1)
+}
+
+export func path_dir(p) {
+    let i = last_index_of(p, "/")
+    if (i < 0) {
+        return ""
+    }
+    if (i == 0) {
+        return "/"
+    }
+    return slice(p, 0, i)
+}
+
+export func path_join(dir, rel) {
+    if (starts_with(rel, "/") or dir == "") {
+        return rel
+    }
+    if (dir == "/") {
+        return "/{rel}"
+    }
+    return "{dir}/{rel}"
+}
+
+# Resolves "." and ".." segments, like realpath does for files without symlinks.
+export func path_norm(p) {
+    let absolute = starts_with(p, "/")
+    let out = []
+    for (let seg in split(p, "/")) {
+        if (seg == "." or seg == "") {
+            continue
+        }
+        if (seg == ".." and len(out) > 0 and out[len(out) - 1] != "..") {
+            remove(out, len(out) - 1)
+        } else if (seg == ".." and absolute) {
+            continue
+        } else {
+            append(out, seg)
+        }
+    }
+    let joined = join(out, "/")
+    if (absolute) {
+        return "/{joined}"
+    }
+    return joined
+}
+
+export func read_file(path) {
+    let f = open(path, "r")
+    if (f == null) {
+        print("[ERROR] cannot open {path}")
+        exit(1)
+    }
+    let text = read(f)
+    close(f)
+    return text
+}
+
+# split() drops empty lines, which would shift every later line number.
+export func split_lines(text) {
+    let lines = []
+    let start = 0
+    let n = len(text)
+    for (let i = 0; i < n; i++) {
+        if (text[i] == '\n') {
+            append(lines, slice(text, start, i))
+            start = i + 1
+        }
+    }
+    if (start < n) {
+        append(lines, slice(text, start, n))
+    }
+    return lines
+}

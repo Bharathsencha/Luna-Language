@@ -263,9 +263,69 @@ LUNAC_DIR = bin/lunac
 lunac: $(BINDIR)/$(TARGET)
 	@mkdir -p $(LUNAC_DIR)
 	@compiler/lunac.sh compiler/lunac.lu $(LUNAC_DIR)/lunac1
-	@$(LUNAC_DIR)/lunac1 compiler/lunac.lu $(LUNAC_DIR)/lunac2.c
+	@$(LUNAC_DIR)/lunac1 compiler/lunac.lu $(LUNAC_DIR)/lunac2.c $(CURDIR)
 	@cmp $(LUNAC_DIR)/lunac1.c $(LUNAC_DIR)/lunac2.c
 	@echo "lunac: self-hosted, stage 1 and stage 2 emit identical C ($(LUNAC_DIR)/lunac1)"
+
+# build-c writes the C that lunac generates into C/ and stops, so it can be read
+# before anything is compiled. compile-c then builds binaries from those files.
+C_OUT = C
+LUNAC_RT = compiler/runtime
+build-c: $(BINDIR)/$(TARGET)
+	@mkdir -p $(C_OUT)
+	@$(BINDIR)/$(TARGET) compiler/lunac.lu compiler/lunac.lu $(C_OUT)/lunac.c $(CURDIR)
+	@$(BINDIR)/$(TARGET) compiler/lunac.lu src/main.lu $(C_OUT)/lil.c $(CURDIR)
+	@wc -l $(C_OUT)/*.c
+
+compile-c:
+	@test -f $(C_OUT)/lunac.c -a -f $(C_OUT)/lil.c || { echo "[ERROR] run 'make build-c' first"; exit 1; }
+	@mkdir -p $(LUNAC_DIR)
+	@for n in lunac lil; do \
+	    gcc -std=gnu11 -O2 -w -I$(LUNAC_RT) $(C_OUT)/$$n.c $(LUNAC_RT)/luna_rt.c $(LUNAC_RT)/luna_rt_data.c \
+	        $(LUNAC_RT)/luna_gc.c -Llib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl -o $(LUNAC_DIR)/$$n || exit 1; \
+	    echo "built $(LUNAC_DIR)/$$n"; \
+	done
+
+# LLVM IR backend. build-ll writes the IR into C/ for review (opt-18 -passes=verify C/x.ll
+# checks it); lunac-ll builds lunac from its own IR and checks that the binary emits the
+# same IR when it compiles itself.
+LLVM_CC = clang
+LUNAC_RT_SRC = $(LUNAC_RT)/luna_rt.c $(LUNAC_RT)/luna_rt_data.c $(LUNAC_RT)/luna_gc.c $(LUNAC_RT)/luna_rt_ir.c
+LUNAC_RT_LIBS = -Llib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl
+
+build-ll: $(BINDIR)/$(TARGET)
+	@mkdir -p $(C_OUT)
+	@$(BINDIR)/$(TARGET) compiler/lunac.lu compiler/lunac.lu $(C_OUT)/lunac.ll $(CURDIR)
+	@wc -l $(C_OUT)/lunac.ll
+
+lunac-ll: build-ll
+	@mkdir -p $(LUNAC_DIR)
+	@$(LLVM_CC) -O1 -w -I$(LUNAC_RT) $(C_OUT)/lunac.ll $(LUNAC_RT_SRC) $(LUNAC_RT_LIBS) -o $(LUNAC_DIR)/lunac_ll1
+	@$(LUNAC_DIR)/lunac_ll1 compiler/lunac.lu $(C_OUT)/lunac_stage2.ll $(CURDIR)
+	@cmp $(C_OUT)/lunac.ll $(C_OUT)/lunac_stage2.ll
+	@echo "lunac-ll: self-hosted through LLVM IR, stage 1 and stage 2 emit identical IR ($(LUNAC_DIR)/lunac_ll1)"
+
+# bootstrap builds lunac without the bytecode VM: bootstrap/lunac.ll is lunac's own IR, kept
+# in the repository. Seed -> binary -> IR of the current sources -> binary -> IR again; the two
+# IR files must match. make seed refreshes the seed after a compiler change.
+SEED = bootstrap/lunac.ll
+bootstrap:
+	@mkdir -p $(LUNAC_DIR) $(C_OUT)
+	@$(LLVM_CC) -O1 -w -I$(LUNAC_RT) $(SEED) $(LUNAC_RT_SRC) $(LUNAC_RT_LIBS) -o $(LUNAC_DIR)/lunac_seed
+	@$(LUNAC_DIR)/lunac_seed compiler/lunac.lu $(C_OUT)/boot1.ll $(CURDIR)
+	@$(LLVM_CC) -O1 -w -I$(LUNAC_RT) $(C_OUT)/boot1.ll $(LUNAC_RT_SRC) $(LUNAC_RT_LIBS) -o $(LUNAC_DIR)/lunac
+	@$(LUNAC_DIR)/lunac compiler/lunac.lu $(C_OUT)/boot2.ll $(CURDIR)
+	@cmp $(C_OUT)/boot1.ll $(C_OUT)/boot2.ll
+	@echo "bootstrap: built $(LUNAC_DIR)/lunac from $(SEED) without the VM"
+	@cmp -s $(SEED) $(C_OUT)/boot1.ll || echo "[WARN] the seed is older than compiler/*.lu; run make seed"
+
+seed: lunac-ll
+	@mkdir -p bootstrap
+	@cp $(C_OUT)/lunac.ll $(SEED)
+	@echo "seed: wrote $(SEED)"
+
+test-ll: $(BINDIR)/$(TARGET)
+	@LUNAC_BACKEND=llvm compiler/run_tests.sh
 
 test-lunac: $(BINDIR)/$(TARGET)
 	@compiler/run_tests.sh
@@ -277,4 +337,4 @@ test-lil: $(BINDIR)/$(TARGET)
 	@compiler/lunac.sh src/main.lu $(LUNAC_DIR)/lil
 	@LUNA_IN_LUNA_BIN=$(LUNAC_DIR)/lil compiler/run_interp_tests.sh
 
-.PHONY: lunac test-lunac test-lil all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun
+.PHONY: bootstrap seed lunac build-ll lunac-ll test-ll build-c compile-c test-lunac test-lil all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun
