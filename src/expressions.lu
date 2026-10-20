@@ -1,0 +1,196 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# expressions.lu: expression handlers (operators, calls, literals, ...).
+
+use { arith, binary, tostr, truth } from "value.lu"
+use { out_text } from "error.lu"
+use { EV, NATIVES, assign_var, call_value, field_get, index_get } from "interpreter.lu"
+use { make_closure, scope_find, undefined_var } from "interpreter.lu"
+use { box_new, container_check } from "box.lu"
+use { address_of_invalid, address_of_var } from "unsafe_runtime.lu"
+use { RT } from "state.lu"
+
+export func ev_const(n, sc) {
+    return n.v
+}
+
+export func ev_tmpl(n, sc) {
+    let out = []
+    for (let part in n.parts) {
+        if (type(part) == "string") {
+            append(out, part)
+        } else {
+            let v = EV[part.k](part, sc)
+            append(out, tostr(v))
+        }
+    }
+    return join(out, "")
+}
+
+export func ev_id(n, sc) {
+    let b = scope_find(sc, n.name)
+    if (b != null) {
+        return b[0]
+    }
+    let nat = NATIVES[n.name]
+    if (nat != null) {
+        return nat
+    }
+    if (n.name == "null") {
+        return null
+    }
+    RT.cur_line = n.line
+    undefined_var(n.name)
+}
+
+export func ev_list(n, sc) {
+    let out = []
+    for (let item in n.items) {
+        let v = EV[item.k](item, sc)
+        RT.cur_line = n.line
+        container_check(v)
+        append(out, v)
+    }
+    return out
+}
+
+export func ev_map(n, sc) {
+    let m = {}
+    for (let i = 0; i < len(n.keys); i++) {
+        let v = EV[n.vals[i].k](n.vals[i], sc)
+        RT.cur_line = n.line
+        container_check(v)
+        m[n.keys[i]] = v
+    }
+    return m
+}
+
+export func ev_func(n, sc) {
+    return make_closure(n, sc)
+}
+
+export func ev_bin(n, sc) {
+    let op = n.op
+    if (op == "and") {
+        let l = EV[n.l.k](n.l, sc)
+        RT.cur_line = n.line
+        if (not truth(l)) {
+            return l
+        }
+        return EV[n.r.k](n.r, sc)
+    }
+    if (op == "or") {
+        let l = EV[n.l.k](n.l, sc)
+        RT.cur_line = n.line
+        if (truth(l)) {
+            return l
+        }
+        return EV[n.r.k](n.r, sc)
+    }
+    let l = EV[n.l.k](n.l, sc)
+    let r = EV[n.r.k](n.r, sc)
+    RT.cur_line = n.line
+    return binary(op, l, r)
+}
+
+export func ev_not(n, sc) {
+    let v = EV[n.e.k](n.e, sc)
+    RT.cur_line = n.line
+    return not truth(v)
+}
+
+export func ev_incdec(n, sc) {
+    RT.cur_line = n.line
+    let b = scope_find(sc, n.name)
+    if (b == null) {
+        undefined_var(n.name)
+    }
+    let v = null
+    if (n.op == "++") {
+        v = arith("+", b[0], 1)
+    } else {
+        v = arith("-", b[0], 1)
+    }
+    assign_var(sc, n.name, v)
+    return v
+}
+
+export func ev_input(n, sc) {
+    RT.cur_line = n.line
+    if (n.prompt != null) {
+        out_text(n.prompt)
+    }
+    return input("")
+}
+
+export func ev_index(n, sc) {
+    let t = EV[n.target.k](n.target, sc)
+    let i = EV[n.index.k](n.index, sc)
+    RT.cur_line = n.line
+    return index_get(t, i)
+}
+
+export func ev_field(n, sc) {
+    let t = EV[n.target.k](n.target, sc)
+    RT.cur_line = n.line
+    return field_get(t, n.field)
+}
+
+export func ev_box(n, sc) {
+    let size = EV[n.size.k](n.size, sc)
+    RT.cur_line = n.line
+    return box_new(size, sc)
+}
+
+func ev_args(nodes, sc) {
+    let out = []
+    for (let a in nodes) {
+        append(out, EV[a.k](a, sc))
+    }
+    return out
+}
+
+export func ev_call(n, sc) {
+    let cn = n.callee
+    if (cn.k == "id") {
+        let name = cn.name
+        if (name == "defer" and len(n.args) == 1 and n.args[0].k == "call" and scope_find(sc, name) == null) {
+            return defer_call(n, sc)
+        }
+        if ((name == "address_of" or name == "addr") and scope_find(sc, name) == null) {
+            return ev_address_of(n, sc)
+        }
+    }
+    let f = EV[cn.k](cn, sc)
+    let args = ev_args(n.args, sc)
+    RT.cur_line = n.line
+    return call_value(f, args, cn)
+}
+
+# defer(f(args)): the callee and arguments are captured now and called when the
+# scope exits.
+func defer_call(n, sc) {
+    let inner = n.args[0]
+    let f = EV[inner.callee.k](inner.callee, sc)
+    let args = ev_args(inner.args, sc)
+    let d = sc["@d"]
+    if (d == null) {
+        d = []
+        sc["@d"] = d
+    }
+    append(d, {"f": f, "args": args, "line": n.line})
+    return null
+}
+
+func ev_address_of(n, sc) {
+    RT.cur_line = n.line
+    if (len(n.args) == 1 and n.args[0].k == "id") {
+        let b = scope_find(sc, n.args[0].name)
+        if (b == null) {
+            undefined_var(n.args[0].name)
+        }
+        return address_of_var(b)
+    }
+    return address_of_invalid(len(n.args))
+}

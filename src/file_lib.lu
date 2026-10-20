@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# file_lib.lu: file builtins.
+
+use { tostr } from "value.lu"
+use { arg_error } from "error.lu"
+use { HOST, IMPL, spec } from "library.lu"
+
+func b_write(a) {
+    return write(a[0], tostr(a[1]))
+}
+
+func b_open(a) {
+    let mode = a[1]
+    if (mode != "r" and mode != "w" and mode != "a") {
+        arg_error("open() mode '{mode}' is not supported", "Use \"r\", \"w\" or \"a\"")
+    }
+    return open(a[0], mode)
+}
+
+export func register_file() {
+    spec("open", 2, 2, "ss")
+    spec("close", 1, 1, "f")
+    spec("read", 1, 1, "f")
+    spec("read_line", 1, 1, "f")
+    spec("write", 2, 2, "fa")
+    spec("file_exists", 1, 1, "s")
+    spec("remove_file", 1, 1, "s")
+    spec("flush", 1, 1, "f")
+
+    HOST["open"] = open
+    HOST["close"] = close
+    HOST["read"] = read
+    HOST["read_line"] = read_line
+    HOST["file_exists"] = file_exists
+    HOST["remove_file"] = remove_file
+    HOST["flush"] = flush
+    IMPL["write"] = b_write
+    IMPL["open"] = b_open
+}

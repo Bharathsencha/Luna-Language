@@ -1,0 +1,218 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# unsafe_runtime.lu: unsafe blocks and raw pointers (rules R1-R12).
+
+use { is_int, repeat_list } from "value.lu"
+use { arg_error, rt_error, type_error } from "error.lu"
+use { RT } from "state.lu"
+
+let UNSAFE_DEFERS = []
+
+let NEXT_BASE = 1
+
+func unsafe_message(code) {
+    if (code == 1) { return "cannot take address_of() of a pointer value" }
+    if (code == 2) { return "pointer cannot escape the current unsafe block" }
+    if (code == 3) { return "ptr_add() moved outside the allocation bounds" }
+    if (code == 4) { return "pointer was freed or freed twice" }
+    if (code == 5) { return "address_of() only works on named values" }
+    if (code == 6) { return "nested unsafe blocks are not allowed" }
+    if (code == 7) { return "pointers cannot be stored inside GC-managed values" }
+    if (code == 8) { return "alloc() size must be a positive integer" }
+    if (code == 9) { return "ordered pointer comparisons need the same base allocation" }
+    if (code == 10) { return "pointers may only be cast to int" }
+    if (code == 11) { return "only builtin calls are allowed inside unsafe blocks" }
+    if (code == 12) { return "free() may not appear inside conditional control flow" }
+    return "unsafe error: pointer is not registered in the runtime"
+}
+
+func unsafe_hint(code) {
+    if (code == 1) { return "address_of() only works on normal values. If you already have a pointer, use it directly." }
+    if (code == 2) { return "Pointers must stay inside the current unsafe block. Copy the pointed-to value out instead." }
+    if (code == 3) { return "That pointer step moved past the allocated buffer. Keep ptr_add() within the allocated slot range." }
+    if (code == 4) { return "That pointer is no longer valid. Prefer defer(ptr) so cleanup happens once at block exit." }
+    if (code == 5) { return "address_of() needs a variable name such as address_of(x), not a temporary expression." }
+    if (code == 6) { return "Nested unsafe blocks are not supported. Merge the inner block into the outer one." }
+    if (code == 7) { return "Pointers cannot go into lists or maps because those values are GC-managed." }
+    if (code == 8) { return "alloc() needs a positive whole-number slot count, for example alloc(4)." }
+    if (code == 9) { return "Only compare pointers with <, >, <=, or >= when they come from the same allocation." }
+    if (code == 10) { return "Only int(ptr) is allowed for pointer casts." }
+    if (code == 11) { return "Inside unsafe, call builtins only. Move user-defined function calls outside the block." }
+    if (code == 12) { return "Do not put free(ptr) inside if/while/for/switch branches. Use defer(ptr) or free it unconditionally." }
+    return "Use a pointer returned by alloc(), address_of(), or ptr_add()."
+}
+
+export func unsafe_error(code) {
+    rt_error(unsafe_message(code), unsafe_hint(code))
+}
+
+export func unsafe_begin() {
+    if (RT.unsafe_depth > 0) {
+        unsafe_error(6)
+    }
+    RT.unsafe_depth = 1
+}
+
+export func unsafe_end() {
+    RT.unsafe_depth = 0
+    for (let p in UNSAFE_DEFERS) {
+        p.a.poisoned = true
+    }
+    UNSAFE_DEFERS = []
+}
+
+export func need_unsafe(fn_name) {
+    if (RT.unsafe_depth == 0) {
+        rt_error("{fn_name}() may only be used inside unsafe blocks", "Wrap pointer operations in unsafe \{ ... }")
+    }
+}
+
+export func is_registered_pointer(v) {
+    return type(v) == "map" and v["@k"] == "ptr" and not v.bad
+}
+
+export func ptr_address(p) {
+    return p.base * 1048576 + p.off * 16
+}
+
+# R7: a pointer may not be stored in a GC-managed value.
+export func ptr_store_check(v) {
+    if (RT.unsafe_depth > 0 and is_registered_pointer(v)) {
+        unsafe_error(7)
+    }
+}
+
+# R9: ordered comparison of pointers needs a single allocation.
+export func ptr_compare_check(a, b, op) {
+    if (not is_registered_pointer(a) or not is_registered_pointer(b)) {
+        return null
+    }
+    if (op == 0 or op == 1) {
+        return null
+    }
+    if (a.base != b.base) {
+        unsafe_error(9)
+    }
+}
+
+# R10: only int(ptr) may cast a pointer.
+export func ptr_cast_check(v, target) {
+    if (is_registered_pointer(v)) {
+        unsafe_error(10)
+    }
+}
+
+func new_pointer(kind, a, off, base, bad) {
+    return {"@k": "ptr", "kind": kind, "a": a, "off": off, "base": base, "bad": bad}
+}
+
+export func b_alloc(a) {
+    need_unsafe("alloc")
+    let n = a[0]
+    if (not is_int(n) or n <= 0) {
+        unsafe_error(8)
+    }
+    let alloc = {"cells": repeat_list(null, n), "init": repeat_list(false, n), "size": n, "poisoned": false}
+    let base = NEXT_BASE
+    NEXT_BASE += 1
+    return new_pointer("alloc", alloc, 0, base, false)
+}
+
+func pointer_arg(v) {
+    if (not is_registered_pointer(v)) {
+        unsafe_error(13)
+    }
+    return v
+}
+
+export func b_load(a) {
+    need_unsafe("load")
+    let p = pointer_arg(a[0])
+    if (p.kind == "alloc") {
+        if (p.a.poisoned) {
+            unsafe_error(4)
+        }
+        if (p.a.init[p.off]) {
+            return p.a.cells[p.off]
+        }
+        return null
+    }
+    return p.a[0]
+}
+
+export func b_store(a) {
+    need_unsafe("store")
+    let p = pointer_arg(a[0])
+    if (p.kind == "alloc" and p.a.poisoned) {
+        unsafe_error(4)
+    }
+    ptr_store_check(a[1])
+    if (p.kind == "alloc") {
+        p.a.cells[p.off] = a[1]
+        p.a.init[p.off] = true
+    } else {
+        p.a[0] = a[1]
+    }
+    return null
+}
+
+export func b_ptr_offset(a) {
+    need_unsafe("ptr_offset")
+    let p = a[0]
+    let n = a[1]
+    if (not is_registered_pointer(p) or not is_int(n)) {
+        type_error("ptr_add() expects a pointer and an integer offset", "Use ptr_add(buf, 1).")
+    }
+    if (p.kind == "alloc") {
+        if (p.off != 0) {
+            unsafe_error(13)
+        }
+        if (p.a.poisoned) {
+            unsafe_error(4)
+        }
+        if (n < 0 or n >= p.a.size) {
+            unsafe_error(3)
+        }
+        return new_pointer("alloc", p.a, n, p.base, false)
+    }
+    if (n == 0) {
+        return p
+    }
+    return new_pointer("addr", p.a, n, p.base, true)
+}
+
+func variable_base(b) {
+    if (len(b) == 1) {
+        append(b, NEXT_BASE)
+        NEXT_BASE += 1
+    }
+    return b[1]
+}
+
+export func address_of_var(b) {
+    if (is_registered_pointer(b[0])) {
+        unsafe_error(1)
+    }
+    return new_pointer("addr", b, 0, variable_base(b), false)
+}
+
+export func address_of_invalid(given) {
+    if (RT.unsafe_depth == 0) {
+        rt_error("address_of() may only be used inside unsafe blocks", "Wrap pointer operations in unsafe \{ ... }")
+    }
+    if (given != 1) {
+        arg_error("address_of() expects exactly 1 argument", "Use address_of(variableName)")
+    }
+    rt_error("address_of() only works on named values", "address_of() needs a variable name such as address_of(x), not a temporary expression.")
+}
+
+export func defer_pointer(v) {
+    if (RT.unsafe_depth > 0 and is_registered_pointer(v)) {
+        if (v.kind == "alloc") {
+            append(UNSAFE_DEFERS, v)
+        }
+        return null
+    }
+    arg_error("defer() expects a call expression", "Use defer(close(file)) or another function call to schedule cleanup")
+}

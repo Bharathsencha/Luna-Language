@@ -1,0 +1,859 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# parser.lu: tokens to AST.
+
+use { tokname } from "token.lu"
+use { lex, syntax_error } from "lexer.lu"
+
+let P_toks = []
+
+let P_pos = 0
+
+func p_at(t) {
+    return P_toks[P_pos].t == t
+}
+
+func p_next() {
+    let tk = P_toks[P_pos]
+    if (P_pos < len(P_toks) - 1) {
+        P_pos += 1
+    }
+    return tk
+}
+
+func p_eat(t) {
+    if (P_toks[P_pos].t == t) {
+        p_next()
+        return true
+    }
+    return false
+}
+
+func p_skip_nl() {
+    while (P_toks[P_pos].t == "nl") {
+        p_next()
+    }
+}
+
+# Reports a syntax error at the current token and stops.
+func p_fail(msg, hint) {
+    let tk = P_toks[P_pos]
+    syntax_error(tk.line, tk.col, msg, hint)
+}
+
+# Consumes a token of type t, or fails with the given message.
+func p_expect(t, msg) {
+    let tk = P_toks[P_pos]
+    if (tk.t != t) {
+        syntax_error(tk.line, tk.col, msg, "Expected {tokname(t)} but found {tokname(tk.t)}")
+    }
+    return p_next()
+}
+
+export func node(k, line) {
+    return {"k": k, "line": line}
+}
+
+# Parses expression text from inside a string with its own token stream.
+func parse_inline(text, line) {
+    let saved_toks = P_toks
+    let saved_pos = P_pos
+    P_toks = lex(text, line)
+    P_pos = 0
+    let e = p_expr()
+    p_skip_nl()
+    if (not p_at("eof")) {
+        syntax_error(line, 0, "Invalid expression inside string interpolation", "Use a valid Luna expression inside \{ ... }")
+    }
+    P_toks = saved_toks
+    P_pos = saved_pos
+    return e
+}
+
+func p_string(tk) {
+    let parts = tk.v
+    let has_expr = false
+    for (let part in parts) {
+        if (type(part) == "map") {
+            has_expr = true
+        }
+    }
+    if (not has_expr) {
+        let s = node("str", tk.line)
+        s.v = parts[0]
+        return s
+    }
+    let t = node("tmpl", tk.line)
+    let items = []
+    for (let part in parts) {
+        if (type(part) == "map") {
+            append(items, parse_inline(part.expr, part.line))
+        } else {
+            append(items, part)
+        }
+    }
+    t.parts = items
+    return t
+}
+
+func p_list_literal(line) {
+    let items = []
+    p_skip_nl()
+    if (not p_at("]")) {
+        let more = true
+        while (more) {
+            p_skip_nl()
+            append(items, p_expr())
+            p_skip_nl()
+            more = p_eat(",")
+        }
+    }
+    p_skip_nl()
+    p_expect("]", "Expected ']' at end of list")
+    let n = node("list", line)
+    n.items = items
+    return n
+}
+
+func p_map_literal(line) {
+    let keys = []
+    let vals = []
+    p_skip_nl()
+    if (not p_at("}")) {
+        let more = true
+        while (more) {
+            p_skip_nl()
+            if (not p_at("str")) {
+                p_fail("Map literal keys must be strings", "Use \{\"key\": value} for map literals")
+            }
+            let kt = p_next()
+            append(keys, kt.v[0])
+            p_expect(":", "Expected ':' after map key")
+            append(vals, p_expr())
+            p_skip_nl()
+            more = p_eat(",")
+        }
+    }
+    p_skip_nl()
+    p_expect("}", "Expected '}' at end of map literal")
+    let n = node("map", line)
+    n.keys = keys
+    n.vals = vals
+    return n
+}
+
+func p_func_rest(name, line) {
+    p_expect("(", "Expected '('")
+    let params = []
+    let defaults = []
+    let required = 0
+    if (not p_at(")")) {
+        let more = true
+        while (more) {
+            if (not p_at("id")) {
+                p_fail("Expected parameter name", "Function parameters must be valid identifiers, e.g., 'func add(a, b)'")
+            }
+            append(params, p_next().v)
+            if (p_eat("=")) {
+                append(defaults, p_expr())
+            } else {
+                append(defaults, null)
+                required += 1
+            }
+            more = p_eat(",")
+        }
+    }
+    p_expect(")", "Expected ')'")
+    p_expect("\{", "Expected '\{'")
+    let n = node("func", line)
+    n.name = name
+    n.params = params
+    n.defaults = defaults
+    n.required = required
+    n.body = p_block()
+    n.exported = false
+    return n
+}
+
+func p_primary() {
+    let tk = P_toks[P_pos]
+    let line = tk.line
+    let t = tk.t
+    if (t == "num") {
+        p_next()
+        let n = node("num", line)
+        n.v = tk.v
+        return n
+    }
+    if (t == "float") {
+        p_next()
+        let n = node("float", line)
+        n.v = tk.v
+        return n
+    }
+    if (t == "str") {
+        p_next()
+        return p_string(tk)
+    }
+    if (t == "char") {
+        p_next()
+        let n = node("char", line)
+        n.v = tk.v
+        return n
+    }
+    if (t == "true" or t == "false") {
+        p_next()
+        let n = node("bool", line)
+        n.v = t == "true"
+        return n
+    }
+    if (t == "id") {
+        p_next()
+        let n = node("id", line)
+        n.name = tk.v
+        return n
+    }
+    if (t == "box") {
+        p_next()
+        p_expect("[", "Expected '[' after 'box'")
+        let n = node("box", line)
+        n.size = p_expr()
+        p_expect("]", "Expected ']' after box size")
+        return n
+    }
+    if (t == "(") {
+        p_next()
+        let e = p_expr()
+        p_expect(")", "Expected ')' after expression")
+        return e
+    }
+    if (t == "[") {
+        p_next()
+        return p_list_literal(line)
+    }
+    if (t == "\{") {
+        p_next()
+        return p_map_literal(line)
+    }
+    if (t == "func") {
+        p_next()
+        return p_func_rest(null, line)
+    }
+    if (t == "input") {
+        p_next()
+        p_expect("(", "Expected '(' after input")
+        let n = node("input", line)
+        n.prompt = null
+        if (not p_at(")")) {
+            if (not p_at("str")) {
+                p_fail("Expected string prompt for input", "Use input(\"prompt\") to get user input with a message")
+            }
+            n.prompt = p_next().v[0]
+        }
+        p_expect(")", "Expected ')' after input")
+        return n
+    }
+    if (t == ";") {
+        p_fail("Unexpected semicolon ';'", "fucking noob")
+    }
+    p_fail("Unexpected token '{tokname(t)}'", "Expected an expression (number, string, variable, or '(')")
+}
+
+func p_postfix() {
+    let line = P_toks[P_pos].line
+    let e = p_primary()
+    while (true) {
+        if (p_eat("(")) {
+            let args = []
+            if (not p_at(")")) {
+                let more = true
+                while (more) {
+                    append(args, p_expr())
+                    more = p_eat(",")
+                }
+            }
+            p_expect(")", "Expected ')' after arguments")
+            let c = node("call", line)
+            c.callee = e
+            c.args = args
+            e = c
+        } else if (e.k == "id" and p_at("\{")) {
+            p_next()
+            let args = []
+            p_skip_nl()
+            if (not p_at("}")) {
+                let more = true
+                while (more) {
+                    p_skip_nl()
+                    append(args, p_expr())
+                    p_skip_nl()
+                    more = p_eat(",")
+                }
+            }
+            p_expect("}", "Expected '}' after typed constructor arguments")
+            let c = node("call", line)
+            c.callee = e
+            c.args = args
+            c.typed = true
+            e = c
+        } else if (p_eat("[")) {
+            let idx = p_expr()
+            p_expect("]", "Expected ']' after index")
+            let n = node("index", line)
+            n.target = e
+            n.index = idx
+            e = n
+        } else if (p_eat(".")) {
+            if (not p_at("id")) {
+                p_fail("Expected field name after '.'", "Use dot access like point.x")
+            }
+            let n = node("field", line)
+            n.target = e
+            n.field = p_next().v
+            e = n
+        } else if (p_at("++") or p_at("--")) {
+            let op = P_toks[P_pos].t
+            if (e.k != "id") {
+                p_next()
+                p_fail("'{op}' can only be applied to variables", "Use '{op}' only on variable names, e.g., 'count{op}'")
+            }
+            p_next()
+            let n = node("incdec", line)
+            n.name = e.name
+            n.op = op
+            e = n
+        } else {
+            break
+        }
+    }
+    return e
+}
+
+func p_unary() {
+    let line = P_toks[P_pos].line
+    if (p_eat("not")) {
+        let n = node("not", line)
+        n.e = p_unary()
+        return n
+    }
+    if (p_eat("-")) {
+        let r = p_unary()
+        if (r.k == "num") {
+            r.v = 0 - r.v
+            return r
+        }
+        if (r.k == "float") {
+            r.v = 0.0 - r.v
+            return r
+        }
+        let n = node("bin", line)
+        n.op = "-"
+        n.l = node("num", line)
+        n.l.v = 0
+        n.r = r
+        return n
+    }
+    if (p_eat("+")) {
+        return p_unary()
+    }
+    return p_postfix()
+}
+
+func has_op(ops, t) {
+    for (let o in ops) {
+        if (o == t) {
+            return true
+        }
+    }
+    return false
+}
+
+func p_binary_level(sub, ops) {
+    let line = P_toks[P_pos].line
+    let e = sub()
+    while (has_op(ops, P_toks[P_pos].t)) {
+        let op = p_next().t
+        let r = sub()
+        let n = node("bin", line)
+        n.op = op
+        n.l = e
+        n.r = r
+        e = n
+    }
+    return e
+}
+
+func p_mul() {
+    return p_binary_level(p_unary, ["*", "/", "%"])
+}
+
+func p_add() {
+    return p_binary_level(p_mul, ["+", "-"])
+}
+
+func p_cmp() {
+    return p_binary_level(p_add, ["<", ">", "<=", ">="])
+}
+
+func p_eq() {
+    return p_binary_level(p_cmp, ["==", "!="])
+}
+
+func p_and() {
+    return p_binary_level(p_eq, ["and"])
+}
+
+func p_expr() {
+    return p_binary_level(p_and, ["or"])
+}
+
+func p_block() {
+    let stmts = []
+    while (not p_at("}") and not p_at("eof")) {
+        if (p_eat("nl")) {
+            continue
+        }
+        append(stmts, p_statement())
+    }
+    p_expect("}", "Expected '}'")
+    return stmts
+}
+
+func p_declaration(is_const, is_export) {
+    let line = P_toks[P_pos].line
+    let names = []
+    let more = true
+    while (more) {
+        if (not p_at("id")) {
+            if (is_const) {
+                p_fail("Expected variable name after 'const' or ','", "Variables must be identifiers (e.g., let a, b, c)")
+            }
+            p_fail("Expected variable name after 'let' or ','", "Variables must be identifiers (e.g., let a, b, c)")
+        }
+        append(names, p_next().v)
+        more = p_eat(",")
+    }
+    let vals = []
+    if (p_eat("=")) {
+        more = true
+        while (more) {
+            append(vals, p_expr())
+            more = p_eat(",")
+        }
+    }
+    if (is_const and len(vals) != len(names)) {
+        p_fail("const declarations require an initializer for every name", "Use const x = value")
+    }
+    if (len(vals) > 0 and len(vals) != len(names)) {
+        p_fail("Variable count ({len(names)}) does not match value count ({len(vals)})", "Ensure you provide a value for every variable declared, or none at all.")
+    }
+    let lets = []
+    for (let i = 0; i < len(names); i++) {
+        let n = node("let", line)
+        n.name = names[i]
+        n.init = null
+        if (len(vals) > 0) {
+            n.init = vals[i]
+        }
+        n.is_const = is_const
+        n.exported = is_export
+        append(lets, n)
+    }
+    if (len(lets) == 1) {
+        return lets[0]
+    }
+    let g = node("group", line)
+    g.items = lets
+    return g
+}
+
+func p_if(line) {
+    p_expect("(", "Expected '(' after if")
+    let cond = p_expr()
+    p_expect(")", "Expected ')' after condition")
+    p_eat("nl")
+    p_expect("\{", "Expected '\{'")
+    let n = node("if", line)
+    n.cond = cond
+    n.then = p_block()
+    n.els = []
+    p_eat("nl")
+    if (p_eat("else")) {
+        p_eat("nl")
+        if (p_at("if")) {
+            n.els = [p_statement()]
+        } else {
+            p_expect("\{", "Expected '\{'")
+            n.els = p_block()
+        }
+    }
+    return n
+}
+
+func p_for(line) {
+    p_expect("(", "Expected '(' after for")
+    if (p_at("let")) {
+        p_next()
+        if (not p_at("id")) {
+            p_fail("Expected loop variable name in for-in loop", "Use for (let item in list) \{ ... }")
+        }
+        let name = p_next().v
+        if (p_eat("in")) {
+            let iter = p_expr()
+            p_expect(")", "Expected ')' after for-in iterable")
+            p_eat("nl")
+            p_expect("\{", "Expected '\{' for loop body")
+            let n = node("forin", line)
+            n.name = name
+            n.iter = iter
+            n.body = p_block()
+            return n
+        }
+        let init = node("let", line)
+        init.name = name
+        init.init = null
+        init.is_const = false
+        init.exported = false
+        if (p_eat("=")) {
+            init.init = p_expr()
+        }
+        return p_for_rest(line, init)
+    }
+    return p_for_rest(line, p_statement())
+}
+
+func p_for_rest(line, init) {
+    p_expect(";", "Expected ';' after loop initializer")
+    let cond = p_expr()
+    p_expect(";", "Expected ';' after loop condition")
+    let incr = p_statement()
+    p_expect(")", "Expected ')' after loop increment")
+    p_eat("nl")
+    p_expect("\{", "Expected '\{' for loop body")
+    let n = node("for", line)
+    n.init = init
+    n.cond = cond
+    n.incr = incr
+    n.body = p_block()
+    return n
+}
+
+func p_case_body() {
+    let body = []
+    while (not p_at("case") and not p_at("default") and not p_at("}")) {
+        if (p_eat("nl")) {
+            continue
+        }
+        append(body, p_statement())
+    }
+    return body
+}
+
+func p_switch(line) {
+    p_expect("(", "Expected '(' after switch")
+    let e = p_expr()
+    p_expect(")", "Expected ')'")
+    p_expect("\{", "Expected '\{' starting switch block")
+    let cases = []
+    let dflt = []
+    while (not p_at("}") and not p_at("eof")) {
+        let cline = P_toks[P_pos].line
+        if (p_eat("case")) {
+            let v = p_expr()
+            p_expect(":", "Expected ':' after case value")
+            let body = p_case_body()
+            append(cases, {"value": v, "body": body, "line": cline})
+        } else if (p_eat("default")) {
+            p_expect(":", "Expected ':' after default")
+            dflt = p_case_body()
+        } else if (p_eat("nl")) {
+            continue
+        } else {
+            p_fail("Expected 'case' or 'default' inside switch", "Switch blocks must contain 'case value:' or 'default:' statements")
+        }
+    }
+    p_expect("}", "Expected '}' ending switch")
+    let n = node("switch", line)
+    n.e = e
+    n.cases = cases
+    n.dflt = dflt
+    return n
+}
+
+func compound_op(t) {
+    if (t == "+=") {
+        return "+"
+    }
+    if (t == "-=") {
+        return "-"
+    }
+    if (t == "*=") {
+        return "*"
+    }
+    if (t == "/=") {
+        return "/"
+    }
+    return null
+}
+
+# target[index] = value  or  target.field = value, with an optional compound operator.
+func make_setidx(e, v, op, line) {
+    let n = node("setidx", line)
+    if (e.k == "index") {
+        n.target = e.target
+        n.index = e.index
+    } else {
+        n.target = e.target
+        n.index = node("str", line)
+        n.index.v = e.field
+    }
+    n.e = v
+    n.op = op
+    return n
+}
+
+func p_simple(line) {
+    let e = p_expr()
+    if (p_eat("=")) {
+        if (e.k == "id") {
+            let n = node("assign", line)
+            n.name = e.name
+            n.e = p_expr()
+            return n
+        }
+        if (e.k == "index" or e.k == "field") {
+            let v = p_expr()
+            return make_setidx(e, v, null, line)
+        }
+        p_fail("Invalid assignment target", "Assign to variables, indices, or fields like x = 5, arr[0] = 5, obj.name = 5")
+    }
+    let op = compound_op(P_toks[P_pos].t)
+    if (op != null) {
+        p_next()
+        let rhs = p_expr()
+        if (e.k == "id") {
+            let b = node("bin", line)
+            b.op = op
+            b.l = e
+            b.r = rhs
+            let n = node("assign", line)
+            n.name = e.name
+            n.e = b
+            return n
+        }
+        if (e.k == "index" or e.k == "field") {
+            return make_setidx(e, rhs, op, line)
+        }
+        p_fail("Invalid compound assignment target", "Use +=, -=, *=, /= with variables, indices, or fields")
+    }
+    return e
+}
+
+func p_typedef(line, word) {
+    let is_data = word == "data" or word == "template"
+    if (not p_at("id")) {
+        if (word == "template") {
+            p_fail("Expected template name after 'template'", "Use template Shape \{ field1, field2 }")
+        }
+        if (word == "data") {
+            p_fail("Expected data type name after 'data'", "Use data Shape \{ field1, field2 }")
+        }
+        p_fail("Expected bloc type name after 'bloc'", "Use bloc Vec2 \{ x, y }")
+    }
+    let n = node("typedef", line)
+    n.name = p_next().v
+    n.word = word
+    n.fields = []
+    n.exported = false
+    if (is_data) {
+        p_expect("\{", "Expected '\{' after data type name")
+    } else {
+        p_expect("\{", "Expected '\{' after bloc type name")
+    }
+    while (not p_at("}")) {
+        p_skip_nl()
+        if (not p_at("id")) {
+            if (is_data) {
+                p_fail("Expected field name in data declaration", "Use comma-separated identifiers inside data \{ ... }")
+            }
+            p_fail("Expected field name in bloc declaration", "Use comma-separated identifiers inside bloc \{ ... }")
+        }
+        append(n.fields, p_next().v)
+        p_skip_nl()
+        if (not p_eat(",")) {
+            break
+        }
+    }
+    if (is_data) {
+        p_expect("}", "Expected '}' after data fields")
+    } else {
+        p_expect("}", "Expected '}' after bloc fields")
+    }
+    return n
+}
+
+func mark_exported(n) {
+    if (n.k == "let" or n.k == "func" or n.k == "typedef") {
+        n.exported = true
+    } else if (n.k == "group") {
+        for (let item in n.items) {
+            mark_exported(item)
+        }
+    }
+}
+
+func p_use(line) {
+    let n = node("use", line)
+    n.names = []
+    if (p_at("str")) {
+        n.path = p_next().v[0]
+        return n
+    }
+    p_expect("\{", "Expected '\{' or string path after use")
+    while (not p_at("}") and not p_at("eof")) {
+        if (not p_at("id")) {
+            p_fail("Expected exported name inside use list", "Use syntax like use \{greet, answer} from \"module.lu\"")
+        }
+        append(n.names, p_next().v)
+        if (not p_eat(",")) {
+            break
+        }
+    }
+    p_expect("}", "Expected '}' after use list")
+    p_expect("from", "Expected 'from' after use list")
+    if (not p_at("str")) {
+        p_fail("Expected string path after from", "Use syntax like use \{greet} from \"module.lu\"")
+    }
+    n.path = p_next().v[0]
+    return n
+}
+
+func p_statement() {
+    let tk = P_toks[P_pos]
+    let line = tk.line
+    let t = tk.t
+    if (t == "func") {
+        p_next()
+        if (not p_at("id")) {
+            p_fail("Expected function name after 'func'", "Use 'func functionName(params) \{ ... }' to define a function")
+        }
+        let name = p_next().v
+        return p_func_rest(name, line)
+    }
+    if (t == "data" or t == "template" or t == "bloc") {
+        p_next()
+        return p_typedef(line, t)
+    }
+    if (t == "let" or t == "const") {
+        p_next()
+        return p_declaration(t == "const", false)
+    }
+    if (t == "export") {
+        p_next()
+        let n = p_statement()
+        if (n.k != "let" and n.k != "func" and n.k != "group" and n.k != "typedef") {
+            fail_export(line)
+        }
+        mark_exported(n)
+        return n
+    }
+    if (t == "use") {
+        p_next()
+        return p_use(line)
+    }
+    if (t == "import") {
+        p_next()
+        if (not p_at("str")) {
+            p_fail("Expected string path after import", "Use import \"path/to/file.lu\"")
+        }
+        let n = node("use", line)
+        n.names = []
+        n.path = p_next().v[0]
+        return n
+    }
+    if (t == "unsafe") {
+        p_next()
+        p_eat("nl")
+        p_expect("\{", "Expected '\{' after unsafe")
+        let n = node("unsafe", line)
+        n.body = p_block()
+        return n
+    }
+    if (t == "print") {
+        p_next()
+        p_expect("(", "Expected '(' after print")
+        let args = []
+        if (not p_at(")")) {
+            let more = true
+            while (more) {
+                append(args, p_expr())
+                more = p_eat(",")
+            }
+        }
+        p_expect(")", "Expected ')' after print args")
+        let n = node("print", line)
+        n.args = args
+        return n
+    }
+    if (t == "return") {
+        p_next()
+        let n = node("return", line)
+        n.e = null
+        if (not p_at("}")) {
+            n.e = p_expr()
+        }
+        return n
+    }
+    if (t == "break") {
+        p_next()
+        return node("break", line)
+    }
+    if (t == "continue") {
+        p_next()
+        return node("continue", line)
+    }
+    if (t == "if") {
+        p_next()
+        return p_if(line)
+    }
+    if (t == "while") {
+        p_next()
+        p_expect("(", "Expected '(' after while")
+        let cond = p_expr()
+        p_expect(")", "Expected ')'")
+        p_eat("nl")
+        p_expect("\{", "Expected '\{'")
+        let n = node("while", line)
+        n.cond = cond
+        n.body = p_block()
+        return n
+    }
+    if (t == "for") {
+        p_next()
+        return p_for(line)
+    }
+    if (t == "switch") {
+        p_next()
+        return p_switch(line)
+    }
+    return p_simple(line)
+}
+
+func fail_export(line) {
+    syntax_error(line, 0, "export can only be used with let, const, func, data, or bloc declarations", "Use export let, export func, export data, or export bloc at module top level")
+}
+
+# Parses a whole file into a list of statements.
+export func parse_program(toks) {
+    P_toks = toks
+    P_pos = 0
+    let stmts = []
+    while (not p_at("eof")) {
+        if (p_eat("nl")) {
+            continue
+        }
+        append(stmts, p_statement())
+    }
+    return stmts
+}

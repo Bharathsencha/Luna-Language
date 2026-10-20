@@ -270,11 +270,11 @@ lunac: $(BINDIR)/$(TARGET)
 test-lunac: $(BINDIR)/$(TARGET)
 	@compiler/run_tests.sh
 
-# luna_in_luna.lu: the language implemented in Luna, compiled with lunac and
+# src/main.lu: the language implemented in Luna, compiled with lunac and
 # checked against the bytecode VM on every test program.
 test-lil: $(BINDIR)/$(TARGET)
 	@mkdir -p $(LUNAC_DIR)
-	@compiler/lunac.sh luna_in_luna.lu $(LUNAC_DIR)/lil
+	@compiler/lunac.sh src/main.lu $(LUNAC_DIR)/lil
 	@LUNA_IN_LUNA_BIN=$(LUNAC_DIR)/lil compiler/run_interp_tests.sh
 
 .PHONY: lunac test-lunac test-lil all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun

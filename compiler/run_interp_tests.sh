@@ -1,5 +1,5 @@
 #!/bin/sh
-# Differential test of luna_in_luna.lu: each program runs on the bytecode VM
+# Differential test of src/main.lu: each program runs on the bytecode VM
 # directly and through the interpreter written in Luna (also on the VM, or as a
 # compiled binary when LUNA_IN_LUNA_BIN is set). stdout, stderr and the exit
 # code must match. "# CASE" files run case by case.
@@ -17,7 +17,7 @@ run_interp() {
     if [ -n "$LUNA_IN_LUNA_BIN" ]; then
         timeout $LIMIT "$LUNA_IN_LUNA_BIN" "$1"
     else
-        timeout $LIMIT "$ROOT/bin/luna" "$ROOT/luna_in_luna.lu" "$1"
+        timeout $LIMIT "$ROOT/bin/luna" "$ROOT/src/main.lu" "$1"
     fi
 }
 

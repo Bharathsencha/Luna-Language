@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# string_lib.lu: string builtins.
+
+use { tostr } from "value.lu"
+use { HOST, IMPL, spec } from "library.lu"
+
+func b_join(a) {
+    let parts = []
+    for (let x in a[0]) {
+        append(parts, tostr(x))
+    }
+    return join(parts, a[1])
+}
+
+func b_format(a) {
+    let f = a[0]
+    let out = []
+    let next = 1
+    let n = len(f)
+    let i = 0
+    while (i < n) {
+        if (f[i] == '\{' and i + 1 < n and f[i + 1] == '}' and next < len(a)) {
+            append(out, tostr(a[next]))
+            next += 1
+            i += 2
+        } else {
+            append(out, "{f[i]}")
+            i += 1
+        }
+    }
+    return join(out, "")
+}
+
+export func register_string() {
+    spec("is_empty", 1, 1, "s")
+    spec("concat", 2, 2, "ss")
+    spec("substring", 3, 3, "sii")
+    spec("char_at", 2, 2, "si")
+    spec("index_of", 2, 2, "ss")
+    spec("last_index_of", 2, 2, "ss")
+    spec("contains", 2, 2, "ss")
+    spec("starts_with", 2, 2, "ss")
+    spec("ends_with", 2, 2, "ss")
+    spec("to_upper", 1, 1, "s")
+    spec("to_lower", 1, 1, "s")
+    spec("trim", 1, 1, "s")
+    spec("trim_left", 1, 1, "s")
+    spec("trim_right", 1, 1, "s")
+    spec("replace", 3, 3, "sss")
+    spec("reverse", 1, 1, "s")
+    spec("repeat", 2, 2, "si")
+    spec("pad_left", 3, 3, "sis")
+    spec("pad_right", 3, 3, "sis")
+    spec("format", 1, 99, "s")
+    spec("split", 2, 2, "ss")
+    spec("join", 2, 2, "ls")
+    spec("is_digit", 1, 1, "s")
+    spec("is_alpha", 1, 1, "s")
+    spec("is_alnum", 1, 1, "s")
+    spec("is_space", 1, 1, "s")
+
+    HOST["concat"] = concat
+    HOST["char_at"] = char_at
+    HOST["contains"] = contains
+    HOST["ends_with"] = ends_with
+    HOST["index_of"] = index_of
+    HOST["last_index_of"] = last_index_of
+    HOST["is_alnum"] = is_alnum
+    HOST["is_alpha"] = is_alpha
+    HOST["is_digit"] = is_digit
+    HOST["is_empty"] = is_empty
+    HOST["is_space"] = is_space
+    HOST["pad_left"] = pad_left
+    HOST["pad_right"] = pad_right
+    HOST["repeat"] = repeat
+    HOST["replace"] = replace
+    HOST["reverse"] = reverse
+    HOST["split"] = split
+    HOST["starts_with"] = starts_with
+    HOST["substring"] = substring
+    HOST["to_lower"] = to_lower
+    HOST["to_upper"] = to_upper
+    HOST["trim"] = trim
+    HOST["trim_left"] = trim_left
+    HOST["trim_right"] = trim_right
+    IMPL["join"] = b_join
+    IMPL["format"] = b_format
+}
