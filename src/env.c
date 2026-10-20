@@ -9,7 +9,7 @@
 #include "luna_error.h"
 
 // Increased size and switched to power of 2 for better hash distribution
-#define TABLE_SIZE 512
+#define TABLE_SIZE 1024
 
 // Structure to hold a variable name and its current value
 typedef struct {
