@@ -257,4 +257,24 @@ zig-test:
 	cd zig-test && ZIG_GLOBAL_CACHE_DIR=.zig-global-cache zig build test --cache-dir .zig-cache
 	@echo "Zig test passed. No errors found."
 
-.PHONY: all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun
+# lunac: the Luna compiler written in Luna. Builds it with itself (stage 1 runs
+# on the VM, stage 2 is the compiled result) and checks that both emit the same C.
+LUNAC_DIR = bin/lunac
+lunac: $(BINDIR)/$(TARGET)
+	@mkdir -p $(LUNAC_DIR)
+	@compiler/lunac.sh compiler/lunac.lu $(LUNAC_DIR)/lunac1
+	@$(LUNAC_DIR)/lunac1 compiler/lunac.lu $(LUNAC_DIR)/lunac2.c
+	@cmp $(LUNAC_DIR)/lunac1.c $(LUNAC_DIR)/lunac2.c
+	@echo "lunac: self-hosted, stage 1 and stage 2 emit identical C ($(LUNAC_DIR)/lunac1)"
+
+test-lunac: $(BINDIR)/$(TARGET)
+	@compiler/run_tests.sh
+
+# luna_in_luna.lu: the language implemented in Luna, compiled with lunac and
+# checked against the bytecode VM on every test program.
+test-lil: $(BINDIR)/$(TARGET)
+	@mkdir -p $(LUNAC_DIR)
+	@compiler/lunac.sh luna_in_luna.lu $(LUNAC_DIR)/lil
+	@LUNA_IN_LUNA_BIN=$(LUNAC_DIR)/lil compiler/run_interp_tests.sh
+
+.PHONY: lunac test-lunac test-lil all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun

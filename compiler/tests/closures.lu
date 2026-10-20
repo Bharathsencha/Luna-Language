@@ -1,0 +1,45 @@
+func make_counter(start) {
+    let n = start
+    return func() {
+        n += 1
+        return n
+    }
+}
+let a = make_counter(10)
+let b = make_counter(100)
+print(a(), a(), b(), a())
+
+func adder(x) {
+    return func(y) {
+        return func(z) {
+            return x + y + z
+        }
+    }
+}
+print(adder(1)(2)(3))
+
+func defaults(a, b = a * 2, c = b + 1) {
+    return [a, b, c]
+}
+print(defaults(1))
+print(defaults(1, 5))
+print(defaults(1, 5, 9))
+
+let compose = func(f, g) {
+    return func(x) {
+        return f(g(x))
+    }
+}
+let inc = func(x) { return x + 1 }
+let dbl = func(x) { return x * 2 }
+print(compose(inc, dbl)(5))
+print(map([1, 2, 3], compose(dbl, inc)))
+print(reduce([1, 2, 3, 4], func(acc, x) { return acc + x }, 0))
+print(filter([1, 2, 3, 4, 5, 6], func(x) { return x % 2 == 0 }))
+
+let x = 1
+func shadow() {
+    let x = 2
+    return x
+}
+print(shadow(), x)

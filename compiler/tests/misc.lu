@@ -1,0 +1,45 @@
+func main() {
+    print("in main")
+}
+let g = 0
+func bump() {
+    g += 1
+    return g
+}
+bump()
+bump()
+print(g)
+
+let m = {"a": 1}
+m["b"] = 2
+m.c = 3
+print(len(m), map_has(m, "b"), map_get(m, "z"))
+let ks = map_keys(m)
+sort(ks)
+print(ks)
+map_delete(m, "a")
+print(len(m), map_get(m, "b"))
+let nested = {"list": [1, 2, {"deep": true}]}
+print(nested["list"][2]["deep"], nested.list[0])
+let grid = [[0, 0], [0, 0]]
+grid[1][0] = 5
+print(grid)
+let l = [3, 1, 2]
+sort(l)
+print(l, find(l, 2), find(l, 9), remove(l, 0), l)
+print(range(5), range(2, 8, 2), range(5, 0, -2))
+print(min(3, 1), max(2.5, 1), abs(-4), abs(-2.5), clamp(15, 0, 10), sign(-3))
+print(floor(2.7), ceil(2.1), round(2.5), round(-2.5), sqrt(16), pow(2, 10), trunc(-2.7))
+print(type(1), type(1.5), type("s"), type(true), type(null), type([]), type({}), type(print_it))
+func print_it() {
+    return 1
+}
+print(is_empty(""), is_empty([]), concat("a", "b"))
+let big = 9223372036854775807
+print(big, big - 1)
+print(1 == 1.0, 2 < 2.5)
+print(len([1, 2, 3]), len("héllo"))
+print(exit_code_test())
+func exit_code_test() {
+    return clock() >= 0.0
+}

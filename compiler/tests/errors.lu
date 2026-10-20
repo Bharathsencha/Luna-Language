@@ -1,0 +1,169 @@
+# CASE add string int
+print("a" + 1)
+# CASE add int string
+print(1 + "a")
+# CASE add null
+print(null + 1)
+# CASE add bool
+print(1 + true)
+# CASE sub strings
+print("a" - "b")
+# CASE mul list
+print([1] * 3)
+# CASE div zero int
+print(1 / 0)
+# CASE div zero float
+print(1.5 / 0.0)
+# CASE mod zero
+print(5 % 0)
+# CASE overflow add
+print(9223372036854775807 + 1)
+# CASE overflow mul
+print(9223372036854775807 * 2)
+# CASE compare mixed
+print(1 == "1")
+# CASE order mixed
+print(1 < "a")
+# CASE order list
+print([1] < [2])
+# CASE cond int
+if (1) { print("x") }
+# CASE cond string
+while ("a") { print("x") }
+# CASE not int
+print(not 5)
+# CASE and int
+print(1 and true)
+# CASE undefined var
+print(nope)
+# CASE undefined call
+nope(1)
+# CASE call non-function
+let x = 5
+x(1)
+# CASE arity user few
+func f(a, b) { return a }
+f(1)
+# CASE arity user many
+func f(a) { return a }
+f(1, 2, 3)
+# CASE arity builtin
+print(len())
+# CASE len int
+print(len(5))
+# CASE index oob list
+let l = [1, 2]
+print(l[5])
+# CASE index neg oob
+let l = [1, 2]
+print(l[-3])
+# CASE index oob string
+print("abc"[10])
+# CASE index set oob
+let l = [1]
+l[3] = 1
+# CASE index non-int
+let l = [1]
+print(l["a"])
+# CASE index int
+print(5[0])
+# CASE map non-string key
+let m = {"a": 1}
+print(m[1])
+# CASE field of int
+let x = 5
+print(x.y)
+# CASE assign field of int
+let x = 5
+x.y = 1
+# CASE append non-list
+append(5, 1)
+# CASE remove oob
+let l = [1]
+remove(l, 4)
+# CASE range zero step
+print(range(1, 5, 0))
+# CASE sqrt string
+print(sqrt("a"))
+# CASE to_int bad
+print(to_int(5))
+# CASE substring bad
+print(substring(5, 0, 1))
+# CASE assert false
+assert(1 == 2)
+# CASE assert arity
+assert(true, "msg")
+# CASE exit code
+print("before")
+exit(3)
+print("after")
+# CASE error in function
+func f(x) {
+    return x + "a"
+}
+print(f(1))
+# CASE error in closure
+let g = func() { return 1 / 0 }
+g()
+# CASE error after output
+print("one")
+print("two")
+print(1 / 0)
+# CASE deep recursion
+func r(n) { return r(n + 1) }
+r(0)
+# CASE for-in int
+for (let x in 5) { print(x) }
+# CASE for-in map
+for (let x in {"a": 1}) { print(x) }
+# CASE switch mismatch
+switch (1) {
+    case "a":
+        print(1)
+}
+# CASE string compare chars
+print('a' < 'b', 'a' == 'a')
+# CASE char plus
+print('a' + 'b')
+# CASE negate string
+print(-"a")
+# CASE neg overflow
+let m = -9223372036854775807 - 1
+print(-m)
+# CASE input none
+print(type(5.5), type(5))
+print(float("x"))
+# CASE file missing
+let f = open("/nonexistent/file", "r")
+print(f)
+print(f == null)
+# CASE const reassign
+const k = 1
+k = 2
+print(k)
+# CASE main runs
+func main() {
+    print("main ran")
+}
+print("top")
+# CASE interp error
+let n = null
+print("v={n + 1}")
+# CASE list sort mixed
+let l = [3, "a", 1]
+sort(l)
+print(l)
+# CASE nested call arity
+func f(a) { return a }
+print(f(f()))
+# CASE call result null
+func f() { }
+print(f(), f() == null)
+# CASE return bare
+func f(a) {
+    if (a > 0) {
+        return
+    }
+    return 2
+}
+print(f(1), f(0))

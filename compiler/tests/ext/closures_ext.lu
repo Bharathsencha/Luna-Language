@@ -1,0 +1,25 @@
+# Behaviour the bytecode VM gets wrong, checked against compiler/tests/ext/closures_ext.golden.
+# Each iteration of a loop body has its own variables, so closures keep their own value.
+let fns = []
+for (let i = 0; i < 3; i++) {
+    let j = i * 10
+    append(fns, func() { return j })
+}
+for (let f in fns) {
+    print(f())
+}
+
+func outer() {
+    let total = 0
+    func inner(k) {
+        total += k
+        if (k > 0) {
+            inner(k - 1)
+        }
+    }
+    inner(4)
+    return total
+}
+print(outer())
+
+# A function defined inside a function can call itself.

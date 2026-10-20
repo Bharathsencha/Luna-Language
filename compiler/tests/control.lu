@@ -1,0 +1,86 @@
+func classify(n) {
+    switch (n) {
+        case 1:
+            return "one"
+        case 2:
+        case 3:
+            return "two or three"
+        default:
+            return "many"
+    }
+}
+print(classify(1), classify(2), classify(3), classify(9))
+
+let out = []
+for (let i = 0; i < 10; i++) {
+    switch (i % 3) {
+        case 0:
+            continue
+        case 1:
+            if (i > 6) {
+                break
+            }
+            append(out, i)
+            break
+        default:
+            append(out, 100 + i)
+    }
+    if (i == 8) {
+        break
+    }
+}
+print(out)
+
+let k = 0
+let seen = []
+while (k < 20) {
+    k += 1
+    if (k % 2 == 0) {
+        continue
+    }
+    if (k > 11) {
+        break
+    }
+    append(seen, k)
+}
+print(seen)
+
+for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+        if (j == 2) {
+            break
+        }
+        if (i == 1) {
+            continue
+        }
+        print("{i},{j}")
+    }
+}
+
+let t = true
+let f = false
+print(t and f, t or f, not t)
+print(1 > 2 or 3 > 2)
+let calls = []
+func mark(v) {
+    append(calls, v)
+    return v
+}
+let r = mark(false) and mark(true)
+let r2 = mark(true) or mark(false)
+print(calls)
+
+let count = 0
+for (let c in "hello") {
+    if (c == 'l') {
+        count++
+    }
+}
+print(count)
+let i2 = 5
+i2--
+i2 += 10
+i2 -= 3
+i2 *= 2
+print(i2, i2 / 4, i2 % 5)
+print(7 / 2, -7 / 2, 7 / 2.0, 7.5 - 2)

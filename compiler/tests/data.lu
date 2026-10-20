@@ -1,0 +1,49 @@
+data Point { x, y }
+template Player { name, hp, pos }
+bloc Vec2 { x, y }
+
+let p = Point(3, 4)
+p.x = 9
+print(p.x, p.y, shape(p), type(p))
+print(p.x)
+
+let hero = Player("Astra", 100, [0, 0])
+hero.hp -= 20
+hero.hp = hero.hp + 5
+print(hero.hp, hero.name, hero)
+hero["name"] = "Nova"
+print(hero["name"], len(hero))
+
+let a = Vec2{1, 2}
+let b = Vec2{1, 2}
+print(a == b, a != Vec2{2, 1})
+print(a.x + b.y, shape(a), type(a))
+print(a)
+
+func scale(v, k) {
+    return Vec2{v.x * k, v.y * k}
+}
+print(scale(a, 3))
+
+let buf = box[8]
+buf[0] = 255
+buf[-1] = 7
+print(buf[0], buf[7], buf.len, buf)
+free(buf)
+print(buf)
+
+func work() {
+    let tmp = box[4]
+    tmp[1] = 5
+    return tmp[1]
+}
+print(work(), work())
+
+template Packet { bytes }
+func make() {
+    let b = box[2]
+    b[0] = 9
+    return Packet(b)
+}
+let pk = make()
+print(pk.bytes[0], pk.bytes.len)

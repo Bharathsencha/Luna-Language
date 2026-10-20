@@ -1,0 +1,26 @@
+let s = "Hello, \"Luna\"!\tTab\\Back"
+print(s)
+print(len(s))
+let name = "Astra"
+let hp = 125
+print("{name} has {hp + 1} hp; list={[1, 2, 3][1]}; esc=\{x\}")
+print("a" + "b" + "c")
+print(to_upper("abc"), to_lower("ABC"), trim("  x  "))
+print(substring("abcdef", 2, 3), slice("abcdef", 1, 4))
+print(split("a,b,,c", ","))
+print(join(["x", "y", "z"], "-"))
+print(replace("banana", "an", "AN"))
+print(contains("hello", "ell"), starts_with("hello", "he"), ends_with("hello", "lo"))
+print(index_of("hello", "l"), last_index_of("hello", "l"))
+print(pad_left("5", 3, "0"), pad_right("5", 3, "."))
+print(repeat("ab", 3), reverse("abc"))
+print("abc"[0], "abc"[-1], 'x', type('x'))
+print("a" < "b", "b" < "a", 'a' < 'b')
+print(to_int("42") + 1, to_float("1.5") * 2, int(3.9), float(2))
+print(format("{} + {} = {}", 1, 2, 3))
+let multi = "line1
+line2"
+print(multi)
+print(1.5, 2.0, 1.0 / 3.0, 100.0 * 1.1)
+print(10 == 10, "a" == "a", null == null, null != 1)
+print([1, [2, 3], "x", 'c', 1.5, true, null])
