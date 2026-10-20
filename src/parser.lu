@@ -2,12 +2,14 @@
 # Copyright (c) 2026 Bharath
 #
 # parser.lu: tokens to AST.
+#
+# Follows src/parser.c: the same grammar, the same error messages and hints.
+# Nodes are maps with a "k" kind and a "line".
 
 use { tokname } from "token.lu"
 use { lex, syntax_error } from "lexer.lu"
 
 let P_toks = []
-
 let P_pos = 0
 
 func p_at(t) {

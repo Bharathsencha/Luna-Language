@@ -2,6 +2,10 @@
 # Copyright (c) 2026 Bharath
 #
 # value.lu: value kinds, to-string, equality and arithmetic.
+#
+# The interpreted program's ints, floats, strings, chars, bools, null, lists and
+# maps are host values. Any other value is a map whose "@k" key names its kind:
+#   fn, native, bloctype, bloc, dtype, tpl, box, ptr
 
 use { rt_error, type_error } from "error.lu"
 use { HOOK } from "state.lu"
@@ -27,7 +31,6 @@ func hook_box_text(b) {
 }
 
 let MAX_INT = 9223372036854775807
-
 let MIN_INT = -9223372036854775807 - 1
 
 export func vkind(v) {

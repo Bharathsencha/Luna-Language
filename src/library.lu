@@ -2,6 +2,12 @@
 # Copyright (c) 2026 Bharath
 #
 # library.lu: builtin tables, argument checks and the core builtins.
+#
+# SPEC gives each builtin's argument count and a letter per argument:
+#   a any, s string (a char is accepted), i int, n number, l list, m map, f file.
+# Builtins that touch the interpreter's own value kinds are written out in the
+# *_lib.lu files; the rest call the host's builtin of the same name (HOST).
+# Each *_lib.lu file has a register_*() that fills SPEC, HOST and IMPL.
 
 use { is_int, is_num, tname, tostr, type_name, vkind } from "value.lu"
 use { arg_error, fail, out_line, out_text, rt_error, type_error } from "error.lu"
@@ -11,9 +17,7 @@ use { is_registered_pointer, ptr_address, ptr_cast_check } from "unsafe_runtime.
 use { RT } from "state.lu"
 
 export let SPEC = {}
-
 export let HOST = {}
-
 export let IMPL = {}
 
 export func spec(name, lo, hi, kinds) {

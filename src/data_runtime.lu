@@ -10,13 +10,9 @@ use { ptr_store_check } from "unsafe_runtime.lu"
 use { RT } from "state.lu"
 
 let BLOCS = {}
-
 let SCHEMAS = {}
-
 let TYPE_HINT_BLOC = "A bloc holds at most 32 bytes of unique fields; each name keeps one field list"
-
 let TYPE_HINT_DATA = "Each data or template name must keep one field list"
-
 let BLOC_CONSTRUCT_HINT = "Bloc values must stay inline and only use int, float, bool, char, or nested blocs"
 
 # Defines a data, template or bloc type. Done for every top-level definition

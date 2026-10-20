@@ -2,13 +2,16 @@
 # Copyright (c) 2026 Bharath
 #
 # unsafe_runtime.lu: unsafe blocks and raw pointers (rules R1-R12).
+#
+# A pointer is {"@k": "ptr", "kind": "alloc" or "addr", "a": the allocation or
+# the variable's box, "off": cell offset, "base": numeric base, "bad": true for
+# an address that points into nothing}.
 
 use { is_int, repeat_list } from "value.lu"
 use { arg_error, rt_error, type_error } from "error.lu"
 use { RT } from "state.lu"
 
 let UNSAFE_DEFERS = []
-
 let NEXT_BASE = 1
 
 func unsafe_message(code) {

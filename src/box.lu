@@ -9,13 +9,9 @@ use { need_unsafe, ptr_store_check, unsafe_error } from "unsafe_runtime.lu"
 use { RT } from "state.lu"
 
 let BOX_MAX = 4096
-
 let BOX_SLOTS = []         # slot maps, created on demand
-
 let BOX_FREE = []          # indexes of free slots
-
 let BOX_LIVE = {}          # handle -> true (live) or false (freed)
-
 let BOX_HINT = "Use box[n] with n between 1 and 4096; at most 4096 boxes can be live at once"
 
 func box_handle(index, gen) {

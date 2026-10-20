@@ -6,7 +6,6 @@
 use { RT } from "state.lu"
 
 let OUT = null
-
 let ERRS = null
 
 # Output goes through streams of our own, flushed on every write, so stdout and

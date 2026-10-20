@@ -34,7 +34,6 @@ func split_lines(text) {
 }
 
 export let MODULES = {}
-
 let MODULE_COUNT = 0
 
 func path_dir(p) {

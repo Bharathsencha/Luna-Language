@@ -11,20 +11,25 @@ use { box_release, container_check, global_store_check } from "box.lu"
 use { unsafe_error } from "unsafe_runtime.lu"
 use { HOOK, RT } from "state.lu"
 
+# Late-bound: library.lu imports this file, so main.lu registers call_builtin.
 func hook_call_builtin(name, args) {
     let f = HOOK["call_builtin"]
     return f(name, args)
 }
 
 let CALL_DEPTH = 0         # nested user function calls
-
 let CALL_LIMIT = 4096
+export let EV = {}         # expression handlers, filled in by main.lu
+export let EX = {}         # statement handlers, filled in by main.lu
+export let NATIVES = {}    # builtin name -> value
 
-export let EV = {}                # expression handlers, filled in at the end of the file
+# Statement results: 0 normal, 1 break, 2 continue, 3 return.
 
-export let EX = {}                # statement handlers
-
-export let NATIVES = {}           # builtin name -> value
+# Scopes -------------------------------------------------------------------
+#
+# A scope is a map. "@p" is its parent, "@g" marks a module's global scope, "@d"
+# holds deferred calls and "@b" the boxes made in it. Each variable is stored as
+# a one-element list [value], so closures and pointers share it.
 
 export func scope_find(sc, name) {
     let s = sc
