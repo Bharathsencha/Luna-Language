@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 4:
+  ordered pointer comparisons need the same base allocation
+
+   4 |     let bad = a < b
+
+Hint: Only compare pointers with <, >, <=, or >= when they come from the same allocation.

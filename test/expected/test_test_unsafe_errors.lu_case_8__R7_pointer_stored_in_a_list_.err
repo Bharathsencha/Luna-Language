@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 3:
+  pointers cannot be stored inside GC-managed values
+
+   3 |     let l = [a]
+
+Hint: Pointers cannot go into lists or maps because those values are GC-managed.

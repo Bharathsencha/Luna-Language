@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  cannot use '+' on string and int
+
+   1 | let s = "a" + 1
+
+Hint: Both sides must be numbers, or both strings. Build text with "{x}" or to_string(x).

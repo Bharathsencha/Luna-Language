@@ -5,9 +5,10 @@
 #
 # Every Luna value is an LV in memory (%LV = { i64 tag, i64 payload }). An expression
 # compiles to the name of a pointer to its LV. Runtime calls that take or return an
-# LV go through the pointer wrappers in compiler/runtime/luna_rt_ir.c.
+# LV go through the pointer entry points (lvp_*) of the runtime, which is written in
+# Luna: compiler/runtime/luna_rt_*.lu.
 
-use { MODULES, MOD_LIST, uid } from "cstate.lu"
+use { MODULES, MOD_LIST, uid } from "shared.lu"
 use { ST } from "state.lu"
 
 export let LL_STRS = []        # private string constants

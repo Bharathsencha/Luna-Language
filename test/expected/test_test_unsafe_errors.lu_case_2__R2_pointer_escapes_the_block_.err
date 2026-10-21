@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 4:
+  pointer cannot escape the current unsafe block
+
+   4 |     g = a
+
+Hint: Pointers must stay inside the current unsafe block. Copy the pointed-to value out instead.

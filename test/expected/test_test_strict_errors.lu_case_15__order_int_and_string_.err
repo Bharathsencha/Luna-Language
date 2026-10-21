@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  cannot order int and string with <, <=, > or >=
+
+   1 | let s = 1 < "a"
+
+Hint: Ordering works on two numbers, two strings or two chars.

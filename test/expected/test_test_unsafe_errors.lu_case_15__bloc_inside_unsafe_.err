@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 3:
+  box and bloc values are not allowed inside unsafe blocks
+
+   3 |     let v = V{1}
+
+Hint: Bloc values must stay inline and only use int, float, bool, char, or nested blocs

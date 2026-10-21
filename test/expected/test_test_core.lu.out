@@ -1,0 +1,21 @@
+=== Running Core Language Tests ===
+
+[1] Testing Variables & Types...
+  ✓ Variables & Types passed
+
+[2] Testing IF/ELSE...
+  ✓ IF/ELSE passed
+
+[3] Testing WHILE loops...
+  ✓ WHILE loops passed
+
+[4] Testing FOR loops...
+  ✓ FOR loops passed
+
+[5] Testing SWITCH...
+  ✓ SWITCH passed
+
+[6] Testing Basic Operators...
+  ✓ Basic Operators passed
+
+=== All Core Tests Passed! ===

@@ -1,0 +1,717 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# luna_rt_core.lu: the core of the runtime of compiled Luna programs, written in Luna and
+# compiled with `lunac --native` (see compiler/emit_native.lu). Values are LVs in memory:
+# a 16-byte cell holding a tag word and a payload word. Functions here take pointers to
+# LVs and write results through an out pointer; the entry points that generated code
+# calls by value return an LV with retp.
+#
+# This file holds the layouts, errors, strings, lists, maps and the to_string rules.
+# Operators, calls and the program entry are in luna_rt_ops.lu, the builtins in
+# luna_rt_lib.lu and luna_rt_math.lu, and data, box and unsafe in luna_rt_data.lu.
+
+extern("memcpy", "ptr", "ptr,ptr,i64")
+extern("memmove", "ptr", "ptr,ptr,i64")
+extern("memset", "ptr", "ptr,i32,i64")
+extern("memcmp", "i32", "ptr,ptr,i64")
+extern("strlen", "i64", "ptr")
+extern("strcmp", "i32", "ptr,ptr")
+extern("snprintf", "i32", "ptr,i64,ptr,...")
+extern("fprintf", "i32", "ptr,ptr,...")
+extern("printf", "i32", "ptr,...")
+extern("fwrite", "i64", "ptr,i64,i64,ptr")
+extern("fputc", "i32", "i32,ptr")
+extern("fflush", "i32", "ptr")
+extern("exit", "void", "i32")
+extern("free", "void", "ptr")
+extern("calloc", "ptr", "i64,i64")
+extern("realloc", "ptr", "ptr,i64")
+
+# LV tags
+const T_NULL = 0
+const T_BOOL = 1
+const T_INT = 2
+const T_FLOAT = 3
+const T_CHAR = 4
+const T_STR = 5
+const T_LIST = 6
+const T_MAP = 7
+const T_FUNC = 8
+const T_FILE = 9
+const T_DENSE = 10
+const T_BLOC_TYPE = 11
+const T_BLOC = 12
+const T_DTYPE = 13
+const T_TEMPLATE = 14
+const T_BOX = 15
+const T_PTR = 16
+const T_UNDEF = 17
+
+# error kinds
+const E_RUNTIME = 0
+const E_TYPE = 1
+const E_NAME = 2
+const E_INDEX = 3
+const E_ARGUMENT = 4
+const E_ASSERTION = 5
+
+# LvStr { i64 len; char data[] }
+const S_DATA = 8
+# LvList { count, cap, items }
+const L_COUNT = 0
+const L_CAP = 8
+const L_ITEMS = 16
+const L_SIZE = 24
+# LvMap { count, used, cap, entries, index, icap }; entry { key, val(16), live } is 32 bytes
+const M_COUNT = 0
+const M_USED = 8
+const M_CAP = 16
+const M_ENTRIES = 24
+const M_INDEX = 32
+const M_ICAP = 40
+const M_SIZE = 48
+const E_KEY = 0
+const E_VAL = 8
+const E_LIVE = 24
+const E_SIZE = 32
+# LvFunc { fn, name, int native, int ncells, cells }
+const F_FN = 0
+const F_NAME = 8
+const F_NATIVE = 16
+const F_NCELLS = 20
+const F_CELLS = 24
+const F_SIZE = 32
+# LvDense { count, cap, data }
+const D_COUNT = 0
+const D_CAP = 8
+const D_DATA = 16
+const D_SIZE = 24
+# LvFile { fp, int closed }
+const FI_FP = 0
+const FI_CLOSED = 8
+# LvModule { path, lines, int line_count }
+const MOD_PATH = 0
+const MOD_LINES = 8
+const MOD_COUNT = 16
+# LvBuf { buf, len, cap }
+const B_BUF = 0
+const B_LEN = 8
+const B_CAP = 16
+const B_SIZE = 24
+
+space("lv_pos_mod", 8)
+space("lv_pos_line", 4)
+space("lv_depth", 4)
+space("_argc", 8)
+space("_argv", 8)
+let g_found = 0
+
+func _stdout() {
+    return ld64(addr_of("stdout"))
+}
+
+func _stderr() {
+    return ld64(addr_of("stderr"))
+}
+
+func _stdin() {
+    return ld64(addr_of("stdin"))
+}
+
+# ---- LV cells -------------------------------------------------------------------
+
+func _tag(p) {
+    return ld32(p)
+}
+
+func _val(p) {
+    return ld64(p + 8)
+}
+
+func _set(p, t, v) {
+    st64(p, t)
+    st64(p + 8, v)
+}
+
+func _cp(dst, src) {
+    st64(dst, ld64(src))
+    st64(dst + 8, ld64(src + 8))
+}
+
+func _null(o) {
+    _set(o, T_NULL, 0)
+}
+
+func _int(o, i) {
+    _set(o, T_INT, i)
+}
+
+func _flt(o, bits) {
+    _set(o, T_FLOAT, bits)
+}
+
+func _bool(o, b) {
+    if (b != 0) {
+        _set(o, T_BOOL, 1)
+    } else {
+        _set(o, T_BOOL, 0)
+    }
+}
+
+func _chr(o, c) {
+    _set(o, T_CHAR, band(c, 255))
+}
+
+func _is_num(p) {
+    return _tag(p) == T_INT or _tag(p) == T_FLOAT
+}
+
+# A number as a double (its bit pattern).
+func _num(p) {
+    if (_tag(p) == T_INT) {
+        return i2f(_val(p))
+    }
+    return _val(p)
+}
+
+func _is_listish(p) {
+    return _tag(p) == T_LIST or _tag(p) == T_DENSE
+}
+
+# ---- errors ---------------------------------------------------------------------
+
+func _err_name(k) {
+    if (k == E_RUNTIME) {
+        return cstr("Runtime Error")
+    }
+    if (k == E_TYPE) {
+        return cstr("Type Error")
+    }
+    if (k == E_NAME) {
+        return cstr("Name Error")
+    }
+    if (k == E_INDEX) {
+        return cstr("Index Error")
+    }
+    if (k == E_ARGUMENT) {
+        return cstr("Argument Error")
+    }
+    if (k == E_ASSERTION) {
+        return cstr("Assertion Error")
+    }
+    return cstr("Error")
+}
+
+# The source line of the error, quoted under the message.
+func _error_source(line) {
+    let m = ld64(addr_of("lv_pos_mod"))
+    if (m != 0 and line >= 1 and line <= ld32(m + MOD_COUNT)) {
+        fprintf(_stderr(), cstr("\n%4d | %s\n\n"), line, ld64(ld64(m + MOD_LINES) + (line - 1) * 8))
+    }
+}
+
+func lv_error(kind_i, msg_p, hint_p) {
+    fflush(_stdout())
+    let m = ld64(addr_of("lv_pos_mod"))
+    let line = ld32(addr_of("lv_pos_line"))
+    fprintf(_stderr(), cstr("%s"), _err_name(kind_i))
+    if (m != 0 and ld64(m + MOD_PATH) != 0) {
+        fprintf(_stderr(), cstr(" in %s"), ld64(m + MOD_PATH))
+    }
+    fprintf(_stderr(), cstr(" at line %d:\n  %s\n"), line, msg_p)
+    _error_source(line)
+    if (hint_p != 0) {
+        fprintf(_stderr(), cstr("Hint: %s\n"), hint_p)
+    }
+    exit(1)
+}
+
+# A lint error found before the program ran, reported the way the VM's parser does.
+func lv_static_error(line_i, msg_p, hint_p) {
+    fflush(_stdout())
+    let m = ld64(addr_of("lv_pos_mod"))
+    fprintf(_stderr(), cstr("Static Error"))
+    if (m != 0 and ld64(m + MOD_PATH) != 0) {
+        fprintf(_stderr(), cstr(" in %s"), ld64(m + MOD_PATH))
+    }
+    fprintf(_stderr(), cstr(" at line %d:\n  %s\n"), line_i, msg_p)
+    _error_source(line_i)
+    if (hint_p != 0) {
+        fprintf(_stderr(), cstr("Hint: %s\n"), hint_p)
+    }
+    fprintf(_stderr(), cstr("Parsing failed.\n"))
+    exit(1)
+}
+
+# printf-style errors with up to four arguments (strings or integers).
+func _errf4(kind, hint, fmt, a, b, c, d) {
+    let msg = stack_buf(512)
+    snprintf(msg, 512, fmt, a, b, c, d)
+    lv_error(kind, msg, hint)
+}
+
+func _errf(kind, hint, fmt, a, b, c) {
+    _errf4(kind, hint, fmt, a, b, c, 0)
+}
+
+func lv_undefined(name) {
+    _errf(E_NAME, cstr("Declare variables with 'let' before using them"), cstr("Variable '%s' is not defined"), name, 0, 0)
+}
+
+# The name error that generated code raises for names that are not defined; fmt has up to
+# two %s places.
+func lv_name_error(hint_p, fmt_p, a_p, b_p) {
+    _errf(E_NAME, hint_p, fmt_p, a_p, b_p, 0)
+}
+
+func _type_name(v) {
+    let t = _tag(v)
+    if (t == T_NULL) {
+        return cstr("null")
+    }
+    if (t == T_BOOL) {
+        return cstr("boolean")
+    }
+    if (t == T_INT) {
+        return cstr("int")
+    }
+    if (t == T_FLOAT) {
+        return cstr("float")
+    }
+    if (t == T_CHAR) {
+        return cstr("char")
+    }
+    if (t == T_STR) {
+        return cstr("string")
+    }
+    if (t == T_LIST or t == T_DENSE) {
+        return cstr("list")
+    }
+    if (t == T_MAP) {
+        return cstr("map")
+    }
+    if (t >= T_BLOC_TYPE and t <= T_PTR) {
+        return _data_type_name(v)
+    }
+    if (t == T_FUNC) {
+        if (ld32(_val(v) + F_NATIVE) != 0) {
+            return cstr("native_function")
+        }
+        return cstr("function")
+    }
+    if (t == T_FILE) {
+        return cstr("file")
+    }
+    if (t == T_UNDEF) {
+        return cstr("undefined")
+    }
+    return cstr("unknown")
+}
+
+# ---- constructors -----------------------------------------------------------------
+
+func _str_n(o, s, n) {
+    let st = lv_alloc_atomic(S_DATA + n + 1)
+    st64(st, n)
+    if (n != 0) {
+        memcpy(st + S_DATA, s, n)
+    }
+    st8(st + S_DATA + n, 0)
+    _set(o, T_STR, st)
+}
+
+func _str(o, s) {
+    _str_n(o, s, strlen(s))
+}
+
+func lv_str_n(s, n) {
+    let o = stack_buf(16)
+    _str_n(o, s, n)
+    retp(o)
+}
+
+func lv_str(s) {
+    let o = stack_buf(16)
+    _str(o, s)
+    retp(o)
+}
+
+func _list_new(o, cap) {
+    let l = lv_alloc(L_SIZE)
+    let c = cap
+    if (c < 4) {
+        c = 4
+    }
+    st64(l + L_COUNT, 0)
+    st64(l + L_CAP, c)
+    st64(l + L_ITEMS, lv_alloc(16 * c))
+    _set(o, T_LIST, l)
+}
+
+func lv_list_new(cap) {
+    let o = stack_buf(16)
+    _list_new(o, cap)
+    retp(o)
+}
+
+func _list_of(o, n_i, items) {
+    _list_new(o, n_i)
+    let l = _val(o)
+    if (n_i != 0) {
+        memcpy(ld64(l + L_ITEMS), items, 16 * n_i)
+    }
+    st64(l + L_COUNT, n_i)
+}
+
+func lv_list_of(n_i, items) {
+    let o = stack_buf(16)
+    _list_of(o, n_i, items)
+    retp(o)
+}
+
+# Appends the LV at v to the list at list.
+func _list_push(list, v) {
+    let l = _val(list)
+    if (ld64(l + L_COUNT) == ld64(l + L_CAP)) {
+        st64(l + L_CAP, ld64(l + L_CAP) * 2)
+        st64(l + L_ITEMS, lv_realloc(ld64(l + L_ITEMS), 16 * ld64(l + L_CAP)))
+    }
+    _cp(ld64(l + L_ITEMS) + 16 * ld64(l + L_COUNT), v)
+    st64(l + L_COUNT, ld64(l + L_COUNT) + 1)
+}
+
+func _map_new(o) {
+    let m = lv_alloc(M_SIZE)
+    st64(m + M_COUNT, 0)
+    st64(m + M_USED, 0)
+    st64(m + M_CAP, 8)
+    st64(m + M_ENTRIES, lv_alloc(E_SIZE * 8))
+    st64(m + M_ICAP, 16)
+    st64(m + M_INDEX, lv_alloc_atomic(8 * 16))
+    _set(o, T_MAP, m)
+}
+
+func lv_map_new() {
+    let o = stack_buf(16)
+    _map_new(o)
+    retp(o)
+}
+
+func _dense_new(o, n) {
+    let d = lv_alloc(D_SIZE)
+    st64(d + D_COUNT, n)
+    let cap = n
+    if (cap < 1) {
+        cap = 1
+    }
+    st64(d + D_CAP, cap)
+    st64(d + D_DATA, lv_alloc_atomic(8 * cap))
+    _set(o, T_DENSE, d)
+}
+
+func _closure(o, fn, name, ncells_i, cells) {
+    let f = lv_alloc(F_SIZE)
+    st64(f + F_FN, fn)
+    st64(f + F_NAME, name)
+    st32(f + F_NATIVE, 0)
+    st32(f + F_NCELLS, ncells_i)
+    st64(f + F_CELLS, 0)
+    if (ncells_i > 0) {
+        st64(f + F_CELLS, lv_alloc(8 * ncells_i))
+        memcpy(ld64(f + F_CELLS), cells, 8 * ncells_i)
+    }
+    _set(o, T_FUNC, f)
+}
+
+func lv_closure(fn, name, ncells_i, cells) {
+    let o = stack_buf(16)
+    _closure(o, fn, name, ncells_i, cells)
+    retp(o)
+}
+
+func lv_native(fn, name) {
+    let o = stack_buf(16)
+    _closure(o, fn, name, 0, 0)
+    st32(_val(o) + F_NATIVE, 1)
+    retp(o)
+}
+
+# A heap cell holding a copy of the LV at init: how closures share a captured variable.
+func lvp_cell(init) {
+    let c = lv_alloc(16)
+    _cp(c, init)
+    return c
+}
+
+# ---- maps ---------------------------------------------------------------------------
+
+func _hash(s, n) {
+    let h = 1469598103934665603
+    for (let i = 0; i < n; i++) {
+        h = bxor(h, ld8(s + i))
+        h = h * 1099511628211
+    }
+    return h
+}
+
+func _str_same(a, b) {
+    if (a == b) {
+        return 1
+    }
+    if (ld64(a) != ld64(b)) {
+        return 0
+    }
+    return memcmp(a + S_DATA, b + S_DATA, ld64(a)) == 0
+}
+
+# The hash slot holding key, or the slot to insert it into; g_found says which.
+func _map_slot(m, key) {
+    let mask = ld64(m + M_ICAP) - 1
+    let i = band(_hash(key + S_DATA, ld64(key)), mask)
+    let index = ld64(m + M_INDEX)
+    let tomb = -1
+    while (true) {
+        let e = index[i]
+        if (e == 0) {
+            g_found = 0
+            if (tomb >= 0) {
+                return tomb
+            }
+            return i
+        }
+        if (e == -1) {
+            if (tomb < 0) {
+                tomb = i
+            }
+        } else if (_str_same(ld64(ld64(m + M_ENTRIES) + (e - 1) * E_SIZE + E_KEY), key)) {
+            g_found = 1
+            return i
+        }
+        i = band(i + 1, mask)
+    }
+}
+
+func _map_rehash(m) {
+    # Compact live entries, then rebuild the index.
+    let entries = ld64(m + M_ENTRIES)
+    let w = 0
+    for (let r = 0; r < ld64(m + M_USED); r++) {
+        if (ld32(entries + r * E_SIZE + E_LIVE) != 0) {
+            if (w != r) {
+                memcpy(entries + w * E_SIZE, entries + r * E_SIZE, E_SIZE)
+            }
+            w++
+        }
+    }
+    st64(m + M_USED, w)
+    while (ld64(m + M_ICAP) < (ld64(m + M_COUNT) + 1) * 2) {
+        st64(m + M_ICAP, ld64(m + M_ICAP) * 2)
+    }
+    st64(m + M_INDEX, lv_alloc_atomic(8 * ld64(m + M_ICAP)))
+    for (let e = 0; e < w; e++) {
+        let slot = _map_slot(m, ld64(entries + e * E_SIZE + E_KEY))
+        let index = ld64(m + M_INDEX)
+        index[slot] = e + 1
+    }
+}
+
+# Writes the value of key to o (null when missing); g_found tells whether it was there.
+func _map_get(o, map, key) {
+    let m = _val(map)
+    let slot = _map_slot(m, key)
+    if (g_found == 0) {
+        _null(o)
+        return 0
+    }
+    let index = ld64(m + M_INDEX)
+    _cp(o, ld64(m + M_ENTRIES) + (index[slot] - 1) * E_SIZE + E_VAL)
+}
+
+func _map_put(map, key, val) {
+    let m = _val(map)
+    let slot = _map_slot(m, key)
+    let index = ld64(m + M_INDEX)
+    if (g_found != 0) {
+        _cp(ld64(m + M_ENTRIES) + (index[slot] - 1) * E_SIZE + E_VAL, val)
+        return 0
+    }
+    if (ld64(m + M_USED) == ld64(m + M_CAP)) {
+        if (ld64(m + M_COUNT) < ld64(m + M_USED) / 2) {
+            _map_rehash(m)
+        } else {
+            st64(m + M_CAP, ld64(m + M_CAP) * 2)
+            st64(m + M_ENTRIES, lv_realloc(ld64(m + M_ENTRIES), E_SIZE * ld64(m + M_CAP)))
+        }
+        slot = _map_slot(m, key)
+        index = ld64(m + M_INDEX)
+    }
+    let e = ld64(m + M_ENTRIES) + ld64(m + M_USED) * E_SIZE
+    st64(e + E_KEY, key)
+    _cp(e + E_VAL, val)
+    st32(e + E_LIVE, 1)
+    st64(m + M_USED, ld64(m + M_USED) + 1)
+    st64(m + M_COUNT, ld64(m + M_COUNT) + 1)
+    index[slot] = ld64(m + M_USED)
+    if (ld64(m + M_USED) * 2 > ld64(m + M_ICAP)) {
+        _map_rehash(m)
+    }
+}
+
+func _map_del(map, key) {
+    let m = _val(map)
+    let slot = _map_slot(m, key)
+    if (g_found == 0) {
+        return 0
+    }
+    let index = ld64(m + M_INDEX)
+    st32(ld64(m + M_ENTRIES) + (index[slot] - 1) * E_SIZE + E_LIVE, 0)
+    index[slot] = -1
+    st64(m + M_COUNT, ld64(m + M_COUNT) - 1)
+    return 1
+}
+
+# ---- strings ---------------------------------------------------------------------------
+
+func _buf_init(b) {
+    st64(b + B_CAP, 64)
+    st64(b + B_LEN, 0)
+    st64(b + B_BUF, lv_alloc_atomic(64))
+}
+
+func _buf_add(b, s, n) {
+    if (ld64(b + B_LEN) + n + 1 > ld64(b + B_CAP)) {
+        while (ld64(b + B_LEN) + n + 1 > ld64(b + B_CAP)) {
+            st64(b + B_CAP, ld64(b + B_CAP) * 2)
+        }
+        st64(b + B_BUF, lv_realloc(ld64(b + B_BUF), ld64(b + B_CAP)))
+    }
+    memcpy(ld64(b + B_BUF) + ld64(b + B_LEN), s, n)
+    st64(b + B_LEN, ld64(b + B_LEN) + n)
+}
+
+func _buf_cstr(b, s) {
+    _buf_add(b, s, strlen(s))
+}
+
+# The text of the double whose bits are f, printed like %.6g.
+func _buf_float(b, f) {
+    let tmp = stack_buf(64)
+    snprintf(tmp, 64, cstr("%.6g"), dbl(f))
+    _buf_cstr(b, tmp)
+}
+
+func _buf_value(b, v) {
+    let tmp = stack_buf(64)
+    let t = _tag(v)
+    if (t == T_NULL) {
+        _buf_cstr(b, cstr("null"))
+    } else if (t == T_BOOL) {
+        if (ld32(v + 8) != 0) {
+            _buf_cstr(b, cstr("true"))
+        } else {
+            _buf_cstr(b, cstr("false"))
+        }
+    } else if (t == T_INT) {
+        snprintf(tmp, 64, cstr("%lld"), _val(v))
+        _buf_cstr(b, tmp)
+    } else if (t == T_FLOAT) {
+        _buf_float(b, _val(v))
+    } else if (t == T_CHAR) {
+        _buf_add(b, v + 8, 1)
+    } else if (t == T_STR) {
+        _buf_add(b, _val(v) + S_DATA, ld64(_val(v)))
+    } else if (t == T_LIST) {
+        let l = _val(v)
+        _buf_cstr(b, cstr("["))
+        for (let i = 0; i < ld64(l + L_COUNT); i++) {
+            if (i != 0) {
+                _buf_cstr(b, cstr(", "))
+            }
+            _buf_value(b, ld64(l + L_ITEMS) + 16 * i)
+        }
+        _buf_cstr(b, cstr("]"))
+    } else if (t == T_MAP) {
+        let m = _val(v)
+        _buf_cstr(b, cstr("\{"))
+        let first = 1
+        for (let i = 0; i < ld64(m + M_USED); i++) {
+            let e = ld64(m + M_ENTRIES) + i * E_SIZE
+            if (ld32(e + E_LIVE) == 0) {
+                continue
+            }
+            if (first == 0) {
+                _buf_cstr(b, cstr(", "))
+            }
+            first = 0
+            _buf_cstr(b, cstr("\""))
+            _buf_add(b, ld64(e + E_KEY) + S_DATA, ld64(ld64(e + E_KEY)))
+            _buf_cstr(b, cstr("\": "))
+            _buf_value(b, e + E_VAL)
+        }
+        _buf_cstr(b, cstr("}"))
+    } else if (t == T_DENSE) {
+        let d = _val(v)
+        _buf_cstr(b, cstr("d["))
+        for (let i = 0; i < ld64(d + D_COUNT); i++) {
+            if (i != 0) {
+                _buf_cstr(b, cstr(", "))
+            }
+            _buf_float(b, ld64(ld64(d + D_DATA) + i * 8))
+        }
+        _buf_cstr(b, cstr("]"))
+    } else if (t == T_FUNC) {
+        if (ld32(_val(v) + F_NATIVE) != 0) {
+            _buf_cstr(b, cstr("<native function>"))
+        } else {
+            _buf_cstr(b, cstr("<function>"))
+        }
+    } else if (t == T_FILE) {
+        _buf_cstr(b, cstr("<file>"))
+    } else if (t == T_UNDEF) {
+        _buf_cstr(b, cstr("<undefined>"))
+    } else {
+        _data_tostring(b, v)
+    }
+}
+
+# Finishes the buffer as a string value at o.
+func _buf_done(o, b) {
+    _str_n(o, ld64(b + B_BUF), ld64(b + B_LEN))
+    st64(b + B_BUF, 0)
+}
+
+func _to_string(o, v) {
+    if (_tag(v) == T_STR) {
+        _cp(o, v)
+        return 0
+    }
+    let b = stack_buf(B_SIZE)
+    _buf_init(b)
+    _buf_value(b, v)
+    _buf_done(o, b)
+}
+
+func lv_interp(n_i, parts) {
+    let b = stack_buf(B_SIZE)
+    let o = stack_buf(16)
+    _buf_init(b)
+    for (let i = 0; i < n_i; i++) {
+        _buf_value(b, parts + 16 * i)
+    }
+    _buf_done(o, b)
+    retp(o)
+}
+
+func lvp_print(v) {
+    if (_tag(v) == T_STR) {
+        fwrite(_val(v) + S_DATA, 1, ld64(_val(v)), _stdout())
+        fputc(10, _stdout())
+        return 0
+    }
+    let b = stack_buf(B_SIZE)
+    _buf_init(b)
+    _buf_value(b, v)
+    _buf_add(b, cstr("\n"), 1)
+    fwrite(ld64(b + B_BUF), 1, ld64(b + B_LEN), _stdout())
+}

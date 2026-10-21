@@ -1,0 +1,1302 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# luna_rt_data.lu: structured data and manual memory for compiled programs: data,
+# template, bloc, box and the unsafe-block pointer rules. The behaviour and the error text
+# follow src/value.c, src/unsafe_runtime.c and src/luna_vm.c. Validation is done by
+# the rule functions in luna_rt_rules.lu (luna_data_* and luna_mem_*).
+
+# ---- layouts ---------------------------------------------------------------------------------
+
+# LvBlocDesc { name, int nfields, fields, kinds, nested, int total_size, int locked, next }
+const BD_NAME = 0
+const BD_NFIELDS = 8
+const BD_FIELDS = 16
+const BD_KINDS = 24
+const BD_NESTED = 32
+const BD_TOTAL = 40
+const BD_LOCKED = 44
+const BD_NEXT = 48
+const BD_SIZE = 56
+# LvBloc { desc, LV vals[] }
+const BL_DESC = 0
+const BL_VALS = 8
+# LvDType { name, int nfields, fields, int is_template }
+const DT_NAME = 0
+const DT_NFIELDS = 8
+const DT_FIELDS = 16
+const DT_TEMPLATE = 24
+const DT_SIZE = 32
+# DataSchema { name, fields, int nfields, int is_template, next }
+const DS_NAME = 0
+const DS_FIELDS = 8
+const DS_NFIELDS = 16
+const DS_TEMPLATE = 20
+const DS_NEXT = 24
+const DS_SIZE = 32
+# LvTemplate { dt, int n, LV fields[] }
+const TP_DT = 0
+const TP_N = 8
+const TP_FIELDS = 16
+# BoxSlot { int in_use, u32 gen, int owned_by_template, u64 scope_id, len, bytes }
+const BS_IN_USE = 0
+const BS_GEN = 4
+const BS_OWNED = 8
+const BS_SCOPE = 16
+const BS_LEN = 24
+const BS_BYTES = 32
+const BS_SIZE = 40
+# PointerMeta { ptr, base, cells, int kind, int owns_allocation, int freed, init_flags }
+const PM_PTR = 0
+const PM_BASE = 8
+const PM_CELLS = 16
+const PM_KIND = 24
+const PM_OWNS = 28
+const PM_FREED = 32
+const PM_FLAGS = 40
+const PM_SIZE = 48
+
+const BLOC_MAX_BYTES = 32
+const BLOC_SLOT_BYTES = 8
+const BK_UNSET = 0
+const BK_INT = 1
+const BK_FLOAT = 2
+const BK_BOOL = 3
+const BK_CHAR = 4
+const BK_BLOC = 5
+const BK_PRIM = 6
+const BOX_SLOT_MAX = 4096
+const PTR_ALLOC = 0
+const PTR_ADDR = 1
+
+space("_box_slots", 163840)
+let g_bloc_registry = 0
+let g_schema_registry = 0
+let g_box_high_water = 0
+let g_scope_counter = 0
+let g_owners = 0
+let g_owner_count = 0
+let g_owner_cap = 0
+let g_ptrs = 0
+let g_ptr_count = 0
+let g_ptr_cap = 0
+let g_block_depth = 0
+let g_defer_ptrs = 0
+let g_defer_count = 0
+let g_defer_cap = 0
+
+func _wrap(o, tag) {
+    _set(o, tag, 0)
+}
+
+# ---- blocs --------------------------------------------------------------------------------------
+
+func _bloc_kind_of(v) {
+    let t = _tag(v)
+    if (t == T_INT) {
+        return BK_INT
+    }
+    if (t == T_FLOAT) {
+        return BK_FLOAT
+    }
+    if (t == T_BOOL) {
+        return BK_BOOL
+    }
+    if (t == T_CHAR) {
+        return BK_CHAR
+    }
+    if (t == T_BLOC) {
+        return BK_BLOC
+    }
+    return BK_UNSET
+}
+
+func _bloc_find(name) {
+    let d = g_bloc_registry
+    while (d != 0) {
+        if (strcmp(ld64(d + BD_NAME), name) == 0) {
+            return d
+        }
+        d = ld64(d + BD_NEXT)
+    }
+    return 0
+}
+
+func _bloc_same_schema(d, fields, n) {
+    if (ld32(d + BD_NFIELDS) != n) {
+        return 0
+    }
+    for (let i = 0; i < n; i++) {
+        if (strcmp(ld64(ld64(d + BD_FIELDS) + i * 8), ld64(fields + i * 8)) != 0) {
+            return 0
+        }
+    }
+    return 1
+}
+
+func _bloc_hint() {
+    return cstr("A bloc holds at most 32 bytes of unique fields; each name keeps one field list")
+}
+
+func lv_define_bloc(name, n_i, fields) {
+    let msg = stack_buf(256)
+    let o = stack_buf(16)
+    let code = luna_data_bloc_validate(name, fields, n_i)
+    if (code != 0) {
+        luna_data_error_message(code, msg, 256)
+        lv_error(E_TYPE, msg, _bloc_hint())
+    }
+    let existing = _bloc_find(name)
+    if (existing != 0) {
+        if (_bloc_same_schema(existing, fields, n_i) == 0) {
+            snprintf(msg, 256, cstr("bloc '%s' is already defined with different fields"), name)
+            lv_error(E_TYPE, msg, _bloc_hint())
+        }
+        _set(o, T_BLOC_TYPE, existing)
+        retp(o)
+    }
+    let d = lv_alloc(BD_SIZE)
+    st64(d + BD_NAME, name)
+    st32(d + BD_NFIELDS, n_i)
+    if (n_i != 0) {
+        st64(d + BD_FIELDS, lv_alloc(8 * n_i))
+        st64(d + BD_KINDS, lv_alloc_atomic(n_i))
+        st64(d + BD_NESTED, lv_alloc(8 * n_i))
+    }
+    for (let i = 0; i < n_i; i++) {
+        st64(ld64(d + BD_FIELDS) + i * 8, ld64(fields + i * 8))
+    }
+    st64(d + BD_NEXT, g_bloc_registry)
+    g_bloc_registry = d
+    _set(o, T_BLOC_TYPE, d)
+    retp(o)
+}
+
+# Checks the field values against the descriptor, fixing the layout on the first
+# construction. On failure the message is left in msg and 0 is returned.
+func _bloc_validate(d, argc, argv, msg) {
+    let name = ld64(d + BD_NAME)
+    let nf = ld32(d + BD_NFIELDS)
+    if (argc != nf) {
+        snprintf(msg, 256, cstr("Bloc '%s' expects %d field value(s), but got %d"), name, nf, argc)
+        return 0
+    }
+    let offset = 0
+    for (let i = 0; i < argc; i++) {
+        let v = argv + 16 * i
+        let fname = ld64(ld64(d + BD_FIELDS) + i * 8)
+        let kind = _bloc_kind_of(v)
+        if (kind == BK_UNSET) {
+            snprintf(msg, 256, cstr("Bloc field '%s' only accepts int, float, bool, char, or another bloc"), fname)
+            return 0
+        }
+        let size = BLOC_SLOT_BYTES
+        let nested = 0
+        if (kind == BK_BLOC) {
+            nested = ld64(_val(v) + BL_DESC)
+            size = 0
+            if (nested != 0) {
+                size = ld32(nested + BD_TOTAL)
+            }
+        }
+        if (size <= 0) {
+            snprintf(msg, 256, cstr("Bloc field '%s' has an invalid inline size"), fname)
+            return 0
+        }
+        let slot_class = BK_PRIM
+        if (kind == BK_BLOC) {
+            slot_class = BK_BLOC
+        }
+        if (ld32(d + BD_LOCKED) != 0) {
+            let have = ld8(ld64(d + BD_KINDS) + i)
+            if (have != slot_class) {
+                if (have == BK_BLOC) {
+                    snprintf(msg, 256, cstr("Bloc '%s' field '%s' must hold a nested bloc"), name, fname)
+                } else {
+                    snprintf(msg, 256, cstr("Bloc '%s' field '%s' must hold an int, float, bool or char"), name, fname)
+                }
+                return 0
+            }
+            if (slot_class == BK_BLOC and ld64(ld64(d + BD_NESTED) + i * 8) != nested) {
+                snprintf(msg, 256, cstr("Bloc '%s' field '%s' must use the same nested bloc type"), name, fname)
+                return 0
+            }
+            continue
+        }
+        st8(ld64(d + BD_KINDS) + i, slot_class)
+        st64(ld64(d + BD_NESTED) + i * 8, nested)
+        offset += size
+    }
+    if (ld32(d + BD_LOCKED) == 0) {
+        if (offset > BLOC_MAX_BYTES) {
+            snprintf(msg, 256, cstr("Bloc '%s' exceeds the %d-byte cache-line cap"), name, BLOC_MAX_BYTES)
+            return 0
+        }
+        st32(d + BD_TOTAL, offset)
+        st32(d + BD_LOCKED, 1)
+    }
+    return 1
+}
+
+func _bloc_construct(o, type, argc, argv) {
+    let msg = stack_buf(256)
+    if (_unsafe_depth() > 0) {
+        lv_error(E_TYPE, cstr("box and bloc values are not allowed inside unsafe blocks"),
+                 cstr("Bloc values must stay inline and only use int, float, bool, char, or nested blocs"))
+    }
+    let d = _val(type)
+    if (_bloc_validate(d, argc, argv, msg) == 0) {
+        lv_error(E_TYPE, msg, cstr("Bloc values must stay inline and only use int, float, bool, char, or nested blocs"))
+    }
+    let n = argc
+    if (n == 0) {
+        n = 1
+    }
+    let b = lv_alloc(BL_VALS + 16 * n)
+    st64(b + BL_DESC, d)
+    for (let i = 0; i < argc; i++) {
+        _cp(b + BL_VALS + 16 * i, argv + 16 * i)
+    }
+    _set(o, T_BLOC, b)
+}
+
+func _bloc_equal(a, b) {
+    let ba = _val(a)
+    let bb = _val(b)
+    if (ba == bb) {
+        return 1
+    }
+    if (ld64(ba + BL_DESC) != ld64(bb + BL_DESC)) {
+        return 0
+    }
+    for (let i = 0; i < ld32(ld64(ba + BL_DESC) + BD_NFIELDS); i++) {
+        let x = ba + BL_VALS + 16 * i
+        let y = bb + BL_VALS + 16 * i
+        if (_tag(x) != _tag(y)) {
+            return 0
+        }
+        let t = _tag(x)
+        if (t == T_INT or t == T_FLOAT) {
+            if (_val(x) != _val(y)) {
+                return 0
+            }
+        } else if (t == T_BOOL) {
+            if (ld32(x + 8) != ld32(y + 8)) {
+                return 0
+            }
+        } else if (t == T_CHAR) {
+            if (ld8(x + 8) != ld8(y + 8)) {
+                return 0
+            }
+        } else if (t == T_BLOC) {
+            if (_bloc_equal(x, y) == 0) {
+                return 0
+            }
+        } else {
+            return 0
+        }
+    }
+    return 1
+}
+
+func _bloc_name(v) {
+    let d = ld64(_val(v) + BL_DESC)
+    if (d != 0) {
+        return ld64(d + BD_NAME)
+    }
+    return cstr("bloc")
+}
+
+# ---- data and template types ------------------------------------------------------------------------
+
+func lv_define_data(name, n_i, fields, is_template_i) {
+    let msg = stack_buf(256)
+    let o = stack_buf(16)
+    let hint = cstr("Each data or template name must keep one field list")
+    if (is_template_i != 0) {
+        let code = luna_data_template_register(name, fields, n_i)
+        if (code != 0) {
+            luna_data_error_message(code, msg, 256)
+            lv_error(E_TYPE, msg, hint)
+        }
+    }
+    let found = 0
+    let d = g_schema_registry
+    while (d != 0 and found == 0) {
+        if (strcmp(ld64(d + DS_NAME), name) == 0) {
+            let same = ld32(d + DS_NFIELDS) == n_i and ld32(d + DS_TEMPLATE) == is_template_i
+            for (let i = 0; same != 0 and i < n_i; i++) {
+                if (strcmp(ld64(ld64(d + DS_FIELDS) + i * 8), ld64(fields + i * 8)) != 0) {
+                    same = 0
+                }
+            }
+            if (same == 0) {
+                let kind = cstr("data type")
+                if (is_template_i != 0) {
+                    kind = cstr("template")
+                }
+                snprintf(msg, 256, cstr("%s '%s' is already defined with different fields"), kind, name)
+                lv_error(E_TYPE, msg, hint)
+            }
+            found = 1
+        } else {
+            d = ld64(d + DS_NEXT)
+        }
+    }
+    if (found == 0) {
+        let s = lv_alloc(DS_SIZE)
+        st64(s + DS_NAME, name)
+        st32(s + DS_NFIELDS, n_i)
+        st32(s + DS_TEMPLATE, is_template_i)
+        if (n_i != 0) {
+            st64(s + DS_FIELDS, lv_alloc(8 * n_i))
+        }
+        for (let i = 0; i < n_i; i++) {
+            st64(ld64(s + DS_FIELDS) + i * 8, ld64(fields + i * 8))
+        }
+        st64(s + DS_NEXT, g_schema_registry)
+        g_schema_registry = s
+    }
+    let t = lv_alloc(DT_SIZE)
+    st64(t + DT_NAME, name)
+    st32(t + DT_NFIELDS, n_i)
+    if (n_i != 0) {
+        st64(t + DT_FIELDS, lv_alloc(8 * n_i))
+    }
+    for (let i = 0; i < n_i; i++) {
+        st64(ld64(t + DT_FIELDS) + i * 8, ld64(fields + i * 8))
+    }
+    st32(t + DT_TEMPLATE, is_template_i)
+    _set(o, T_DTYPE, t)
+    retp(o)
+}
+
+func _data_construct(o, type, argc, argv) {
+    let t = _val(type)
+    if (argc != ld32(t + DT_NFIELDS)) {
+        _errf4(E_ARGUMENT, cstr("Pass one value for each declared data field"),
+               cstr("Data constructor '%s' expects %d field value(s), but got %d"), ld64(t + DT_NAME), ld32(t + DT_NFIELDS), argc, 0)
+    }
+    if (ld32(t + DT_TEMPLATE) != 0) {
+        let n = argc
+        if (n == 0) {
+            n = 1
+        }
+        let tp = lv_alloc(TP_FIELDS + 16 * n)
+        st64(tp + TP_DT, t)
+        st32(tp + TP_N, argc)
+        for (let i = 0; i < argc; i++) {
+            _cp(tp + TP_FIELDS + 16 * i, argv + 16 * i)
+            if (_tag(argv + 16 * i) == T_BOX) {
+                _box_promote_owned(argv + 16 * i, tp)
+            }
+        }
+        _set(o, T_TEMPLATE, tp)
+        return 0
+    }
+    let tmp = stack_buf(16)
+    _map_new(o)
+    _str(tmp, cstr("__tag"))
+    let name = stack_buf(16)
+    _str(name, ld64(t + DT_NAME))
+    _map_put(o, _val(tmp), name)
+    for (let i = 0; i < ld32(t + DT_NFIELDS); i++) {
+        _str(tmp, ld64(ld64(t + DT_FIELDS) + i * 8))
+        _map_put(o, _val(tmp), argv + 16 * i)
+    }
+}
+
+func _construct(o, type, argc, argv) {
+    if (_tag(type) == T_BLOC_TYPE) {
+        _bloc_construct(o, type, argc, argv)
+        return 0
+    }
+    _data_construct(o, type, argc, argv)
+}
+
+func _tpl_find(tp, field) {
+    let dt = ld64(tp + TP_DT)
+    for (let i = 0; i < ld32(dt + DT_NFIELDS); i++) {
+        if (strcmp(ld64(ld64(dt + DT_FIELDS) + i * 8), field) == 0) {
+            return i
+        }
+    }
+    return -1
+}
+
+func _missing_field(target, field) {
+    if (_tag(target) == T_TEMPLATE) {
+        _errf(E_NAME, cstr("Access only declared fields for this template"), cstr("Template field '%s' does not exist"), field, 0, 0)
+    }
+    _errf(E_NAME, cstr("Use dot access with a declared bloc field such as point.x"),
+          cstr("Field '%s' does not exist on this bloc value"), field, 0, 0)
+}
+
+# ---- boxes ---------------------------------------------------------------------------------------------
+
+func _box_handle_make(index, gen) {
+    return bor(shl(gen, 32), index + 1)
+}
+
+# The slot of a live box handle, or 0.
+func _box_slot(handle) {
+    let index = band(handle, 4294967295)
+    if (index == 0 or index > BOX_SLOT_MAX) {
+        return 0
+    }
+    let s = addr_of("_box_slots") + (index - 1) * BS_SIZE
+    if (ld32(s + BS_IN_USE) == 0 or ld32(s + BS_GEN) != shr(handle, 32)) {
+        return 0
+    }
+    return s
+}
+
+func _box_free_slot(s) {
+    if (s == 0 or ld32(s + BS_IN_USE) == 0) {
+        return 0
+    }
+    luna_data_box_free_ok(_box_handle_make((s - addr_of("_box_slots")) / BS_SIZE, ld32(s + BS_GEN)))
+    free(ld64(s + BS_BYTES))
+    st64(s + BS_BYTES, 0)
+    st64(s + BS_LEN, 0)
+    st32(s + BS_IN_USE, 0)
+    st32(s + BS_GEN, ld32(s + BS_GEN) + 1)
+    st32(s + BS_OWNED, 0)
+    st64(s + BS_SCOPE, 0)
+}
+
+func lv_scope_new() {
+    g_scope_counter += 1
+    return g_scope_counter
+}
+
+func lvp_box_new(o, size, scope_id) {
+    if (_tag(size) != T_INT) {
+        lv_error(E_TYPE, cstr("box[...] expects an integer byte size"), cstr("Use box[128] or another positive integer size"))
+    }
+    let hint = cstr("Use box[n] with n between 1 and 4096; at most 4096 boxes can be live at once")
+    if (_unsafe_depth() > 0) {
+        lv_error(E_ARGUMENT, cstr("box and bloc values are not allowed inside unsafe blocks"), hint)
+    }
+    if (_val(size) < 0 or luna_data_box_size_ok(_val(size)) != 0) {
+        lv_error(E_ARGUMENT, cstr("box size must be between 1 and 4096 bytes"), hint)
+    }
+    for (let i = 0; i < BOX_SLOT_MAX; i++) {
+        let s = addr_of("_box_slots") + i * BS_SIZE
+        if (ld32(s + BS_IN_USE) != 0) {
+            continue
+        }
+        st64(s + BS_BYTES, calloc(_val(size), 1))
+        if (ld64(s + BS_BYTES) == 0) {
+            lv_error(E_RUNTIME, cstr("out of memory"), 0)
+        }
+        st32(s + BS_IN_USE, 1)
+        st32(s + BS_OWNED, 0)
+        st64(s + BS_SCOPE, scope_id)
+        st64(s + BS_LEN, _val(size))
+        if (i + 1 > g_box_high_water) {
+            g_box_high_water = i + 1
+        }
+        let handle = _box_handle_make(i, ld32(s + BS_GEN))
+        luna_data_box_track(handle)
+        _set(o, T_BOX, handle)
+        return 0
+    }
+    lv_error(E_ARGUMENT, cstr("box allocation failed: more than 4096 boxes are live at once"), hint)
+}
+
+func lv_box_release_scope(scope_id) {
+    if (scope_id == 0) {
+        return 0
+    }
+    for (let i = 0; i < g_box_high_water and i < BOX_SLOT_MAX; i++) {
+        let s = addr_of("_box_slots") + i * BS_SIZE
+        if (ld32(s + BS_IN_USE) != 0 and ld32(s + BS_OWNED) == 0 and ld64(s + BS_SCOPE) == scope_id) {
+            _box_free_slot(s)
+        }
+    }
+}
+
+func _box_promote(bx) {
+    let s = _box_slot(_val(bx))
+    if (s == 0) {
+        return 0
+    }
+    st32(s + BS_OWNED, 1)
+    st64(s + BS_SCOPE, 0)
+}
+
+# Weak table of (template, box): when a template is collected, its boxes go too.
+func _box_promote_owned(bx, owner) {
+    _box_promote(bx)
+    if (g_owner_count == g_owner_cap) {
+        if (g_owner_cap != 0) {
+            g_owner_cap = g_owner_cap * 2
+        } else {
+            g_owner_cap = 64
+        }
+        g_owners = realloc(g_owners, 16 * g_owner_cap)
+        if (g_owners == 0) {
+            lv_error(E_RUNTIME, cstr("out of memory"), 0)
+        }
+    }
+    st64(g_owners + g_owner_count * 16, owner)
+    st64(g_owners + g_owner_count * 16 + 8, _val(bx))
+    g_owner_count += 1
+}
+
+# Runs after marking: boxes whose template is unreachable are freed.
+func lv_data_gc_hook() {
+    let keep = 0
+    for (let i = 0; i < g_owner_count; i++) {
+        if (lv_gc_is_marked(ld64(g_owners + i * 16)) != 0) {
+            st64(g_owners + keep * 16, ld64(g_owners + i * 16))
+            st64(g_owners + keep * 16 + 8, ld64(g_owners + i * 16 + 8))
+            keep += 1
+        } else {
+            let s = _box_slot(ld64(g_owners + i * 16 + 8))
+            if (s != 0) {
+                _box_free_slot(s)
+            }
+        }
+    }
+    g_owner_count = keep
+}
+
+# A box is freed when its scope ends, so it may not outlive it.
+func lvp_box_escape_check(v, where_p) {
+    if (_tag(v) != T_BOX) {
+        return 0
+    }
+    let s = _box_slot(_val(v))
+    if (s != 0 and ld32(s + BS_OWNED) != 0) {
+        return 0
+    }
+    _errf(E_RUNTIME, cstr("Keep the box in a local variable, or store it in a template field."),
+          cstr("a box cannot be %s; it is freed when its scope ends"), where_p, 0, 0)
+}
+
+func _box_live(bx) {
+    if (_box_slot(_val(bx)) != 0) {
+        return 0
+    }
+    let code = luna_data_box_access_ok(_val(bx))
+    if (code == 5) {
+        lv_error(E_RUNTIME, cstr("box was already freed (use-after-free)"), cstr("Do not use a box after it is freed."))
+    }
+    lv_error(E_RUNTIME, cstr("expected a live box value"), cstr("Do not use a box after it is freed."))
+}
+
+# The slot of a box, and in g_box_index the byte index of an access with bounds checks.
+func _box_byte_slot(bx, index, type_hint, hint) {
+    if (_tag(index) != T_INT) {
+        lv_error(E_TYPE, cstr("box index must be an integer"), type_hint)
+    }
+    let s = _box_slot(_val(bx))
+    if (s == 0) {
+        let code = luna_data_box_access_ok(_val(bx))
+        if (code == 5) {
+            lv_error(E_RUNTIME, cstr("box was already freed (use-after-free)"), hint)
+        }
+        lv_error(E_RUNTIME, cstr("expected a live box value"), hint)
+    }
+    let idx = _val(index)
+    let len = ld64(s + BS_LEN)
+    if (idx < 0) {
+        idx += len
+    }
+    if (idx < 0 or idx >= len) {
+        _errf(E_RUNTIME, hint, cstr("box index %lld is out of bounds for a box of %lld bytes"), idx, len, 0)
+    }
+    g_box_index = idx
+    return s
+}
+
+let g_box_index = 0
+
+# ---- operations hooked into the core runtime ------------------------------------------------------------
+
+# Reads target[index] for a template, bloc or box into out. Returns 1 when handled.
+func _data_index(t, idx, out) {
+    let tt = _tag(t)
+    if (tt == T_TEMPLATE and _tag(idx) == T_STR) {
+        let i = _tpl_find(_val(t), _val(idx) + S_DATA)
+        if (i < 0) {
+            _missing_field(t, _val(idx) + S_DATA)
+        }
+        _cp(out, _val(t) + TP_FIELDS + 16 * i)
+        return 1
+    }
+    if (tt == T_BLOC and _tag(idx) == T_STR) {
+        let d = ld64(_val(t) + BL_DESC)
+        for (let i = 0; i < ld32(d + BD_NFIELDS); i++) {
+            if (strcmp(ld64(ld64(d + BD_FIELDS) + i * 8), _val(idx) + S_DATA) == 0) {
+                _cp(out, _val(t) + BL_VALS + 16 * i)
+                return 1
+            }
+        }
+        _missing_field(t, _val(idx) + S_DATA)
+    }
+    if (tt == T_BOX) {
+        let s = _box_byte_slot(t, idx, cstr("Use b[i] with 0 <= i < b.len"), cstr("Use b[i] with 0 <= i < b.len"))
+        _int(out, ld8(ld64(s + BS_BYTES) + g_box_index))
+        return 1
+    }
+    return 0
+}
+
+# Reads target.field for a template, bloc or box. Returns 1 when handled.
+func _data_field(t, key, out) {
+    let tt = _tag(t)
+    if (tt == T_TEMPLATE or tt == T_BLOC) {
+        return _data_index(t, key, out)
+    }
+    if (tt == T_BOX) {
+        _box_live(t)
+        let s = _box_slot(_val(t))
+        let k = _val(key) + S_DATA
+        if (strcmp(k, cstr("len")) == 0 or strcmp(k, cstr("cap")) == 0) {
+            _int(out, ld64(s + BS_LEN))
+            return 1
+        }
+        _errf(E_NAME, cstr("Use box.len or box.cap for phase-1 box values"),
+              cstr("Field '%s' does not exist on this box value"), k, 0, 0)
+    }
+    return 0
+}
+
+# Writes target[index] = val for a template, bloc or box. Returns 1 when handled.
+func _data_index_set(t, idx, val) {
+    let tt = _tag(t)
+    if (tt == T_BOX) {
+        let hint = cstr("Use b[i] = byte with 0 <= i < b.len and 0 <= byte <= 255")
+        let s = _box_byte_slot(t, idx, cstr("Use b[i] = byte with 0 <= i < b.len"), hint)
+        if (_tag(val) != T_INT or _val(val) < 0 or _val(val) > 255) {
+            lv_error(E_RUNTIME, cstr("box bytes must be integers from 0 to 255"), hint)
+        }
+        st8(ld64(s + BS_BYTES) + g_box_index, _val(val))
+        return 1
+    }
+    if (tt == T_TEMPLATE) {
+        if (_tag(idx) != T_STR) {
+            lv_error(E_TYPE, cstr("Template assignment index must be a string"),
+                     cstr("Use template[\"field\"] = value or template.field = value"))
+        }
+        _ptr_store_check(val)
+        let i = _tpl_find(_val(t), _val(idx) + S_DATA)
+        if (i < 0) {
+            _errf(E_NAME, cstr("Assign only to declared template fields"),
+                  cstr("Template field '%s' does not exist"), _val(idx) + S_DATA, 0, 0)
+        }
+        _cp(_val(t) + TP_FIELDS + 16 * i, val)
+        if (_tag(val) == T_BOX) {
+            _box_promote_owned(val, _val(t))
+        }
+        return 1
+    }
+    if (tt == T_BLOC) {
+        lv_error(E_TYPE, cstr("bloc values are immutable"), cstr("Build a new bloc, or use a template for data that changes"))
+    }
+    return 0
+}
+
+func _data_equal(a, b) {
+    let t = _tag(a)
+    if (t == T_BLOC) {
+        return _bloc_equal(a, b)
+    }
+    if (t == T_BOX or t == T_PTR or t == T_TEMPLATE or t == T_DTYPE or t == T_BLOC_TYPE) {
+        return _val(a) == _val(b)
+    }
+    return 0
+}
+
+func _buf_str(b, s) {
+    _buf_add(b, s, strlen(s))
+}
+
+func _data_tostring(b, v) {
+    let tmp = stack_buf(96)
+    let t = _tag(v)
+    if (t == T_BLOC) {
+        let d = ld64(_val(v) + BL_DESC)
+        _buf_str(b, _bloc_name(v))
+        _buf_str(b, cstr("\{"))
+        for (let i = 0; i < ld32(d + BD_NFIELDS); i++) {
+            if (i != 0) {
+                _buf_str(b, cstr(", "))
+            }
+            _buf_str(b, ld64(ld64(d + BD_FIELDS) + i * 8))
+            _buf_str(b, cstr(": "))
+            _buf_value(b, _val(v) + BL_VALS + 16 * i)
+        }
+        _buf_str(b, cstr("}"))
+    } else if (t == T_BLOC_TYPE) {
+        snprintf(tmp, 96, cstr("<bloc %s>"), ld64(_val(v) + BD_NAME))
+        _buf_str(b, tmp)
+    } else if (t == T_DTYPE) {
+        snprintf(tmp, 96, cstr("<data %s>"), ld64(_val(v) + DT_NAME))
+        _buf_str(b, tmp)
+    } else if (t == T_TEMPLATE) {
+        let tp = _val(v)
+        let dt = ld64(tp + TP_DT)
+        _buf_str(b, ld64(dt + DT_NAME))
+        _buf_str(b, cstr("\{"))
+        for (let i = 0; i < ld32(tp + TP_N); i++) {
+            if (i != 0) {
+                _buf_str(b, cstr(", "))
+            }
+            _buf_str(b, ld64(ld64(dt + DT_FIELDS) + i * 8))
+            _buf_str(b, cstr(": "))
+            _buf_value(b, tp + TP_FIELDS + 16 * i)
+        }
+        _buf_str(b, cstr("}"))
+    } else if (t == T_BOX) {
+        let s = _box_slot(_val(v))
+        if (s == 0) {
+            if (luna_data_box_access_ok(_val(v)) == 5) {
+                snprintf(tmp, 96, cstr("<box freed>"))
+            } else {
+                snprintf(tmp, 96, cstr("<box invalid>"))
+            }
+        } else {
+            snprintf(tmp, 96, cstr("<box len=%zu cap=%zu>"), ld64(s + BS_LEN), ld64(s + BS_LEN))
+        }
+        _buf_str(b, tmp)
+    } else if (t == T_PTR) {
+        snprintf(tmp, 96, cstr("ptr(0x%llx)"), _val(v))
+        _buf_str(b, tmp)
+    }
+}
+
+func _data_type_name(v) {
+    let t = _tag(v)
+    if (t == T_BLOC) {
+        return cstr("bloc")
+    }
+    if (t == T_BLOC_TYPE) {
+        return cstr("bloc_type")
+    }
+    if (t == T_DTYPE) {
+        return cstr("data_type")
+    }
+    if (t == T_TEMPLATE) {
+        return cstr("template")
+    }
+    if (t == T_BOX) {
+        return cstr("box")
+    }
+    if (t == T_PTR) {
+        return cstr("pointer")
+    }
+    return cstr("unknown")
+}
+
+func lb_shape(self_p, argc_i, argv_p) {
+    if (argc_i != 1) {
+        lv_error(E_ARGUMENT, cstr("shape() takes exactly 1 argument"), cstr("Use shape(value)"))
+    }
+    let o = stack_buf(16)
+    let t = _tag(argv_p)
+    if (t == T_BLOC) {
+        _str(o, _bloc_name(argv_p))
+    } else if (t == T_BOX) {
+        _str(o, cstr("box"))
+    } else if (t == T_TEMPLATE) {
+        _str(o, ld64(ld64(_val(argv_p) + TP_DT) + DT_NAME))
+    } else if (t == T_MAP) {
+        let key = stack_buf(16)
+        _str(key, cstr("__tag"))
+        _map_get(o, argv_p, _val(key))
+        if (g_found != 0 and _tag(o) == T_STR) {
+            retp(o)
+        }
+        _null(o)
+    } else {
+        _null(o)
+    }
+    retp(o)
+}
+
+# The length of a template or box into out. Returns 1 when handled.
+func _data_len(v, out) {
+    if (_tag(v) == T_TEMPLATE) {
+        st64(out, ld32(_val(v) + TP_N))
+        return 1
+    }
+    if (_tag(v) != T_BOX) {
+        return 0
+    }
+    _box_live(v)
+    st64(out, ld64(_box_slot(_val(v)) + BS_LEN))
+    return 1
+}
+
+# ---- unsafe blocks and pointers (port of src/unsafe_runtime.c) ----------------------------------------
+
+func _unsafe_depth() {
+    return g_block_depth
+}
+
+func _ptrs_reserve() {
+    if (g_ptr_count < g_ptr_cap) {
+        return 0
+    }
+    let next = 16
+    if (g_ptr_cap != 0) {
+        next = g_ptr_cap * 2
+    }
+    let grown = realloc(g_ptrs, PM_SIZE * next)
+    if (grown == 0) {
+        return 0
+    }
+    g_ptrs = grown
+    g_ptr_cap = next
+}
+
+func _find_exact(p) {
+    for (let i = 0; i < g_ptr_count; i++) {
+        if (ld64(g_ptrs + i * PM_SIZE + PM_PTR) == p) {
+            return g_ptrs + i * PM_SIZE
+        }
+    }
+    return 0
+}
+
+func _find_owner(p) {
+    for (let i = 0; i < g_ptr_count; i++) {
+        let m = g_ptrs + i * PM_SIZE
+        let end = ld64(m + PM_BASE) + ld64(m + PM_CELLS) * 16
+        if (uge(p, ld64(m + PM_BASE)) and ult(p, end)) {
+            return m
+        }
+    }
+    return 0
+}
+
+func _resolve_alloc_meta(m) {
+    if (m == 0 or ld32(m + PM_KIND) != PTR_ALLOC) {
+        return m
+    }
+    let owner = _find_exact(ld64(m + PM_BASE))
+    if (owner != 0) {
+        return owner
+    }
+    return m
+}
+
+func _register_alloc_meta(p, cells) {
+    _ptrs_reserve()
+    if (g_ptr_count >= g_ptr_cap) {
+        return 0
+    }
+    let m = g_ptrs + g_ptr_count * PM_SIZE
+    g_ptr_count += 1
+    st64(m + PM_PTR, p)
+    st64(m + PM_BASE, p)
+    st64(m + PM_CELLS, cells)
+    st32(m + PM_KIND, PTR_ALLOC)
+    st32(m + PM_OWNS, 1)
+    st32(m + PM_FREED, 0)
+    st64(m + PM_FLAGS, calloc(cells, 1))
+}
+
+func _register_addr_meta(p) {
+    if (_find_exact(p) != 0) {
+        return 0
+    }
+    _ptrs_reserve()
+    if (g_ptr_count >= g_ptr_cap) {
+        return 0
+    }
+    let m = g_ptrs + g_ptr_count * PM_SIZE
+    g_ptr_count += 1
+    st64(m + PM_PTR, p)
+    st64(m + PM_BASE, p)
+    st64(m + PM_CELLS, 1)
+    st32(m + PM_KIND, PTR_ADDR)
+    st32(m + PM_OWNS, 0)
+    st32(m + PM_FREED, 0)
+    st64(m + PM_FLAGS, 0)
+}
+
+func _register_alias_meta(p, owner) {
+    if (_find_exact(p) != 0) {
+        return 0
+    }
+    # The reserve may move the table, so the owner is kept as an index into it.
+    let owner_index = (owner - g_ptrs) / PM_SIZE
+    _ptrs_reserve()
+    if (g_ptr_count >= g_ptr_cap) {
+        return 0
+    }
+    owner = g_ptrs + owner_index * PM_SIZE
+    let m = g_ptrs + g_ptr_count * PM_SIZE
+    g_ptr_count += 1
+    st64(m + PM_PTR, p)
+    st64(m + PM_BASE, ld64(owner + PM_BASE))
+    st64(m + PM_CELLS, ld64(owner + PM_CELLS))
+    st32(m + PM_KIND, ld32(owner + PM_KIND))
+    st32(m + PM_OWNS, 0)
+    st32(m + PM_FREED, ld32(owner + PM_FREED))
+    st64(m + PM_FLAGS, ld64(owner + PM_FLAGS))
+}
+
+func _unsafe_hint(code) {
+    if (code == 1) {
+        return cstr("address_of() only works on normal values. If you already have a pointer, use it directly.")
+    }
+    if (code == 2) {
+        return cstr("Pointers must stay inside the current unsafe block. Copy the pointed-to value out instead.")
+    }
+    if (code == 3) {
+        return cstr("That pointer step moved past the allocated buffer. Keep ptr_add() within the allocated slot range.")
+    }
+    if (code == 4) {
+        return cstr("That pointer is no longer valid. Prefer defer(ptr) so cleanup happens once at block exit.")
+    }
+    if (code == 5) {
+        return cstr("address_of() needs a variable name such as address_of(x), not a temporary expression.")
+    }
+    if (code == 6) {
+        return cstr("Nested unsafe blocks are not supported. Merge the inner block into the outer one.")
+    }
+    if (code == 7) {
+        return cstr("Pointers cannot go into lists or maps because those values are GC-managed.")
+    }
+    if (code == 8) {
+        return cstr("alloc() needs a positive whole-number slot count, for example alloc(4).")
+    }
+    if (code == 9) {
+        return cstr("Only compare pointers with <, >, <=, or >= when they come from the same allocation.")
+    }
+    if (code == 10) {
+        return cstr("Only int(ptr) is allowed for pointer casts.")
+    }
+    if (code == 11) {
+        return cstr("Inside unsafe, call builtins only. Move user-defined function calls outside the block.")
+    }
+    if (code == 12) {
+        return cstr("Do not put free(ptr) inside if/while/for/switch branches. Use defer(ptr) or free it unconditionally.")
+    }
+    if (code == 13) {
+        return cstr("Use a pointer returned by alloc(), address_of(), or ptr_add().")
+    }
+    return cstr("Check the unsafe memory rule and the pointer lifetime in this block.")
+}
+
+func _report_unsafe(code) {
+    let msg = stack_buf(256)
+    luna_mem_error_message(code, msg, 256)
+    lv_error(E_RUNTIME, msg, _unsafe_hint(code))
+}
+
+func _unsafe_check(code) {
+    if (code != 0) {
+        _report_unsafe(code)
+    }
+}
+
+func _is_pointer(v) {
+    return _tag(v) == T_PTR and _find_owner(_val(v)) != 0
+}
+
+func _defer_push(p) {
+    if (g_defer_count >= g_defer_cap) {
+        let next = 16
+        if (g_defer_cap != 0) {
+            next = g_defer_cap * 2
+        }
+        let grown = realloc(g_defer_ptrs, 8 * next)
+        if (grown == 0) {
+            return 0
+        }
+        g_defer_ptrs = grown
+        g_defer_cap = next
+    }
+    st64(g_defer_ptrs + g_defer_count * 8, p)
+    g_defer_count += 1
+}
+
+func _free_alloc_meta(m) {
+    if (m == 0 or ld32(m + PM_KIND) != PTR_ALLOC or ld32(m + PM_OWNS) == 0 or ld32(m + PM_FREED) != 0) {
+        return 0
+    }
+    lv_gc_root_remove(ld64(m + PM_BASE))
+    free(ld64(m + PM_BASE))
+    st32(m + PM_FREED, 1)
+}
+
+func _process_deferred_frees() {
+    while (g_defer_count > 0) {
+        g_defer_count -= 1
+        let p = ld64(g_defer_ptrs + g_defer_count * 8)
+        let m = _find_exact(p)
+        if (m != 0 and ld32(m + PM_KIND) == PTR_ALLOC and ld32(m + PM_OWNS) != 0) {
+            _free_alloc_meta(m)
+        }
+    }
+}
+
+func lv_unsafe_begin() {
+    _unsafe_check(luna_mem_begin())
+    g_block_depth += 1
+}
+
+func lv_unsafe_end() {
+    if (g_block_depth > 0) {
+        g_block_depth -= 1
+    }
+    luna_mem_end()
+    _process_deferred_frees()
+}
+
+# R7: a pointer may not be stored in a GC-managed value.
+func _ptr_store_check(v) {
+    if (g_block_depth == 0 or _tag(v) != T_PTR or _is_pointer(v) == 0) {
+        return 0
+    }
+    _unsafe_check(luna_mem_gc_store_ok(_val(v)))
+}
+
+# Stores into lists and maps: no raw pointers (R7) and no scoped boxes.
+func lvp_container_check(v) {
+    _ptr_store_check(v)
+    lvp_box_escape_check(v, cstr("stored in a list or map"))
+}
+
+# Assignment to a global: R2 for pointers inside unsafe, and boxes may not escape a
+# function through a global.
+func lvp_global_store_check(v, in_function_i) {
+    if (g_block_depth > 0 and _tag(v) == T_PTR and _is_pointer(v) != 0) {
+        _unsafe_check(luna_mem_escape_ok(_val(v)))
+    }
+    if (in_function_i != 0) {
+        lvp_box_escape_check(v, cstr("assigned to a global from inside a function"))
+    }
+}
+
+# R9: ordered comparison of pointers needs one allocation. op: 0 ==, 1 !=, 2 <, 3 >, 4 <=, 5 >=.
+func _ptr_compare_check(a, b, op) {
+    if (_is_pointer(a) == 0 or _is_pointer(b) == 0) {
+        return 0
+    }
+    _unsafe_check(luna_mem_cmp_ok(_val(a), _val(b), op))
+}
+
+# R10: only int(ptr) may cast a pointer.
+func _ptr_cast_check(v, target) {
+    if (_is_pointer(v) == 0) {
+        return 0
+    }
+    _unsafe_check(luna_mem_cast_ok(_val(v), target))
+}
+
+# R11: inside unsafe only builtins may be called.
+func _unsafe_call_check(is_builtin) {
+    _unsafe_check(luna_mem_call_ok(is_builtin))
+}
+
+func _need_unsafe(fn) {
+    if (g_block_depth > 0) {
+        return 0
+    }
+    _errf(E_RUNTIME, cstr("Wrap pointer operations in unsafe \{ ... }"), cstr("%s() may only be used inside unsafe blocks"), fn, 0, 0)
+}
+
+func lb_alloc(self_p, argc_i, argv_p) {
+    _need_unsafe(cstr("alloc"))
+    if (argc_i != 1) {
+        lv_error(E_ARGUMENT, cstr("alloc() expects exactly 1 argument"), cstr("Use alloc(slotCount)"))
+    }
+    let is_int = _tag(argv_p) == T_INT
+    let cells = 0
+    if (is_int) {
+        cells = _val(argv_p)
+    }
+    _unsafe_check(luna_mem_alloc_size_ok(cells, is_int))
+    let mem = calloc(cells, 16)
+    if (mem == 0) {
+        lv_error(E_RUNTIME, cstr("alloc() failed to reserve memory"), cstr("Try a smaller allocation."))
+    }
+    lv_gc_root_add(mem, mem + 16 * cells)
+    _register_alloc_meta(mem, cells)
+    luna_mem_track_alloc(mem, cells * 16)
+    let o = stack_buf(16)
+    _set(o, T_PTR, mem)
+    retp(o)
+}
+
+func lb_free(self_p, argc_i, argv_p) {
+    if (argc_i != 1) {
+        lv_error(E_ARGUMENT, cstr("free() expects exactly 1 argument"), cstr("Use free(boxValue) or free(ptr)"))
+    }
+    let o = stack_buf(16)
+    _null(o)
+    if (_tag(argv_p) == T_BOX) {
+        let s = _box_slot(_val(argv_p))
+        if (s == 0) {
+            let code = luna_data_box_access_ok(_val(argv_p))
+            if (code == 5) {
+                lv_error(E_RUNTIME, cstr("box was already freed (double free)"), cstr("A box must be freed exactly once"))
+            }
+            lv_error(E_RUNTIME, cstr("free() expects a live box value"), cstr("A box must be freed exactly once"))
+        }
+        if (ld32(s + BS_OWNED) != 0) {
+            lv_error(E_RUNTIME, cstr("this box belongs to a template and is freed with it"), cstr("A box must be freed exactly once"))
+        }
+        _box_free_slot(s)
+        retp(o)
+    }
+    _need_unsafe(cstr("free"))
+    if (_is_pointer(argv_p) == 0) {
+        lv_error(E_TYPE, cstr("free() expects a pointer value"),
+                 cstr("Pass a pointer returned by alloc(), address_of(), or ptr_add()."))
+    }
+    let m = _find_exact(_val(argv_p))
+    if (m == 0 or ld32(m + PM_KIND) != PTR_ALLOC or ld32(m + PM_OWNS) == 0) {
+        _report_unsafe(13)
+    }
+    _unsafe_check(luna_mem_free_ok(_val(argv_p)))
+    _free_alloc_meta(m)
+    retp(o)
+}
+
+func lb_load(self_p, argc_i, argv_p) {
+    _need_unsafe(cstr("load"))
+    if (argc_i != 1) {
+        lv_error(E_ARGUMENT, cstr("load() expects exactly 1 pointer argument"), cstr("Use load(ptr)"))
+    }
+    if (_is_pointer(argv_p) == 0) {
+        _report_unsafe(13)
+    }
+    let p = _val(argv_p)
+    let m = _find_owner(p)
+    let am = _resolve_alloc_meta(m)
+    if (ld32(m + PM_KIND) == PTR_ALLOC) {
+        _unsafe_check(luna_mem_deref_ok(p))
+    }
+    let o = stack_buf(16)
+    if (ld32(m + PM_KIND) == PTR_ALLOC) {
+        let idx = udiv(p - ld64(am + PM_BASE), 16)
+        if (ld64(am + PM_FLAGS) != 0 and ld8(ld64(am + PM_FLAGS) + idx) != 0) {
+            _cp(o, p)
+        } else {
+            _null(o)
+        }
+        retp(o)
+    }
+    _cp(o, p)
+    retp(o)
+}
+
+func lb_deref(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    callv(o, lb_load, self_p, argc_i, argv_p)
+    retp(o)
+}
+
+func lb_store(self_p, argc_i, argv_p) {
+    _need_unsafe(cstr("store"))
+    if (argc_i != 2) {
+        lv_error(E_ARGUMENT, cstr("store() expects exactly 2 arguments"), cstr("Use store(ptr, value)"))
+    }
+    if (_is_pointer(argv_p) == 0) {
+        _report_unsafe(13)
+    }
+    let p = _val(argv_p)
+    let m = _find_owner(p)
+    let am = _resolve_alloc_meta(m)
+    if (ld32(m + PM_KIND) == PTR_ALLOC) {
+        _unsafe_check(luna_mem_store_ok(p))
+    }
+    _ptr_store_check(argv_p + 16)
+    _cp(p, argv_p + 16)
+    if (ld32(m + PM_KIND) == PTR_ALLOC) {
+        let idx = udiv(p - ld64(am + PM_BASE), 16)
+        if (ld64(am + PM_FLAGS) != 0) {
+            st8(ld64(am + PM_FLAGS) + idx, 1)
+        }
+    }
+    let o = stack_buf(16)
+    _null(o)
+    retp(o)
+}
+
+func lb_ptr_offset(self_p, argc_i, argv_p) {
+    _need_unsafe(cstr("ptr_offset"))
+    if (argc_i != 2) {
+        lv_error(E_ARGUMENT, cstr("ptr_offset() expects exactly 2 arguments"), cstr("Use ptr_offset(ptr, offset)"))
+    }
+    if (_is_pointer(argv_p) == 0 or _tag(argv_p + 16) != T_INT) {
+        lv_error(E_TYPE, cstr("ptr_add() expects a pointer and an integer offset"), cstr("Use ptr_add(buf, 1)."))
+    }
+    let owner = _find_owner(_val(argv_p))
+    let result = stack_buf(8)
+    st64(result, 0)
+    let byte_offset = _val(argv_p + 16) * 16
+    if (ld32(owner + PM_KIND) == PTR_ALLOC) {
+        _unsafe_check(luna_mem_ptr_add_ok(_val(argv_p), byte_offset, result))
+    } else {
+        st64(result, _val(argv_p) + byte_offset)
+    }
+    _register_alias_meta(ld64(result), _find_owner(_val(argv_p)))
+    let o = stack_buf(16)
+    _set(o, T_PTR, ld64(result))
+    retp(o)
+}
+
+func lb_ptr_add(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    callv(o, lb_ptr_offset, self_p, argc_i, argv_p)
+    retp(o)
+}
+
+func lb_defer(self_p, argc_i, argv_p) {
+    if (argc_i != 1) {
+        lv_error(E_ARGUMENT, cstr("defer() expects exactly 1 argument"),
+                 cstr("Use defer(close(file)) for general cleanup, or defer(ptr) inside unsafe"))
+    }
+    if (g_block_depth > 0 and _is_pointer(argv_p) != 0) {
+        luna_mem_defer(_val(argv_p))
+        _defer_push(_val(argv_p))
+        let o = stack_buf(16)
+        _null(o)
+        retp(o)
+    }
+    lv_error(E_ARGUMENT, cstr("defer() expects a call expression"),
+             cstr("Use defer(close(file)) or another function call to schedule cleanup"))
+}
+
+# address_of(name): a pointer to the named variable's storage.
+func lv_addr(slot_p) {
+    let target = slot_p
+    if (_is_pointer(slot_p) != 0) {
+        target = _val(slot_p)
+    }
+    _unsafe_check(luna_mem_addr_ok(target, 1))
+    _register_addr_meta(slot_p)
+    let o = stack_buf(16)
+    _set(o, T_PTR, slot_p)
+    retp(o)
+}
+
+# address_of on anything but a plain name, or with the wrong argument count.
+func lv_addr_invalid(given_i) {
+    if (g_block_depth == 0) {
+        lv_error(E_RUNTIME, cstr("address_of() may only be used inside unsafe blocks"), cstr("Wrap pointer operations in unsafe \{ ... }"))
+    }
+    if (given_i != 1) {
+        lv_error(E_ARGUMENT, cstr("address_of() expects exactly 1 argument"), cstr("Use address_of(variableName)"))
+    }
+    lv_error(E_RUNTIME, cstr("address_of() only works on named values"),
+             cstr("address_of() needs a variable name such as address_of(x), not a temporary expression."))
+    let o = stack_buf(16)
+    _null(o)
+    retp(o)
+}
+
+func lv_data_init() {
+    luna_data_init()
+    luna_mem_init()
+}

@@ -1,0 +1,4 @@
+=== Running Data and Memory Rule Tests ===
+defer 0
+defer 1
+Data and memory rule tests passed!

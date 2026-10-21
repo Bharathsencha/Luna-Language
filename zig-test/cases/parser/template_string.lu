@@ -1,2 +1,0 @@
-let name = "Luna"
-let greeting = "Hello {name}!"

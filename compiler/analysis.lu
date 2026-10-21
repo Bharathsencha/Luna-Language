@@ -3,7 +3,7 @@
 #
 # analysis.lu: which names a function uses and which are captured by nested functions.
 
-# Shared by the C and LLVM backends.
+# Used by the LLVM backend.
 # Every name read or written anywhere inside x (in order of first use).
 func walk_names(x, seen, order) {
     if (type(x) == "list") {

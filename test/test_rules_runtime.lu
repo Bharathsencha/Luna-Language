@@ -1,0 +1,191 @@
+# Port of the unit tests of the former Rust libraries (rust/unsafe_rt and rust/data_rt), run
+# through the language. The functions themselves are tested in test/native/rules_unit.lu.
+# CASE ptr_offset stays inside the allocation
+unsafe {
+    let a = alloc(4)
+    let last = ptr_offset(a, 3)
+    store(a, 1)
+    store(last, 2)
+    assert(load(a) == 1)
+    assert(load(last) == 2)
+    let zero = ptr_offset(a, 0)
+    assert(zero == a)
+    print("in bounds")
+}
+# CASE ptr_offset one cell past the end
+unsafe {
+    let a = alloc(4)
+    let bad = ptr_offset(a, 4)
+}
+# CASE ptr_offset negative offset
+unsafe {
+    let a = alloc(4)
+    let bad = ptr_offset(a, -1)
+}
+# CASE ptr_offset after free
+unsafe {
+    let a = alloc(4)
+    free(a)
+    let bad = ptr_offset(a, 1)
+}
+# CASE store after free
+unsafe {
+    let a = alloc(2)
+    free(a)
+    store(a, 5)
+}
+# CASE free twice
+unsafe {
+    let a = alloc(2)
+    free(a)
+    free(a)
+}
+# CASE ordered comparison inside one allocation
+unsafe {
+    let a = alloc(4)
+    let b = ptr_offset(a, 2)
+    assert(a < b)
+    assert(b > a)
+    assert(a <= a)
+    assert(b >= a)
+    assert(a != b)
+    assert(a == ptr_offset(a, 0))
+    print("same base")
+}
+# CASE equality of pointers from different allocations
+unsafe {
+    let a = alloc(1)
+    let b = alloc(1)
+    assert(a != b)
+    assert(not (a == b))
+    print("different bases are comparable with == and !=")
+}
+# CASE int cast of a pointer
+unsafe {
+    let a = alloc(1)
+    let n = int(a)
+    assert(n > 0)
+    print(type(n))
+    print("cast to int")
+}
+# CASE deferred frees run at the end of the block
+let seen = 0
+unsafe {
+    let a = alloc(2)
+    let b = alloc(2)
+    defer(a)
+    defer(b)
+    store(a, 1)
+    store(b, 2)
+    seen = load(a) + load(b)
+}
+assert(seen == 3)
+print("deferred")
+# CASE unsafe block can be entered again after it ends
+for (let i = 0; i < 3; i++) {
+    unsafe {
+        let a = alloc(1)
+        store(a, i)
+        assert(load(a) == i)
+        defer(a)
+    }
+}
+print("reentered")
+# CASE many allocations with deferred frees
+unsafe {
+    let total = 0
+    for (let i = 0; i < 300; i++) {
+        let p = alloc(2)
+        store(p, i)
+        total += load(p)
+        defer(p)
+    }
+    assert(total == 44850)
+    print("allocated and deferred")
+}
+# CASE address_of a named value is not a pointer
+unsafe {
+    let x = 5
+    let p = address_of(x)
+    store(p, 6)
+    assert(x == 6)
+    print("address_of")
+}
+# CASE alloc size must be an integer
+unsafe {
+    let a = alloc(1.5)
+}
+# CASE alloc size negative
+unsafe {
+    let a = alloc(-3)
+}
+# CASE box size limits
+let big = box[4096]
+assert(big.len == 4096)
+big[4095] = 9
+assert(big[4095] == 9)
+free(big)
+print("box limit")
+# CASE box size zero
+let b = box[0]
+# CASE box size one over the limit
+let b = box[4097]
+# CASE box size negative
+let b = box[-1]
+# CASE box access after free through an alias
+let a = box[4]
+let alias = a
+free(a)
+alias[0] = 1
+# CASE a freed box handle stays freed after its slot is reused
+let old = box[2]
+free(old)
+let fresh = box[2]
+fresh[0] = 7
+assert(fresh[0] == 7)
+assert(to_string(old) == "<box freed>")
+print("fresh box is live, old handle is freed")
+# CASE box lifecycle many times
+let ok = 0
+for (let i = 0; i < 5000; i++) {
+    let b = box[16]
+    b[i % 16] = i % 256
+    if (b[i % 16] == i % 256) { ok += 1 }
+    free(b)
+}
+assert(ok == 5000)
+print("box churn")
+# CASE bloc with four fields fits in 32 bytes
+bloc Quad { a, b, c, d }
+let q = Quad{1, 2, 3, 4}
+assert(q.d == 4)
+print("four fields")
+# CASE bloc of two blocs fits
+bloc Vec2 { x, y }
+bloc Rect { min, max }
+let r = Rect{Vec2{0.5, 1.5}, Vec2{2.5, 3.5}}
+assert(r.max.y == 3.5)
+print("nested bloc")
+# CASE bloc redefinition with the same fields
+bloc Pt { x, y }
+bloc Pt { x, y }
+let p = Pt{1, 2}
+assert(p.y == 2)
+print("redefined")
+# CASE template redefinition with the same fields
+template Pair { left, right }
+template Pair { left, right }
+let p = Pair(1, 2)
+assert(p.right == 2)
+p.left = 10
+assert(p.left == 10)
+print("template redefined")
+# CASE template duplicate field
+template Bad { a, a }
+# CASE template holds a box and a bloc
+bloc V { x }
+template Holder { v, bytes }
+let h = Holder(V{1}, box[4])
+assert(h.v.x == 1)
+assert(h.bytes.len == 4)
+print("template contents")

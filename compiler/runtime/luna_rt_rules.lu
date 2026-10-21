@@ -1,0 +1,806 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# luna_rt_rules.lu: the validation rules behind data, template, bloc, box and unsafe blocks.
+# This is a port of the two Rust runtime libraries the VM used to link: rust/data_rt
+# (luna_data_*: bloc and template schemas, the box handle table, the containment rules) and
+# rust/unsafe_rt (luna_mem_*: the allocation table and the twelve pointer rules). The error
+# codes and the error text are the ones those libraries used.
+#
+# Every rule is a function that returns 0 for "allowed" or a non-zero error code; the
+# caller in luna_rt_data.lu turns the code into the runtime error with
+# luna_data_error_message or luna_mem_error_message.
+
+extern("memcpy", "ptr", "ptr,ptr,i64")
+extern("strlen", "i64", "ptr")
+extern("strcmp", "i32", "ptr,ptr")
+extern("free", "void", "ptr")
+extern("calloc", "ptr", "i64,i64")
+extern("realloc", "ptr", "ptr,i64")
+
+# ---- shared helpers ----------------------------------------------------------------------------
+
+# A hash map from a word key to a non-zero word value (0 means "absent"). The record is
+# { keys, vals, cap, count }; cap is a power of two and the table stays at most half full.
+const HM_KEYS = 0
+const HM_VALS = 8
+const HM_CAP = 16
+const HM_N = 24
+const HM_SIZE = 32
+
+func _rl_hash(key) {
+    let h = key * 2654435761
+    return bxor(h, shr(h, 29))
+}
+
+# The slot holding key, or the empty slot where it would go.
+func _rl_hm_find(m, key) {
+    let cap = ld64(m + HM_CAP)
+    if (cap == 0) {
+        return -1
+    }
+    let keys = ld64(m + HM_KEYS)
+    let vals = ld64(m + HM_VALS)
+    let i = band(_rl_hash(key), cap - 1)
+    while (vals[i] != 0 and keys[i] != key) {
+        i = band(i + 1, cap - 1)
+    }
+    return i
+}
+
+func _rl_hm_get(m, key) {
+    let i = _rl_hm_find(m, key)
+    if (i < 0) {
+        return 0
+    }
+    let vals = ld64(m + HM_VALS)
+    return vals[i]
+}
+
+func _rl_hm_grow(m) {
+    let old_cap = ld64(m + HM_CAP)
+    let old_keys = ld64(m + HM_KEYS)
+    let old_vals = ld64(m + HM_VALS)
+    let cap = 16
+    if (old_cap != 0) {
+        cap = old_cap * 2
+    }
+    st64(m + HM_CAP, cap)
+    st64(m + HM_KEYS, calloc(cap, 8))
+    st64(m + HM_VALS, calloc(cap, 8))
+    let keys = ld64(m + HM_KEYS)
+    let vals = ld64(m + HM_VALS)
+    for (let j = 0; j < old_cap; j++) {
+        if (old_vals[j] != 0) {
+            let i = band(_rl_hash(old_keys[j]), cap - 1)
+            while (vals[i] != 0) {
+                i = band(i + 1, cap - 1)
+            }
+            keys[i] = old_keys[j]
+            vals[i] = old_vals[j]
+        }
+    }
+    if (old_cap != 0) {
+        free(old_keys)
+        free(old_vals)
+    }
+}
+
+func _rl_hm_put(m, key, val) {
+    if ((ld64(m + HM_N) + 1) * 2 > ld64(m + HM_CAP)) {
+        _rl_hm_grow(m)
+    }
+    let i = _rl_hm_find(m, key)
+    let keys = ld64(m + HM_KEYS)
+    let vals = ld64(m + HM_VALS)
+    if (vals[i] == 0) {
+        keys[i] = key
+        st64(m + HM_N, ld64(m + HM_N) + 1)
+    }
+    vals[i] = val
+}
+
+func _rl_hm_clear(m) {
+    if (ld64(m + HM_CAP) != 0) {
+        free(ld64(m + HM_KEYS))
+        free(ld64(m + HM_VALS))
+    }
+    st64(m + HM_KEYS, 0)
+    st64(m + HM_VALS, 0)
+    st64(m + HM_CAP, 0)
+    st64(m + HM_N, 0)
+}
+
+# Copies the message into buf as a NUL-terminated string cut to buf_len - 1 bytes.
+func _rl_copy_message(msg, buf, buf_len) {
+    if (buf == 0 or buf_len == 0) {
+        return 0
+    }
+    let n = strlen(msg)
+    if (ult(buf_len - 1, n)) {
+        n = buf_len - 1
+    }
+    if (n > 0) {
+        memcpy(buf, msg, n)
+    }
+    st8(buf + n, 0)
+}
+
+func _rl_dup(s) {
+    let n = strlen(s)
+    let p = calloc(n + 1, 1)
+    memcpy(p, s, n)
+    return p
+}
+
+# UTF-8 as Rust's CStr::to_str accepts it. The length of the code point starting at p, or 0
+# when the bytes there are not well-formed UTF-8.
+func _rl_cp_len(p) {
+    let b0 = ld8(p)
+    if (b0 < 128) {
+        return 1
+    }
+    let b1 = ld8(p + 1)
+    if (b0 >= 194 and b0 <= 223) {
+        if (b1 >= 128 and b1 <= 191) {
+            return 2
+        }
+        return 0
+    }
+    if (b0 >= 224 and b0 <= 239) {
+        let lo = 128
+        let hi = 191
+        if (b0 == 224) {
+            lo = 160
+        }
+        if (b0 == 237) {
+            hi = 159
+        }
+        if (b1 >= lo and b1 <= hi and ld8(p + 2) >= 128 and ld8(p + 2) <= 191) {
+            return 3
+        }
+        return 0
+    }
+    if (b0 >= 240 and b0 <= 244) {
+        let lo = 128
+        let hi = 191
+        if (b0 == 240) {
+            lo = 144
+        }
+        if (b0 == 244) {
+            hi = 143
+        }
+        if (b1 >= lo and b1 <= hi and ld8(p + 2) >= 128 and ld8(p + 2) <= 191 and ld8(p + 3) >= 128 and ld8(p + 3) <= 191) {
+            return 4
+        }
+        return 0
+    }
+    return 0
+}
+
+func _rl_cp(p, n) {
+    let b0 = ld8(p)
+    if (n == 1) {
+        return b0
+    }
+    if (n == 2) {
+        return shl(band(b0, 31), 6) + band(ld8(p + 1), 63)
+    }
+    if (n == 3) {
+        return shl(band(b0, 15), 12) + shl(band(ld8(p + 1), 63), 6) + band(ld8(p + 2), 63)
+    }
+    return shl(band(b0, 7), 18) + shl(band(ld8(p + 1), 63), 12) + shl(band(ld8(p + 2), 63), 6) + band(ld8(p + 3), 63)
+}
+
+# Unicode White_Space, the set str::trim removes.
+func _rl_is_space(c) {
+    if (c == 32 or (c >= 9 and c <= 13) or c == 133 or c == 160 or c == 5760) {
+        return 1
+    }
+    if ((c >= 8192 and c <= 8202) or c == 8232 or c == 8233 or c == 8239 or c == 8287 or c == 12288) {
+        return 1
+    }
+    return 0
+}
+
+# 1 when s is a non-null string of well-formed UTF-8 (CStr::to_str succeeded), else 0.
+func _rl_utf8_ok(s) {
+    if (s == 0) {
+        return 0
+    }
+    let p = s
+    while (ld8(p) != 0) {
+        let n = _rl_cp_len(p)
+        if (n == 0) {
+            return 0
+        }
+        p = p + n
+    }
+    return 1
+}
+
+# 1 when s trims to the empty string.
+func _rl_blank(s) {
+    let p = s
+    while (ld8(p) != 0) {
+        let n = _rl_cp_len(p)
+        if (_rl_is_space(_rl_cp(p, n)) == 0) {
+            return 0
+        }
+        p = p + n
+    }
+    return 1
+}
+
+# A usable name: valid UTF-8 and not blank.
+func _rl_name_ok(s) {
+    return _rl_utf8_ok(s) != 0 and _rl_blank(s) == 0
+}
+
+# The field names of a C array that are valid UTF-8, as a calloc'd block { n, name... }.
+func _rl_collect_fields(fields, count) {
+    if (fields == 0 or count <= 0) {
+        return calloc(1, 8)
+    }
+    let out = calloc(count + 1, 8)
+    let n = 0
+    for (let i = 0; i < count; i++) {
+        let f = ld64(fields + i * 8)
+        if (_rl_utf8_ok(f) != 0) {
+            n += 1
+            out[n] = f
+        }
+    }
+    out[0] = n
+    return out
+}
+
+# The index (1-based) of the first field equal to an earlier one, or 0.
+func _rl_duplicate_field(list) {
+    let n = list[0]
+    for (let i = 2; i <= n; i++) {
+        for (let j = 1; j < i; j++) {
+            if (strcmp(list[i], list[j]) == 0) {
+                return i
+            }
+        }
+    }
+    return 0
+}
+
+# ---- data runtime: error codes and text -----------------------------------------------------------
+
+const DERR_BLOC_EMPTY_NAME = 1
+const DERR_BLOC_DUPLICATE_FIELD = 2
+const DERR_BLOC_OVERSIZE = 3
+const DERR_BOX_INVALID_SIZE = 4
+const DERR_BOX_USE_AFTER_FREE = 5
+const DERR_BOX_NOT_LIVE = 6
+const DERR_TEMPLATE_EMPTY_NAME = 7
+const DERR_TEMPLATE_DUPLICATE_FIELD = 8
+const DERR_TEMPLATE_DUPLICATE_SCHEMA = 9
+const DERR_TEMPLATE_ARITY = 10
+const DERR_TEMPLATE_UNKNOWN_FIELD = 11
+const DERR_CONTAINMENT = 12
+
+const BLOC_MAX_INLINE_BYTES = 32
+const BOX_MAX_BYTES = 4096
+const KIND_BLOC = 1
+const KIND_BOX = 2
+const KIND_TEMPLATE = 3
+
+func _rl_data_message(code) {
+    if (code == 0) {
+        return cstr("ok")
+    }
+    if (code == DERR_BLOC_EMPTY_NAME) {
+        return cstr("bloc name cannot be empty")
+    }
+    if (code == DERR_BLOC_DUPLICATE_FIELD) {
+        return cstr("bloc has duplicate field names")
+    }
+    if (code == DERR_BLOC_OVERSIZE) {
+        return cstr("bloc exceeds the cache-line size limit (32 bytes)")
+    }
+    if (code == DERR_BOX_INVALID_SIZE) {
+        return cstr("box size must be between 1 and 4096 bytes")
+    }
+    if (code == DERR_BOX_USE_AFTER_FREE) {
+        return cstr("box was already freed (use-after-free)")
+    }
+    if (code == DERR_BOX_NOT_LIVE) {
+        return cstr("box is not live")
+    }
+    if (code == DERR_TEMPLATE_EMPTY_NAME) {
+        return cstr("template name cannot be empty")
+    }
+    if (code == DERR_TEMPLATE_DUPLICATE_FIELD) {
+        return cstr("template has duplicate field names")
+    }
+    if (code == DERR_TEMPLATE_DUPLICATE_SCHEMA) {
+        return cstr("template with this name is already registered")
+    }
+    if (code == DERR_TEMPLATE_ARITY) {
+        return cstr("template constructor argument count does not match field count")
+    }
+    if (code == DERR_TEMPLATE_UNKNOWN_FIELD) {
+        return cstr("template does not have a field with that name")
+    }
+    if (code == DERR_CONTAINMENT) {
+        return cstr("containment hierarchy violation: type cannot be stored inside this tier")
+    }
+    return cstr("unknown data runtime error")
+}
+
+func luna_data_error_message(code, buf, buf_len) {
+    _rl_copy_message(_rl_data_message(code), buf, buf_len)
+}
+
+# ---- data runtime: state ------------------------------------------------------------------------
+
+space("rl_box_map", 32)
+# Template schemas { next, name, nfields, fields } in a list, newest first.
+const TS_NEXT = 0
+const TS_NAME = 8
+const TS_NFIELDS = 16
+const TS_FIELDS = 24
+const TS_SIZE = 32
+let rl_schemas = 0
+
+func luna_data_init() {
+    _rl_hm_clear(addr_of("rl_box_map"))
+    let s = rl_schemas
+    while (s != 0) {
+        let next = ld64(s + TS_NEXT)
+        let n = ld64(s + TS_NFIELDS)
+        for (let i = 0; i < n; i++) {
+            free(ld64(ld64(s + TS_FIELDS) + i * 8))
+        }
+        free(ld64(s + TS_FIELDS))
+        free(ld64(s + TS_NAME))
+        free(s)
+        s = next
+    }
+    rl_schemas = 0
+}
+
+func _rl_schema_find(name) {
+    let s = rl_schemas
+    while (s != 0) {
+        if (strcmp(ld64(s + TS_NAME), name) == 0) {
+            return s
+        }
+        s = ld64(s + TS_NEXT)
+    }
+    return 0
+}
+
+# ---- data runtime: bloc, box, template rules ------------------------------------------------------
+
+# Name not blank, no duplicate fields, and the fields (8 bytes each, the worst case) fit in 32
+# bytes. Duplicates are checked before the size at each field, as the layout builder did.
+func luna_data_bloc_validate(name, fields, count) {
+    if (_rl_name_ok(name) == 0) {
+        return DERR_BLOC_EMPTY_NAME
+    }
+    let list = _rl_collect_fields(fields, count)
+    let n = list[0]
+    let size = 0
+    for (let i = 1; i <= n; i++) {
+        for (let j = 1; j < i; j++) {
+            if (strcmp(list[i], list[j]) == 0) {
+                free(list)
+                return DERR_BLOC_DUPLICATE_FIELD
+            }
+        }
+        size += 8
+        if (size > BLOC_MAX_INLINE_BYTES) {
+            free(list)
+            return DERR_BLOC_OVERSIZE
+        }
+    }
+    free(list)
+    return 0
+}
+
+func luna_data_box_size_ok(size) {
+    if (size == 0 or ugt(size, BOX_MAX_BYTES)) {
+        return DERR_BOX_INVALID_SIZE
+    }
+    return 0
+}
+
+# A handle's state in the table: 1 live, 2 freed, 0 unknown.
+func luna_data_box_track(handle) {
+    _rl_hm_put(addr_of("rl_box_map"), handle, 1)
+}
+
+func luna_data_box_access_ok(handle) {
+    let st = _rl_hm_get(addr_of("rl_box_map"), handle)
+    if (st == 1) {
+        return 0
+    }
+    if (st == 2) {
+        return DERR_BOX_USE_AFTER_FREE
+    }
+    return DERR_BOX_NOT_LIVE
+}
+
+func luna_data_box_free_ok(handle) {
+    let m = addr_of("rl_box_map")
+    let st = _rl_hm_get(m, handle)
+    if (st == 1) {
+        _rl_hm_put(m, handle, 2)
+        return 0
+    }
+    if (st == 2) {
+        return DERR_BOX_USE_AFTER_FREE
+    }
+    return DERR_BOX_NOT_LIVE
+}
+
+# Validates a template schema and registers it. Registering a name again is allowed and
+# keeps the first schema.
+func luna_data_template_register(name, fields, count) {
+    if (_rl_name_ok(name) == 0) {
+        return DERR_TEMPLATE_EMPTY_NAME
+    }
+    let list = _rl_collect_fields(fields, count)
+    if (_rl_duplicate_field(list) != 0) {
+        free(list)
+        return DERR_TEMPLATE_DUPLICATE_FIELD
+    }
+    if (_rl_schema_find(name) == 0) {
+        let n = list[0]
+        let s = calloc(1, TS_SIZE)
+        st64(s + TS_NAME, _rl_dup(name))
+        st64(s + TS_NFIELDS, n)
+        st64(s + TS_FIELDS, calloc(n + 1, 8))
+        for (let i = 0; i < n; i++) {
+            st64(ld64(s + TS_FIELDS) + i * 8, _rl_dup(list[i + 1]))
+        }
+        st64(s + TS_NEXT, rl_schemas)
+        rl_schemas = s
+    }
+    free(list)
+    return 0
+}
+
+# A constructor call with got arguments against the registered schema. Unregistered names pass.
+func luna_data_template_arity_ok(name, got) {
+    if (_rl_utf8_ok(name) == 0) {
+        return DERR_TEMPLATE_EMPTY_NAME
+    }
+    let s = _rl_schema_find(name)
+    if (s == 0 or ld64(s + TS_NFIELDS) == got) {
+        return 0
+    }
+    return DERR_TEMPLATE_ARITY
+}
+
+# A field name against the registered schema. Unregistered names pass.
+func luna_data_template_field_ok(name, field) {
+    if (_rl_utf8_ok(name) == 0) {
+        return DERR_TEMPLATE_EMPTY_NAME
+    }
+    if (_rl_utf8_ok(field) == 0) {
+        return DERR_TEMPLATE_UNKNOWN_FIELD
+    }
+    let s = _rl_schema_find(name)
+    if (s == 0) {
+        return 0
+    }
+    let n = ld64(s + TS_NFIELDS)
+    for (let i = 0; i < n; i++) {
+        if (strcmp(ld64(ld64(s + TS_FIELDS) + i * 8), field) == 0) {
+            return 0
+        }
+    }
+    return DERR_TEMPLATE_UNKNOWN_FIELD
+}
+
+# Containment: a template holds blocs and boxes, a box holds blocs, a bloc is a leaf.
+func luna_data_containment_ok(outer, inner) {
+    if (outer == KIND_TEMPLATE and (inner == KIND_BLOC or inner == KIND_BOX)) {
+        return 0
+    }
+    if (outer == KIND_BOX and inner == KIND_BLOC) {
+        return 0
+    }
+    return DERR_CONTAINMENT
+}
+
+# ---- unsafe runtime: error codes and text ---------------------------------------------------------
+
+const MERR_POINTER_TO_POINTER = 1
+const MERR_ESCAPE = 2
+const MERR_OUT_OF_BOUNDS = 3
+const MERR_USE_AFTER_FREE = 4
+const MERR_ADDR_TEMPORARY = 5
+const MERR_NESTED_UNSAFE = 6
+const MERR_GC_STORE = 7
+const MERR_ALLOC_SIZE = 8
+const MERR_CMP_BASE = 9
+const MERR_CAST = 10
+const MERR_CALL = 11
+const MERR_CONDITIONAL_FREE = 12
+const MERR_UNKNOWN_POINTER = 13
+
+func _rl_mem_message(code) {
+    if (code == 0) {
+        return cstr("ok")
+    }
+    if (code == MERR_POINTER_TO_POINTER) {
+        return cstr("cannot take address_of() of a pointer value")
+    }
+    if (code == MERR_ESCAPE) {
+        return cstr("pointer cannot escape the current unsafe block")
+    }
+    if (code == MERR_OUT_OF_BOUNDS) {
+        return cstr("ptr_add() moved outside the allocation bounds")
+    }
+    if (code == MERR_USE_AFTER_FREE) {
+        return cstr("pointer was freed or freed twice")
+    }
+    if (code == MERR_ADDR_TEMPORARY) {
+        return cstr("address_of() only works on named values")
+    }
+    if (code == MERR_NESTED_UNSAFE) {
+        return cstr("nested unsafe blocks are not allowed")
+    }
+    if (code == MERR_GC_STORE) {
+        return cstr("pointers cannot be stored inside GC-managed values")
+    }
+    if (code == MERR_ALLOC_SIZE) {
+        return cstr("alloc() size must be a positive integer")
+    }
+    if (code == MERR_CMP_BASE) {
+        return cstr("ordered pointer comparisons need the same base allocation")
+    }
+    if (code == MERR_CAST) {
+        return cstr("pointers may only be cast to int")
+    }
+    if (code == MERR_CALL) {
+        return cstr("only builtin calls are allowed inside unsafe blocks")
+    }
+    if (code == MERR_CONDITIONAL_FREE) {
+        return cstr("free() may not appear inside conditional control flow")
+    }
+    if (code == MERR_UNKNOWN_POINTER) {
+        return cstr("unsafe error: pointer is not registered in the runtime")
+    }
+    return cstr("unsafe error: unknown runtime error")
+}
+
+func luna_mem_error_message(code, buf, buf_len) {
+    _rl_copy_message(_rl_mem_message(code), buf, buf_len)
+}
+
+# ---- unsafe runtime: allocation table -------------------------------------------------------------
+
+# One entry per allocation { base, size in bytes, poisoned } in registration order, and a map
+# from base to entry number + 1. A freed allocation stays in the table, poisoned.
+const AE_BASE = 0
+const AE_SIZE = 8
+const AE_POISON = 16
+const AE_WORDS = 3
+
+space("rl_alloc_map", 32)
+let rl_entries = 0
+let rl_entry_n = 0
+let rl_entry_cap = 0
+let rl_defers = 0
+let rl_defer_n = 0
+let rl_defer_cap = 0
+let rl_inside = 0
+
+func luna_mem_init() {
+    _rl_hm_clear(addr_of("rl_alloc_map"))
+    rl_entry_n = 0
+    rl_defer_n = 0
+    rl_inside = 0
+}
+
+func luna_mem_track_alloc(ptr, size) {
+    let m = addr_of("rl_alloc_map")
+    let found = _rl_hm_get(m, ptr)
+    if (found != 0) {
+        let e = rl_entries + (found - 1) * AE_WORDS * 8
+        st64(e + AE_SIZE, size)
+        st64(e + AE_POISON, 0)
+        return 0
+    }
+    if (rl_entry_n == rl_entry_cap) {
+        let cap = 16
+        if (rl_entry_cap != 0) {
+            cap = rl_entry_cap * 2
+        }
+        rl_entries = realloc(rl_entries, cap * AE_WORDS * 8)
+        rl_entry_cap = cap
+    }
+    let e = rl_entries + rl_entry_n * AE_WORDS * 8
+    st64(e + AE_BASE, ptr)
+    st64(e + AE_SIZE, size)
+    st64(e + AE_POISON, 0)
+    rl_entry_n += 1
+    _rl_hm_put(m, ptr, rl_entry_n)
+}
+
+# The entry whose base is exactly ptr, or 0.
+func _rl_exact(ptr) {
+    let found = _rl_hm_get(addr_of("rl_alloc_map"), ptr)
+    if (found == 0) {
+        return 0
+    }
+    return rl_entries + (found - 1) * AE_WORDS * 8
+}
+
+# The entry whose allocation contains ptr, or 0. The newest allocation wins when freed memory
+# has been handed out again.
+func _rl_owner(ptr) {
+    let i = rl_entry_n - 1
+    while (i >= 0) {
+        let e = rl_entries + i * AE_WORDS * 8
+        let base = ld64(e + AE_BASE)
+        let end = base + ld64(e + AE_SIZE)
+        if (ult(end, base)) {
+            end = -1
+        }
+        if (uge(ptr, base) and ult(ptr, end)) {
+            return e
+        }
+        i -= 1
+    }
+    return 0
+}
+
+# ---- unsafe runtime: rules ----------------------------------------------------------------------
+
+func luna_mem_begin() {
+    if (rl_inside != 0) {
+        return MERR_NESTED_UNSAFE
+    }
+    rl_inside = 1
+    return 0
+}
+
+func luna_mem_end() {
+    luna_mem_run_defers()
+    rl_inside = 0
+}
+
+# R4: free marks the allocation freed; a second free is an error.
+func luna_mem_free_ok(ptr) {
+    let e = _rl_exact(ptr)
+    if (e == 0) {
+        return MERR_UNKNOWN_POINTER
+    }
+    if (ld64(e + AE_POISON) != 0) {
+        return MERR_USE_AFTER_FREE
+    }
+    st64(e + AE_POISON, 1)
+    return 0
+}
+
+func luna_mem_deref_ok(ptr) {
+    let e = _rl_owner(ptr)
+    if (e == 0) {
+        return MERR_UNKNOWN_POINTER
+    }
+    if (ld64(e + AE_POISON) != 0) {
+        return MERR_USE_AFTER_FREE
+    }
+    return 0
+}
+
+func luna_mem_store_ok(ptr) {
+    return luna_mem_deref_ok(ptr)
+}
+
+# R3: base + offset must stay inside the allocation that starts at base. The result goes to
+# out_ptr (when not null) only on success.
+func luna_mem_ptr_add_ok(base, offset, out_ptr) {
+    let e = _rl_exact(base)
+    if (e == 0) {
+        return MERR_UNKNOWN_POINTER
+    }
+    if (ld64(e + AE_POISON) != 0) {
+        return MERR_USE_AFTER_FREE
+    }
+    if (uge(offset, ld64(e + AE_SIZE))) {
+        return MERR_OUT_OF_BOUNDS
+    }
+    let result = base + offset
+    if (ult(result, base)) {
+        result = -1
+    }
+    if (out_ptr != 0) {
+        st64(out_ptr, result)
+    }
+    return 0
+}
+
+# R1 and R5: address_of needs a named value that is not already a pointer.
+func luna_mem_addr_ok(ptr, is_named) {
+    if (is_named == 0) {
+        return MERR_ADDR_TEMPORARY
+    }
+    if (_rl_owner(ptr) != 0) {
+        return MERR_POINTER_TO_POINTER
+    }
+    return 0
+}
+
+# R2: a pointer never leaves its unsafe block.
+func luna_mem_escape_ok(ptr) {
+    return MERR_ESCAPE
+}
+
+# R9: == and != compare any pointers; ordered comparisons need one allocation.
+func luna_mem_cmp_ok(ptr_a, ptr_b, op) {
+    if (op == 0 or op == 1) {
+        return 0
+    }
+    let a = _rl_owner(ptr_a)
+    if (a == 0) {
+        return MERR_UNKNOWN_POINTER
+    }
+    let b = _rl_owner(ptr_b)
+    if (b == 0) {
+        return MERR_UNKNOWN_POINTER
+    }
+    if (ld64(a + AE_BASE) == ld64(b + AE_BASE)) {
+        return 0
+    }
+    return MERR_CMP_BASE
+}
+
+# R10: only int(ptr), target type 0, casts a pointer.
+func luna_mem_cast_ok(ptr, target_type) {
+    if (target_type == 0) {
+        return 0
+    }
+    return MERR_CAST
+}
+
+# R11: only builtins are called inside unsafe.
+func luna_mem_call_ok(is_builtin) {
+    if (is_builtin != 0) {
+        return 0
+    }
+    return MERR_CALL
+}
+
+# R8: alloc takes a positive integer.
+func luna_mem_alloc_size_ok(n, is_integer) {
+    if (is_integer == 0 or n <= 0) {
+        return MERR_ALLOC_SIZE
+    }
+    return 0
+}
+
+# Deferred frees run in reverse order when the block ends; their errors are ignored.
+func luna_mem_defer(ptr) {
+    if (rl_defer_n == rl_defer_cap) {
+        let cap = 16
+        if (rl_defer_cap != 0) {
+            cap = rl_defer_cap * 2
+        }
+        rl_defers = realloc(rl_defers, cap * 8)
+        rl_defer_cap = cap
+    }
+    rl_defers[rl_defer_n] = ptr
+    rl_defer_n += 1
+}
+
+func luna_mem_run_defers() {
+    while (rl_defer_n > 0) {
+        rl_defer_n -= 1
+        luna_mem_free_ok(rl_defers[rl_defer_n])
+    }
+}
+
+# R7: a pointer may not be stored in a GC-managed value.
+func luna_mem_gc_store_ok(ptr) {
+    return MERR_GC_STORE
+}

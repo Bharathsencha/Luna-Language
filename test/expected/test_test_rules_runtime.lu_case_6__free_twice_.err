@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 4:
+  pointer was freed or freed twice
+
+   4 |     free(a)
+
+Hint: That pointer is no longer valid. Prefer defer(ptr) so cleanup happens once at block exit.

@@ -1,22 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (c) 2026 Bharath
 #
-# lunac: a Luna compiler written in Luna. It reads one .lu file and writes C or LLVM IR
-# that is built against compiler/runtime/luna_rt.c.
+# luna: the Luna compiler, written in Luna. It turns a .lu program into LLVM IR and has clang
+# build a native binary against the runtime in compiler/runtime (also written in Luna and
+# compiled by emit_native.lu). There is no interpreter.
 #
-#   luna compiler/lunac.lu input.lu output.c      C
-#   luna compiler/lunac.lu input.lu output.ll     LLVM IR (chosen by the .ll extension)
+#   luna build prog.lu -o prog [-S]     build a binary; -S keeps C/prog.ll and stops
+#   luna run prog.lu [args...]          build into C/run/ and run it
+#   luna emit prog.lu [-o out.ll]       write the LLVM IR only
+#   luna --native a.lu b.lu -o out.ll   compile runtime source (see emit_native.lu)
 #
 # The compiler is split into the modules next to this file. This one is the driver.
-# Note for readers: these files must themselves be written in the subset lunac
-# compiles, so identifiers such as data, from, in, input and print are never used
-# as names, and a literal { inside a string is written \{.
+# Note for readers: these files must themselves be written in the subset the compiler
+# compiles, so identifiers such as data, from, in, input, print and box are never used as
+# names, and a literal { inside a string is written \{.
 
 use { read_file, split_lines } from "util.lu"
 use { lex } from "lexer.lu"
 use { parse_program } from "parser.lu"
-use { compile_program } from "emit_c.lu"
 use { compile_program_ll } from "emit_llvm.lu"
+use { compile_native } from "emit_native.lu"
 use { ST } from "state.lu"
 
 # Name of a file without its directory and extension: "dir/prog.lu" is "prog".
@@ -29,45 +32,75 @@ func base_name(path) {
     return name
 }
 
-# The shell command that turns generated code into a binary. LUNA_HOME names the
+# The shell command that turns generated IR into a binary. LUNA_HOME names the
 # repository (default: the current directory); CC overrides the compiler.
-func build_command(emit, code_path, out_path) {
+func build_command(code_path, out_path) {
     let home = "$\{LUNA_HOME:-.}"
     let rt = "{home}/compiler/runtime"
-    let libs = "-L{home}/lib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl"
-    let srcs = "{rt}/luna_rt.c {rt}/luna_rt_data.c {rt}/luna_gc.c"
-    if (emit == "llvm") {
-        return "$\{CC:-clang} -O1 -w -I{rt} {code_path} {srcs} {rt}/luna_rt_ir.c {libs} -o {out_path}"
-    }
-    return "$\{CC:-gcc} -std=gnu11 -O1 -w -I{rt} {code_path} {srcs} {libs} -o {out_path}"
+    let libs = "-lm -lpthread -ldl"
+    let srcs = "$({home}/compiler/build_runtime.sh)"
+    return "$\{CC:-clang} -O1 -w {code_path} {srcs} {libs} -o {out_path}"
 }
 
 func usage() {
-    print("usage: lunac input.lu -o program [--emit=llvm|c] [-S]")
-    print("       lunac input.lu output.ll|output.c [cwd]")
+    print("usage: luna build prog.lu -o program [-S]")
+    print("       luna run prog.lu [args...]")
+    print("       luna emit prog.lu [-o out.ll]")
     print("")
-    print("  -o path        write the program here")
-    print("  --emit=llvm|c  generated language, LLVM IR by default")
-    print("  -S             stop after writing C/<name>.ll (or .c) and do not build")
+    print("  build  compile to a native binary through LLVM IR")
+    print("  run    build into C/run/ and run it with the given arguments")
+    print("  emit   write LLVM IR only (default C/<name>.ll)")
+    print("  -o     where to write the program or the IR")
+    print("  -S     with build: write C/<name>.ll and do not build")
     exit(1)
 }
 
-# lunac input.lu -o program [--emit=llvm|c] [-S]
+# Parses and compiles one program; returns the LLVM IR text.
+func compile_file(path) {
+    ST.src_file = path
+    let text = read_file(path)
+    ST.src_lines = split_lines(text)
+    return compile_program_ll(parse_program(lex(text, 1)))
+}
+
+func write_text(path, text) {
+    let f = open(path, "w")
+    if (f == null) {
+        print("[ERROR] cannot write {path}")
+        exit(1)
+    }
+    write(f, text)
+    close(f)
+}
+
+# Compiles path to C/<name>.ll and, unless stop is set, builds out_path from it.
+func build_program(path, out_path, stop) {
+    let name = base_name(path)
+    let code = compile_file(path)
+    system("mkdir -p C")
+    let code_path = "C/{name}.ll"
+    write_text(code_path, code)
+    if (stop) {
+        print("[OK] wrote {code_path}")
+        return null
+    }
+    let rc = system(build_command(code_path, out_path))
+    if (rc != 0) {
+        print("[ERROR] build failed (exit {rc}); the generated IR is in {code_path}")
+        exit(1)
+    }
+    print("[OK] built {out_path} from {code_path}")
+}
+
+# luna build prog.lu -o program [-S]
 func build_main(a) {
     let out_path = ""
-    let emit = "llvm"
     let stop = false
     let i = 1
     while (i < len(a)) {
         if (a[i] == "-o" and i + 1 < len(a)) {
             out_path = a[i + 1]
             i += 2
-        } else if (a[i] == "--emit=llvm") {
-            emit = "llvm"
-            i += 1
-        } else if (a[i] == "--emit=c") {
-            emit = "c"
-            i += 1
         } else if (a[i] == "-S") {
             stop = true
             i += 1
@@ -75,37 +108,95 @@ func build_main(a) {
             usage()
         }
     }
-    let name = base_name(a[0])
     if (out_path == "") {
-        out_path = name
+        out_path = base_name(a[0])
     }
+    build_program(a[0], out_path, stop)
+}
+
+# A shell word for one argument, in single quotes.
+func shell_quote(text) {
+    let q = "'"
+    # Each ' becomes '\'' : close the quote, a quoted quote, reopen.
+    return q + replace(text, q, "'\\''") + q
+}
+
+# luna run prog.lu [args...]: the program's exit status is this command's.
+func run_main(a) {
+    let name = base_name(a[0])
+    system("mkdir -p C/run")
+    let out_path = "C/run/{name}"
+    let code = compile_file(a[0])
+    system("mkdir -p C")
+    write_text("C/{name}.ll", code)
+    let rc = system(build_command("C/{name}.ll", out_path))
+    if (rc != 0) {
+        print("[ERROR] build failed (exit {rc}); the generated IR is in C/{name}.ll")
+        exit(1)
+    }
+    let words = [shell_quote("./{out_path}")]
+    for (let i = 1; i < len(a); i++) {
+        append(words, shell_quote(a[i]))
+    }
+    exit(system(join(words, " ")))
+}
+
+# luna emit prog.lu [-o out.ll]
+func emit_main(a) {
+    let out_path = "C/{base_name(a[0])}.ll"
+    let i = 1
+    while (i < len(a)) {
+        if (a[i] == "-o" and i + 1 < len(a)) {
+            out_path = a[i + 1]
+            i += 2
+        } else {
+            usage()
+        }
+    }
+    let code = compile_file(a[0])
+    system("mkdir -p C")
+    write_text(out_path, code)
+    print("[OK] wrote {out_path}")
+}
+
+# luna --native a.lu b.lu ... -o out.ll: compiles runtime files (emit_native.lu).
+func native_main(a) {
+    let files = []
+    let out_path = ""
+    let i = 1
+    while (i < len(a)) {
+        if (a[i] == "-o" and i + 1 < len(a)) {
+            out_path = a[i + 1]
+            i += 2
+        } else {
+            ST.src_file = a[i]
+            let text = read_file(a[i])
+            ST.src_lines = split_lines(text)
+            append(files, {"path": a[i], "stmts": parse_program(lex(text, 1))})
+            i += 1
+        }
+    }
+    if (out_path == "" or len(files) == 0) {
+        usage()
+    }
+    write_text(out_path, compile_native(files))
+}
+
+# lunac input.lu output.ll [cwd]: the form the test runner and the bootstrap use. The cwd
+# is the directory that relative paths in the program resolve against.
+func positional_main(a) {
     ST.src_file = a[0]
     let text = read_file(a[0])
     ST.src_lines = split_lines(text)
-    let prog = parse_program(lex(text, 1))
-    let code = ""
-    let ext = ".c"
-    if (emit == "llvm") {
-        code = compile_program_ll(prog)
-        ext = ".ll"
+    if (len(a) >= 3) {
+        ST.cwd = a[2]
+    }
+    let code = compile_program_ll(parse_program(lex(text, 1)))
+    if (len(a) >= 2) {
+        write_text(a[1], code)
     } else {
-        code = compile_program(prog)
+        print(code)
     }
-    system("mkdir -p C")
-    let code_path = "C/{name}{ext}"
-    let f = open(code_path, "w")
-    write(f, code)
-    close(f)
-    if (stop) {
-        print("[OK] wrote {code_path}")
-        return null
-    }
-    let rc = system(build_command(emit, code_path, out_path))
-    if (rc != 0) {
-        print("[ERROR] build failed (exit {rc}); the generated code is in {code_path}")
-        exit(1)
-    }
-    print("[OK] built {out_path} from {code_path}")
 }
 
 func main() {
@@ -113,29 +204,19 @@ func main() {
     if (len(a) < 1) {
         usage()
     }
-    if (len(a) >= 2 and starts_with(a[1], "-")) {
-        build_main(a)
-        return null
-    }
-    ST.src_file = a[0]
-    let text = read_file(a[0])
-    ST.src_lines = split_lines(text)
-    if (len(a) >= 3) {
-        ST.cwd = a[2]
-    }
-    let prog = parse_program(lex(text, 1))
-    let want_ll = len(a) >= 2 and ends_with(a[1], ".ll")
-    let c_text = ""
-    if (want_ll) {
-        c_text = compile_program_ll(prog)
+    let cmd = a[0]
+    let rest = slice(a, 1, len(a))
+    if (cmd == "--native") {
+        native_main(a)
+    } else if (cmd == "build" and len(rest) >= 1) {
+        build_main(rest)
+    } else if (cmd == "run" and len(rest) >= 1) {
+        run_main(rest)
+    } else if (cmd == "emit" and len(rest) >= 1) {
+        emit_main(rest)
+    } else if (ends_with(cmd, ".lu")) {
+        positional_main(a)
     } else {
-        c_text = compile_program(prog)
-    }
-    if (len(a) >= 2) {
-        let f = open(a[1], "w")
-        write(f, c_text)
-        close(f)
-    } else {
-        print(c_text)
+        usage()
     }
 }

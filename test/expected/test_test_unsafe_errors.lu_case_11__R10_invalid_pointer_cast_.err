@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 3:
+  pointers may only be cast to int
+
+   3 |     let f = float(a)
+
+Hint: Only int(ptr) is allowed for pointer casts.

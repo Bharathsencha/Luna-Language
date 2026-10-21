@@ -1,0 +1,820 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# luna_rt_math.lu: math, files, dense lists and vector math, and random numbers.
+# Doubles are words holding the bit pattern; the f* intrinsics and libm calls work on them.
+
+extern("sqrt", "double", "double")
+extern("cbrt", "double", "double")
+extern("exp", "double", "double")
+extern("log", "double", "double")
+extern("log10", "double", "double")
+extern("sin", "double", "double")
+extern("cos", "double", "double")
+extern("tan", "double", "double")
+extern("asin", "double", "double")
+extern("acos", "double", "double")
+extern("atan", "double", "double")
+extern("sinh", "double", "double")
+extern("cosh", "double", "double")
+extern("tanh", "double", "double")
+extern("floor", "double", "double")
+extern("ceil", "double", "double")
+extern("round", "double", "double")
+extern("trunc", "double", "double")
+extern("fabs", "double", "double")
+extern("pow", "double", "double,double")
+extern("atan2", "double", "double,double")
+extern("fmod", "double", "double,double")
+extern("fopen", "ptr", "ptr,ptr")
+extern("fclose", "i32", "ptr")
+extern("fread", "i64", "ptr,i64,i64,ptr")
+extern("access", "i32", "ptr,i32")
+extern("remove", "i32", "ptr")
+extern("time", "i64", "ptr")
+extern("getline", "i64", "ptr,ptr,ptr")
+
+# ---- math ---------------------------------------------------------------------------------
+
+func lb_abs(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let o = stack_buf(16)
+    if (_tag(argv_p) == T_INT) {
+        let i = _val(argv_p)
+        if (i == -9223372036854775807 - 1) {
+            _overflow(cstr("abs"))
+        }
+        if (i < 0) {
+            _int(o, 0 - i)
+        } else {
+            _int(o, i)
+        }
+        retp(o)
+    }
+    _flt(o, fabs(_arg_num(self_p, argv_p, 0)))
+    retp(o)
+}
+
+func lb_min(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    _arg_num(self_p, argv_p, 0)
+    _arg_num(self_p, argv_p, 1)
+    let o = stack_buf(16)
+    if (_sort_cmp(argv_p + 16, argv_p) < 0) {
+        _cp(o, argv_p + 16)
+    } else {
+        _cp(o, argv_p)
+    }
+    retp(o)
+}
+
+func lb_max(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    _arg_num(self_p, argv_p, 0)
+    _arg_num(self_p, argv_p, 1)
+    let o = stack_buf(16)
+    if (_sort_cmp(argv_p + 16, argv_p) > 0) {
+        _cp(o, argv_p + 16)
+    } else {
+        _cp(o, argv_p)
+    }
+    retp(o)
+}
+
+func lb_clamp(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 3, 3)
+    _arg_num(self_p, argv_p, 0)
+    _arg_num(self_p, argv_p, 1)
+    _arg_num(self_p, argv_p, 2)
+    let o = stack_buf(16)
+    if (_sort_cmp(argv_p, argv_p + 16) < 0) {
+        _cp(o, argv_p + 16)
+    } else if (_sort_cmp(argv_p, argv_p + 32) > 0) {
+        _cp(o, argv_p + 32)
+    } else {
+        _cp(o, argv_p)
+    }
+    retp(o)
+}
+
+func lb_sign(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let x = _arg_num(self_p, argv_p, 0)
+    let o = stack_buf(16)
+    _int(o, fgt(x, 0.0) - flt(x, 0.0))
+    retp(o)
+}
+
+# glibc returns 3.0000000000000004 for cbrt(27); make exact cubes exact.
+func _cbrt(x) {
+    let r = cbrt(x)
+    let n = round(r)
+    if (feq(fmul(fmul(n, n), n), x)) {
+        return n
+    }
+    return r
+}
+
+# One-argument math: which picks the function.
+func _math1(self_p, argc_i, argv_p, which, o) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let x = _arg_num(self_p, argv_p, 0)
+    let r = 0
+    if (which == 0) {
+        r = sqrt(x)
+    } else if (which == 1) {
+        r = _cbrt(x)
+    } else if (which == 2) {
+        r = exp(x)
+    } else if (which == 3) {
+        r = log(x)
+    } else if (which == 4) {
+        r = log10(x)
+    } else if (which == 5) {
+        r = sin(x)
+    } else if (which == 6) {
+        r = cos(x)
+    } else if (which == 7) {
+        r = tan(x)
+    } else if (which == 8) {
+        r = asin(x)
+    } else if (which == 9) {
+        r = acos(x)
+    } else if (which == 10) {
+        r = atan(x)
+    } else if (which == 11) {
+        r = sinh(x)
+    } else if (which == 12) {
+        r = cosh(x)
+    } else if (which == 13) {
+        r = tanh(x)
+    } else if (which == 14) {
+        r = fsub(x, floor(x))
+    } else if (which == 15) {
+        r = fdiv(fmul(x, 3.14159265358979323846), 180.0)
+    } else {
+        r = fdiv(fmul(x, 180.0), 3.14159265358979323846)
+    }
+    _flt(o, r)
+}
+
+func lb_sqrt(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 0, o)
+    retp(o)
+}
+
+func lb_cbrt(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 1, o)
+    retp(o)
+}
+
+func lb_exp(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 2, o)
+    retp(o)
+}
+
+func lb_ln(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 3, o)
+    retp(o)
+}
+
+func lb_log10(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 4, o)
+    retp(o)
+}
+
+func lb_sin(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 5, o)
+    retp(o)
+}
+
+func lb_cos(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 6, o)
+    retp(o)
+}
+
+func lb_tan(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 7, o)
+    retp(o)
+}
+
+func lb_asin(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 8, o)
+    retp(o)
+}
+
+func lb_acos(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 9, o)
+    retp(o)
+}
+
+func lb_atan(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 10, o)
+    retp(o)
+}
+
+func lb_sinh(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 11, o)
+    retp(o)
+}
+
+func lb_cosh(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 12, o)
+    retp(o)
+}
+
+func lb_tanh(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 13, o)
+    retp(o)
+}
+
+func lb_fract(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 14, o)
+    retp(o)
+}
+
+func lb_deg_to_rad(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 15, o)
+    retp(o)
+}
+
+func lb_rad_to_deg(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _math1(self_p, argc_i, argv_p, 16, o)
+    retp(o)
+}
+
+func _round_to_int(o, r) {
+    if (fgt(r, -9300000000000000000.0) == 0 or flt(r, 9300000000000000000.0) == 0) {
+        _flt(o, r)
+    } else {
+        _int(o, f2i(r))
+    }
+}
+
+# 0 = floor, 1 = ceil, 2 = round, 3 = trunc
+func _round_builtin(self_p, argc_i, argv_p, which, o) {
+    lv_arity(self_p, argc_i, 1, 1)
+    if (_tag(argv_p) == T_INT) {
+        _cp(o, argv_p)
+        return 0
+    }
+    let x = _arg_num(self_p, argv_p, 0)
+    if (which == 0) {
+        _round_to_int(o, floor(x))
+    } else if (which == 1) {
+        _round_to_int(o, ceil(x))
+    } else if (which == 2) {
+        _round_to_int(o, round(x))
+    } else {
+        _round_to_int(o, trunc(x))
+    }
+}
+
+func lb_floor(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _round_builtin(self_p, argc_i, argv_p, 0, o)
+    retp(o)
+}
+
+func lb_ceil(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _round_builtin(self_p, argc_i, argv_p, 1, o)
+    retp(o)
+}
+
+func lb_round(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _round_builtin(self_p, argc_i, argv_p, 2, o)
+    retp(o)
+}
+
+func lb_trunc(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _round_builtin(self_p, argc_i, argv_p, 3, o)
+    retp(o)
+}
+
+func lb_pow(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    let o = stack_buf(16)
+    _flt(o, pow(_arg_num(self_p, argv_p, 0), _arg_num(self_p, argv_p, 1)))
+    retp(o)
+}
+
+func lb_atan2(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    let o = stack_buf(16)
+    _flt(o, atan2(_arg_num(self_p, argv_p, 0), _arg_num(self_p, argv_p, 1)))
+    retp(o)
+}
+
+func lb_mod(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    let b = _arg_num(self_p, argv_p, 1)
+    if (feq(b, 0.0)) {
+        _div_zero()
+    }
+    let o = stack_buf(16)
+    _flt(o, fmod(_arg_num(self_p, argv_p, 0), b))
+    retp(o)
+}
+
+func lb_lerp(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 3, 3)
+    let a = _arg_num(self_p, argv_p, 0)
+    let b = _arg_num(self_p, argv_p, 1)
+    let t = _arg_num(self_p, argv_p, 2)
+    let o = stack_buf(16)
+    _flt(o, fadd(a, fmul(fsub(b, a), t)))
+    retp(o)
+}
+
+# ---- files ----------------------------------------------------------------------------------------
+
+# The LvFile of argument i, which must be an open file.
+func _arg_file(self_p, argv, i) {
+    if (_tag(argv + 16 * i) != T_FILE) {
+        _arg_fail(self_p, argv, i, cstr("file"))
+    }
+    let f = _val(argv + 16 * i)
+    if (ld32(f + FI_CLOSED) != 0) {
+        _errf(E_RUNTIME, 0, cstr("%s() on a closed file"), _fname(self_p), 0, 0)
+    }
+    return f
+}
+
+func lb_open(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    let path = _arg_str(self_p, argv_p, 0)
+    let mode = _arg_str(self_p, argv_p, 1)
+    let m = mode + S_DATA
+    if (strcmp(m, cstr("r")) != 0 and strcmp(m, cstr("w")) != 0 and strcmp(m, cstr("a")) != 0) {
+        _errf(E_ARGUMENT, cstr("Use \"r\", \"w\" or \"a\""), cstr("open() mode '%s' is not supported"), m, 0, 0)
+    }
+    let o = stack_buf(16)
+    let fp = fopen(path + S_DATA, m)
+    if (fp == 0) {
+        _null(o)
+        retp(o)
+    }
+    let f = lv_alloc(16)
+    st64(f + FI_FP, fp)
+    st32(f + FI_CLOSED, 0)
+    _set(o, T_FILE, f)
+    retp(o)
+}
+
+func lb_close(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let f = _arg_file(self_p, argv_p, 0)
+    fclose(ld64(f + FI_FP))
+    st32(f + FI_CLOSED, 1)
+    let o = stack_buf(16)
+    _null(o)
+    retp(o)
+}
+
+func lb_read(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let f = _arg_file(self_p, argv_p, 0)
+    let b = stack_buf(B_SIZE)
+    let o = stack_buf(16)
+    let chunk = stack_buf(65536)
+    _buf_init(b)
+    let n = fread(chunk, 1, 65536, ld64(f + FI_FP))
+    while (n > 0) {
+        _buf_add(b, chunk, n)
+        n = fread(chunk, 1, 65536, ld64(f + FI_FP))
+    }
+    _buf_done(o, b)
+    retp(o)
+}
+
+func lb_read_line(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let f = _arg_file(self_p, argv_p, 0)
+    let o = stack_buf(16)
+    let cell = stack_buf(16)
+    st64(cell, 0)
+    st64(cell + 8, 0)
+    let n = getline(cell, cell + 8, ld64(f + FI_FP))
+    let line = ld64(cell)
+    if (n < 0) {
+        free(line)
+        _null(o)
+        retp(o)
+    }
+    if (n > 0 and ld8(line + n - 1) == 10) {
+        n -= 1
+    }
+    _str_n(o, line, n)
+    free(line)
+    retp(o)
+}
+
+func lb_write(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 2, 2)
+    let f = _arg_file(self_p, argv_p, 0)
+    let s = stack_buf(16)
+    _to_string(s, argv_p + 16)
+    let w = fwrite(_val(s) + S_DATA, 1, ld64(_val(s)), ld64(f + FI_FP))
+    let o = stack_buf(16)
+    _bool(o, w == ld64(_val(s)))
+    retp(o)
+}
+
+func lb_file_exists(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let o = stack_buf(16)
+    _bool(o, access(_arg_str(self_p, argv_p, 0) + S_DATA, 0) == 0)
+    retp(o)
+}
+
+func lb_remove_file(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    let o = stack_buf(16)
+    _bool(o, remove(_arg_str(self_p, argv_p, 0) + S_DATA) == 0)
+    retp(o)
+}
+
+func lb_flush(self_p, argc_i, argv_p) {
+    lv_arity(self_p, argc_i, 1, 1)
+    fflush(ld64(_arg_file(self_p, argv_p, 0) + FI_FP))
+    let o = stack_buf(16)
+    _null(o)
+    retp(o)
+}
+
+# ---- dense lists and vector math ----------------------------------------------------------------------
+
+func lb_dense_list(self_p, argc_i, argv_p) {
+    if (argc_i != 2 or _tag(argv_p) != T_INT or _tag(argv_p + 16) != T_FLOAT) {
+        lv_error(E_ARGUMENT, cstr("dense_list() expects (size: int, fill: float)"), cstr("Usage: dense_list(100, 1.5)"))
+    }
+    let n = _val(argv_p)
+    let o = stack_buf(16)
+    if (n <= 0) {
+        _dense_new(o, 0)
+        retp(o)
+    }
+    _dense_new(o, n)
+    let dat = ld64(_val(o) + D_DATA)
+    for (let i = 0; i < n; i++) {
+        dat[i] = _val(argv_p + 16)
+    }
+    retp(o)
+}
+
+func _vec_op(self_p, argc_i, argv_p, op, o) {
+    if (argc_i != 2) {
+        printf(cstr("Error: %s expects 2 lists\n"), _fname(self_p))
+        _null(o)
+        return 0
+    }
+    _list_arith(o, op, argv_p, argv_p + 16)
+}
+
+func lb_vec_add(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _vec_op(self_p, argc_i, argv_p, 0, o)
+    retp(o)
+}
+
+func lb_vec_sub(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _vec_op(self_p, argc_i, argv_p, 1, o)
+    retp(o)
+}
+
+func lb_vec_mul(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _vec_op(self_p, argc_i, argv_p, 2, o)
+    retp(o)
+}
+
+func lb_vec_div(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _vec_op(self_p, argc_i, argv_p, 3, o)
+    retp(o)
+}
+
+func lb_vec_mul_inline(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _null(o)
+    if (argc_i != 2) {
+        printf(cstr("Error: vec_mul_inline expects 2 lists\n"))
+        retp(o)
+    }
+    if (_tag(argv_p) == T_DENSE and _tag(argv_p + 16) == T_DENSE) {
+        let a = _val(argv_p)
+        let b = _val(argv_p + 16)
+        let n = ld64(a + D_COUNT)
+        if (ld64(b + D_COUNT) < n) {
+            n = ld64(b + D_COUNT)
+        }
+        let da = ld64(a + D_DATA)
+        let db = ld64(b + D_DATA)
+        for (let i = 0; i < n; i++) {
+            da[i] = fmul(da[i], db[i])
+        }
+    } else {
+        printf(cstr("Error: vec_mul_inline requires dense lists for A and B.\n"))
+    }
+    retp(o)
+}
+
+func _row_len(r) {
+    if (_tag(r) == T_LIST) {
+        return ld64(_val(r) + L_COUNT)
+    }
+    if (_tag(r) == T_DENSE) {
+        return ld64(_val(r) + D_COUNT)
+    }
+    return 0
+}
+
+func _row_at(r, j) {
+    if (_tag(r) == T_DENSE) {
+        return ld64(_val(r) + D_DATA)[j]
+    }
+    return _elem(ld64(_val(r) + L_ITEMS) + 16 * j)
+}
+
+func lb_mat_mul(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _null(o)
+    if (argc_i != 2) {
+        retp(o)
+    }
+    let a = argv_p
+    let b = argv_p + 16
+    if (_is_listish(a) == 0 or _is_listish(b) == 0) {
+        retp(o)
+    }
+    let rows_a = 1
+    let rows_b = 1
+    if (_tag(a) == T_LIST) {
+        rows_a = ld64(_val(a) + L_COUNT)
+    }
+    if (_tag(b) == T_LIST) {
+        rows_b = ld64(_val(b) + L_COUNT)
+    }
+    if (rows_a == 0 or rows_b == 0) {
+        _list_new(o, 0)
+        retp(o)
+    }
+    let first_a = a
+    let first_b = b
+    if (_tag(a) == T_LIST and ld64(_val(a) + L_COUNT) > 0) {
+        first_a = ld64(_val(a) + L_ITEMS)
+    }
+    if (_tag(b) == T_LIST and ld64(_val(b) + L_COUNT) > 0) {
+        first_b = ld64(_val(b) + L_ITEMS)
+    }
+    let cols_a = _row_len(first_a)
+    let cols_b = _row_len(first_b)
+    if (cols_a != rows_b or cols_a == 0) {
+        printf(cstr("Runtime Error: Matrix dimension mismatch (%d cols vs %d rows)\n"), cols_a, rows_b)
+        retp(o)
+    }
+    let fa = lv_alloc(8 * rows_a * cols_a)
+    let fb = lv_alloc(8 * rows_b * cols_b)
+    let fc = calloc(rows_a * cols_b, 8)
+    if (fc == 0) {
+        lv_error(E_RUNTIME, cstr("out of memory"), 0)
+    }
+    for (let i = 0; i < rows_a; i++) {
+        let row = a
+        if (_tag(a) == T_LIST) {
+            row = ld64(_val(a) + L_ITEMS) + 16 * i
+        }
+        for (let j = 0; j < cols_a; j++) {
+            fa[i * cols_a + j] = _row_at(row, j)
+        }
+    }
+    for (let i = 0; i < rows_b; i++) {
+        let row = b
+        if (_tag(b) == T_LIST) {
+            row = ld64(_val(b) + L_ITEMS) + 16 * i
+        }
+        for (let j = 0; j < cols_b; j++) {
+            fb[i * cols_b + j] = _row_at(row, j)
+        }
+    }
+    for (let i = 0; i < rows_a; i++) {
+        for (let k = 0; k < cols_a; k++) {
+            let av = fa[i * cols_a + k]
+            for (let j = 0; j < cols_b; j++) {
+                fc[i * cols_b + j] = fadd(fc[i * cols_b + j], fmul(av, fb[k * cols_b + j]))
+            }
+        }
+    }
+    let res = stack_buf(16)
+    let row_lv = stack_buf(16)
+    _list_new(res, rows_a)
+    for (let i = 0; i < rows_a; i++) {
+        _dense_new(row_lv, cols_b)
+        let rd = ld64(_val(row_lv) + D_DATA)
+        for (let j = 0; j < cols_b; j++) {
+            rd[j] = fc[i * cols_b + j]
+        }
+        _list_push(res, row_lv)
+    }
+    free(fc)
+    retp(res)
+}
+
+# ---- random numbers -------------------------------------------------------------------------------------
+
+# xoroshiro128++, seeded and scrambled exactly as in src/math_lib.c.
+space("_rng", 16)
+
+func _rotl(x, k) {
+    return bor(shl(x, k), shr(x, 64 - k))
+}
+
+func _rng_next() {
+    let s = addr_of("_rng")
+    let s0 = s[0]
+    let s1 = s[1]
+    let result = _rotl(s0 + s1, 17) + s0
+    s1 = bxor(s1, s0)
+    s[0] = bxor(bxor(_rotl(s0, 49), s1), shl(s1, 21))
+    s[1] = _rotl(s1, 28)
+    return result
+}
+
+func _os_entropy() {
+    let val = stack_buf(8)
+    st64(val, 0)
+    let f = fopen(cstr("/dev/urandom"), cstr("rb"))
+    if (f != 0) {
+        if (fread(val, 8, 1, f) != 1) {
+            st64(val, time(0))
+        }
+        fclose(f)
+    } else {
+        st64(val, time(0))
+    }
+    return ld64(val)
+}
+
+func _splitmix(z0) {
+    let z = z0 + -7046029254386353131
+    z = bxor(z, shr(z, 30)) * -4658895280553007687
+    z = bxor(z, shr(z, 27)) * -7723592293110705685
+    return bxor(z, shr(z, 31))
+}
+
+func _seed(seed) {
+    let s = addr_of("_rng")
+    s[0] = _splitmix(seed)
+    s[1] = _splitmix(s[0])
+}
+
+func _srand_default() {
+    _seed(_os_entropy())
+}
+
+func lb_trand(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    _int(o, _os_entropy())
+    retp(o)
+}
+
+func lb_srand(self_p, argc_i, argv_p) {
+    if (argc_i == 0) {
+        _seed(_os_entropy())
+    } else if (_tag(argv_p) == T_INT) {
+        _seed(_val(argv_p))
+    } else {
+        _seed(f2i(_val(argv_p)))
+    }
+    let o = stack_buf(16)
+    _null(o)
+    retp(o)
+}
+
+# An argument of rand() as an integer: ints as they are, anything else as a double
+# truncated.
+func _rand_arg(v) {
+    if (_tag(v) == T_INT) {
+        return _val(v)
+    }
+    return f2i(_val(v))
+}
+
+func lb_rand(self_p, argc_i, argv_p) {
+    let o = stack_buf(16)
+    if (argc_i == 0) {
+        let r = _rng_next()
+        _flt(o, fmul(i2f(shr(r, 11)), fdiv(1.0, 9007199254740992.0)))
+        retp(o)
+    }
+    let lo = 0
+    let hi = 0
+    if (argc_i == 1) {
+        hi = _rand_arg(argv_p)
+    } else if (argc_i == 2) {
+        lo = _rand_arg(argv_p)
+        hi = _rand_arg(argv_p + 16)
+    } else {
+        fprintf(_stderr(), cstr("Runtime Error: rand() takes 0, 1, or 2 arguments.\n"))
+        _null(o)
+        retp(o)
+    }
+    if (lo > hi) {
+        let t = lo
+        lo = hi
+        hi = t
+    }
+    let range = hi - lo + 1
+    if (range == 0) {
+        _int(o, lo)
+        retp(o)
+    }
+    _int(o, lo + urem(_rng_next(), range))
+    retp(o)
+}
+
+func lb_shuffle(self_p, argc_i, argv_p) {
+    if (argc_i != 1 or _tag(argv_p) != T_LIST) {
+        lv_error(E_ARGUMENT, cstr("shuffle() expects 1 list"), cstr("Usage: shuffle(myList)"))
+    }
+    let l = _val(argv_p)
+    let items = ld64(l + L_ITEMS)
+    let t = stack_buf(16)
+    let i = ld64(l + L_COUNT) - 1
+    while (i > 0) {
+        let j = urem(_rng_next(), i + 1)
+        _cp(t, items + 16 * i)
+        _cp(items + 16 * i, items + 16 * j)
+        _cp(items + 16 * j, t)
+        i -= 1
+    }
+    let o = stack_buf(16)
+    _null(o)
+    retp(o)
+}
+
+# Stalin sort: drops every element smaller than the last one kept.
+func lb_ssort(self_p, argc_i, argv_p) {
+    if (argc_i != 1 or (_tag(argv_p) != T_LIST and _tag(argv_p) != T_DENSE)) {
+        lv_error(E_ARGUMENT, cstr("ssort() expects 1 list"), cstr("Usage: ssort(myList)"))
+    }
+    let o = stack_buf(16)
+    _null(o)
+    if (_tag(argv_p) == T_LIST) {
+        let l = _val(argv_p)
+        if (ld64(l + L_COUNT) <= 1) {
+            retp(o)
+        }
+        let items = ld64(l + L_ITEMS)
+        let w = 1
+        let last = stack_buf(16)
+        _cp(last, items)
+        for (let r = 1; r < ld64(l + L_COUNT); r++) {
+            let cur = items + 16 * r
+            if (_sort_cmp(cur, last) >= 0) {
+                _cp(items + 16 * w, cur)
+                w++
+                _cp(last, cur)
+            }
+        }
+        st64(l + L_COUNT, w)
+    } else {
+        let d = _val(argv_p)
+        if (ld64(d + D_COUNT) <= 1) {
+            retp(o)
+        }
+        let dat = ld64(d + D_DATA)
+        let w = 1
+        let last = dat[0]
+        for (let r = 1; r < ld64(d + D_COUNT); r++) {
+            if (fge(dat[r], last)) {
+                dat[w] = dat[r]
+                w++
+                last = dat[r]
+            }
+        }
+        st64(d + D_COUNT, w)
+    }
+    retp(o)
+}

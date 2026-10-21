@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 2:
+  box bytes must be integers from 0 to 255
+
+   2 | b[0] = 256
+
+Hint: Use b[i] = byte with 0 <= i < b.len and 0 <= byte <= 255

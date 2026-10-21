@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  condition must be a boolean, got int
+
+   1 | if (5) { print("no") }
+
+Hint: Write the test explicitly, for example x != 0, len(s) > 0 or v != null.

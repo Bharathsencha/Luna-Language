@@ -1,340 +1,57 @@
+# Luna is an ahead-of-time compiler: Luna source -> LLVM IR -> native binary (clang).
+#
+#   make            build bin/luna from the seeds in bootstrap/ (needs clang 18)
+#   make test       compile and run every test, compare with test/expected/
+#   make seed       refresh the seeds after changing compiler/ or compiler/runtime/
+#   make clean      remove build output
+#
+# The compiler and its runtime are written in Luna. bootstrap/lunac.ll and
+# bootstrap/luna_rt_native.ll are their LLVM IR, kept in the repository so the first compiler
+# can be built with clang alone.
+
 ifeq (,$(filter -j%,$(MAKEFLAGS)))
 MAKEFLAGS += -j$(shell nproc)
 endif
-CC = gcc
-CFLAGS = -std=c11 -O3 -march=native -flto=auto -fopenmp -funroll-loops -fomit-frame-pointer -DNDEBUG -Iinclude -Igui -Wall -Wextra -Wno-unused-parameter
-DEPFLAGS = -MMD -MP
-ASM = nasm
-ASMFLAGS = -f elf64
-TARGET = luna
-OBJDIR = obj
+
+CLANG = clang
 BINDIR = bin
-LIBDIR = lib
-UNSAFE_RT_DIR = rust/unsafe_rt
-UNSAFE_RT_SRCS := $(shell find $(UNSAFE_RT_DIR)/src -type f) $(UNSAFE_RT_DIR)/Cargo.toml
-UNSAFE_RT_BUILD_LIB = $(UNSAFE_RT_DIR)/target/release/libluna_memory_rt.a
-UNSAFE_RT_LIB = $(LIBDIR)/libluna_memory_rt.a
-DATA_RT_DIR = rust/data_rt
-DATA_RT_SRCS := $(shell find $(DATA_RT_DIR)/src -type f) $(DATA_RT_DIR)/Cargo.toml
-DATA_RT_BUILD_LIB = $(DATA_RT_DIR)/target/release/libluna_data_rt.a
-DATA_RT_LIB = $(LIBDIR)/libluna_data_rt.a
-CARGO = env -u MAKEFLAGS -u MFLAGS cargo
-ZIG = zig
+OUT = C
 
-# Source files
-SRCS = src/lexer.c src/token.c src/util.c src/ast.c src/parser.c \
-       src/interpreter.c src/value.c src/main.c src/math_lib.c \
-       src/gc.c src/gc_visit.c \
-       src/string_lib.c src/error.c src/time_lib.c src/vec_lib.c \
-       src/env.c src/library.c src/file_lib.c src/list_lib.c \
-       src/unsafe_runtime.c src/luna_runtime.c src/luna_test.c \
-       src/sand_lib.c src/arena.c src/intern.c src/data_runtime.c \
-       gui/gui_lib.c gui/gl_backend.c gui/audio_backend.c \
-       gui/gl_backend_3d.c gui/gui_lib_3d.c gui/model_backend.c \
-       src/module_runtime.c \
-       src/luna_chunk.c src/luna_compiler.c src/luna_vm.c src/luna_vm_gc.c
+LIBS = -lm -lpthread -ldl
 
-# Object files
-OBJS = $(OBJDIR)/lexer.o $(OBJDIR)/token.o $(OBJDIR)/util.o \
-       $(OBJDIR)/ast.o $(OBJDIR)/parser.o $(OBJDIR)/interpreter.o \
-       $(OBJDIR)/value.o $(OBJDIR)/main.o $(OBJDIR)/math_lib.o \
-       $(OBJDIR)/gc.o $(OBJDIR)/gc_visit.o \
-       $(OBJDIR)/string_lib.o $(OBJDIR)/error.o $(OBJDIR)/time_lib.o \
-       $(OBJDIR)/time.o $(OBJDIR)/vec_lib.o \
-       $(OBJDIR)/env.o $(OBJDIR)/library.o $(OBJDIR)/file_lib.o \
-       $(OBJDIR)/unsafe_runtime.o $(OBJDIR)/luna_runtime.o \
-       $(OBJDIR)/luna_test.o \
-       $(OBJDIR)/list_lib.o $(OBJDIR)/sand_lib.o $(OBJDIR)/arena.o \
-       $(OBJDIR)/intern.o $(OBJDIR)/data_runtime.o $(OBJDIR)/gui_lib.o \
-       $(OBJDIR)/gl_backend.o $(OBJDIR)/audio_backend.o \
-       $(OBJDIR)/gl_backend_3d.o $(OBJDIR)/gui_lib_3d.o \
-       $(OBJDIR)/model_backend.o $(OBJDIR)/module_runtime.o \
-       $(OBJDIR)/luna_chunk.o $(OBJDIR)/luna_compiler.o \
-       $(OBJDIR)/luna_vm.o $(OBJDIR)/luna_vm_gc.o
-DEPS = $(OBJS:.o=.d)
-
-all: $(BINDIR)/$(TARGET)
-
-# Create directories
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
-
-$(BINDIR):
-	mkdir -p $(BINDIR)
-
-$(LIBDIR):
-	mkdir -p $(LIBDIR)
-
-# Build the Rust unsafe runtime static library
-$(UNSAFE_RT_BUILD_LIB): $(UNSAFE_RT_SRCS)
-	@echo "==> Building Rust unsafe runtime..."
-	cd $(UNSAFE_RT_DIR) && $(CARGO) build --release
-	@echo "==> libluna_memory_rt.a ready"
-
-$(UNSAFE_RT_LIB): $(UNSAFE_RT_BUILD_LIB) | $(LIBDIR)
-	cp $(UNSAFE_RT_BUILD_LIB) $(UNSAFE_RT_LIB)
-	@echo "==> Copied libluna_memory_rt.a to $(LIBDIR)/"
-
-# Build the Rust structured-data runtime static library
-$(DATA_RT_BUILD_LIB): $(DATA_RT_SRCS)
-	@echo "==> Building Rust data runtime..."
-	cd $(DATA_RT_DIR) && $(CARGO) build --release
-	@echo "==> libluna_data_rt.a ready"
-
-$(DATA_RT_LIB): $(DATA_RT_BUILD_LIB) | $(LIBDIR)
-	cp $(DATA_RT_BUILD_LIB) $(DATA_RT_LIB)
-	@echo "==> Copied libluna_data_rt.a to $(LIBDIR)/"
-
-# Link the main interpreter
-# Uses GLFW (static) + OpenGL + miniaudio + Rust runtimes
-$(BINDIR)/$(TARGET): $(OBJS) $(UNSAFE_RT_LIB) $(DATA_RT_LIB) | $(BINDIR)
-	$(CC) $(CFLAGS) -o $@ $^ -L$(LIBDIR) \
-		-lglfw3 -lGL -lm -lpthread -ldl -lrt -lX11 \
-		-z noexecstack -fopenmp
-
-# Compile source files from src/
-$(OBJDIR)/%.o: src/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-# Rules to compile source files from gui/
-$(OBJDIR)/gui_lib.o: gui/gui_lib.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-$(OBJDIR)/gl_backend.o: gui/gl_backend.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-$(OBJDIR)/audio_backend.o: gui/audio_backend.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-$(OBJDIR)/gl_backend_3d.o: gui/gl_backend_3d.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-$(OBJDIR)/gui_lib_3d.o: gui/gui_lib_3d.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-$(OBJDIR)/model_backend.o: gui/model_backend.c | $(OBJDIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
-
-# Compile assembly files
-$(OBJDIR)/%.o: asm/%.asm | $(OBJDIR)
-	$(ASM) $(ASMFLAGS) $< -o $@
-
-# # nstall Luna to the system path
-# install: $(BINDIR)/$(TARGET)
-# 	@echo "Installing Luna to /usr/local/bin..."
-# 	sudo cp $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET)
-# 	@echo "Luna is now installed! Run it anywhere by typing 'luna'."
-
-# Check for required system dependencies
-check-deps:
-	@echo "Checking dependencies for Luna..."
-	@command -v gcc >/dev/null 2>&1 || echo "[ERROR] gcc not found"
-	@command -v nasm >/dev/null 2>&1 || echo "[ERROR] nasm not found"
-	@command -v cargo >/dev/null 2>&1 && echo "[OK] cargo found" || echo "[ERROR] cargo not found"
-	@command -v $(ZIG) >/dev/null 2>&1 && echo "[OK] zig found" || echo "[ERROR] zig not found"
-	@if [ -f "lib/libglfw3.a" ]; then echo "[OK] libglfw3.a found"; else echo "[ERROR] libglfw3.a missing in lib/"; fi
-	@if [ -f "include/glfw3.h" ]; then echo "[OK] glfw3.h found"; else echo "[ERROR] glfw3.h missing in include/"; fi
-
-# Helper for Linux Mint/Ubuntu to install system graphics libs
-setup-ubuntu:
-	@echo "Installing graphics dependencies..."
-	sudo apt update
-	sudo apt install -y build-essential nasm libx11-dev libxcursor-dev \
-		libxinerama-dev libxrandr-dev libxi-dev libasound2-dev \
-		mesa-common-dev libgl1-mesa-dev
-
-test: $(BINDIR)/$(TARGET)
-	@echo "==> Manual Check: test/test_core.lu"
-	@./$(BINDIR)/$(TARGET) test/test_core.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_math.lu"
-	@./$(BINDIR)/$(TARGET) test/test_math.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_functions.lu"
-	@./$(BINDIR)/$(TARGET) test/test_functions.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_vectors.lu"
-	@./$(BINDIR)/$(TARGET) test/test_vectors.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_strings.lu"
-	@./$(BINDIR)/$(TARGET) test/test_strings.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_file_io.lu"
-	@./$(BINDIR)/$(TARGET) test/test_file_io.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_bloc.lu"
-	@./$(BINDIR)/$(TARGET) test/test_bloc.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_box.lu"
-	@./$(BINDIR)/$(TARGET) test/test_box.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_template.lu"
-	@./$(BINDIR)/$(TARGET) test/test_template.lu
-	@echo ""
-	@echo "==> Manual Check: test/test_unsafe.lu"
-	@./$(BINDIR)/$(TARGET) test/test_unsafe.lu
-	@echo ""
-
-	@echo "==> Manual Check: test/balls.lu"
-	@./$(BINDIR)/$(TARGET) test/balls.lu
-	@echo ""
-	@./test_runner.sh
-	@./test/check_engines.sh
-	@$(CARGO) test --manifest-path rust/unsafe_rt/Cargo.toml
-	@$(CARGO) test --manifest-path rust/data_rt/Cargo.toml
-	@echo "All tests passed!"
-
-test-rust-data:
-	@$(CARGO) test --manifest-path rust/data_rt/Cargo.toml
-	@echo "Rust data runtime tests passed."
-
-# Clean build artifacts
-clean:
-	rm -rf $(OBJDIR) $(BINDIR)
-	cd $(UNSAFE_RT_DIR) && $(CARGO) clean
-	cd $(DATA_RT_DIR) && $(CARGO) clean
-
-clean-c:
-	rm -rf $(OBJDIR) $(BINDIR)
-
--include $(DEPS)
-
-# Run the interpreter on the main file
-run: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) main.lu   #Modify this with your file name to run it.
-
-# Shortcut to run the REPL
-repl: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET)
-
-# Example programs (docs/examples/). Run from the repo root: asset paths are root-relative.
-EXAMPLES = docs/examples
-
-run-cargame: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) $(EXAMPLES)/cargame/cargame.lu
-
-run-music: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) $(EXAMPLES)/musicplayer/music.lu
-
-run-racer: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) $(EXAMPLES)/fun/racer3d/main.lu
-
-# Run any example in docs/examples/fun: make run-fun NAME=galaxy
-run-fun: $(BINDIR)/$(TARGET)
-	./$(BINDIR)/$(TARGET) $(EXAMPLES)/fun/$(NAME).lu
-
-# Generate IR (GIMPLE) representation
-ir:
-	@mkdir -p ir
-	@for src in $(SRCS); do \
-		base=$$(basename $$src .c); \
-		echo "Generating GIMPLE IR for $$src..."; \
-		$(CC) $(CFLAGS) -fdump-tree-gimple -c $$src -o /dev/null; \
-	done
-	@find . -name "*.gimple" -exec mv {} ir/ \;
-	@echo "IR files generated in ir/ directory"
-
-# Generate preprocessed source files
-preprocess:
-	@mkdir -p preprocessed
-	@for src in $(SRCS); do \
-		base=$$(basename $$src .c); \
-		echo "Preprocessing $$src..."; \
-		$(CC) $(CFLAGS) -E $$src -o preprocessed/$$base.i; \
-	done
-	@echo "Preprocessed files generated in preprocessed/ directory"
-
-test-gc-safety: $(BINDIR)/$(TARGET)
-	@echo "==> GC stress+verify: test/test_gc_safety.lu"
-	@env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 ./$(BINDIR)/$(TARGET) test/test_gc_safety.lu
-	@echo ""
-	@echo "==> GC stress+verify: test/test_gc_large_safety.lu"
-	@env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 ./$(BINDIR)/$(TARGET) test/test_gc_large_safety.lu
-	@echo ""
-	@echo "GC safety tests passed under stress+verify."
-
-zig-test:
-	cd zig-test && ZIG_GLOBAL_CACHE_DIR=.zig-global-cache zig build test --cache-dir .zig-cache
-	@echo "Zig test passed. No errors found."
-
-# lunac: the Luna compiler written in Luna. Builds it with itself (stage 1 runs
-# on the VM, stage 2 is the compiled result) and checks that both emit the same C.
-LUNAC_DIR = bin/lunac
-lunac: $(BINDIR)/$(TARGET)
-	@mkdir -p $(LUNAC_DIR)
-	@compiler/lunac.sh compiler/lunac.lu $(LUNAC_DIR)/lunac1
-	@$(LUNAC_DIR)/lunac1 compiler/lunac.lu $(LUNAC_DIR)/lunac2.c $(CURDIR)
-	@cmp $(LUNAC_DIR)/lunac1.c $(LUNAC_DIR)/lunac2.c
-	@echo "lunac: self-hosted, stage 1 and stage 2 emit identical C ($(LUNAC_DIR)/lunac1)"
-
-# build-c writes the C that lunac generates into C/ and stops, so it can be read
-# before anything is compiled. compile-c then builds binaries from those files.
-C_OUT = C
-LUNAC_RT = compiler/runtime
-build-c: $(BINDIR)/$(TARGET)
-	@mkdir -p $(C_OUT)
-	@$(BINDIR)/$(TARGET) compiler/lunac.lu compiler/lunac.lu $(C_OUT)/lunac.c $(CURDIR)
-	@$(BINDIR)/$(TARGET) compiler/lunac.lu src/main.lu $(C_OUT)/lil.c $(CURDIR)
-	@wc -l $(C_OUT)/*.c
-
-compile-c:
-	@test -f $(C_OUT)/lunac.c -a -f $(C_OUT)/lil.c || { echo "[ERROR] run 'make build-c' first"; exit 1; }
-	@mkdir -p $(LUNAC_DIR)
-	@for n in lunac lil; do \
-	    gcc -std=gnu11 -O2 -w -I$(LUNAC_RT) $(C_OUT)/$$n.c $(LUNAC_RT)/luna_rt.c $(LUNAC_RT)/luna_rt_data.c \
-	        $(LUNAC_RT)/luna_gc.c -Llib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl -o $(LUNAC_DIR)/$$n || exit 1; \
-	    echo "built $(LUNAC_DIR)/$$n"; \
-	done
-
-# LLVM IR backend. build-ll writes the IR into C/ for review (opt-18 -passes=verify C/x.ll
-# checks it); lunac-ll builds lunac from its own IR and checks that the binary emits the
-# same IR when it compiles itself.
-LLVM_CC = clang
-LUNAC_RT_SRC = $(LUNAC_RT)/luna_rt.c $(LUNAC_RT)/luna_rt_data.c $(LUNAC_RT)/luna_gc.c $(LUNAC_RT)/luna_rt_ir.c
-LUNAC_RT_LIBS = -Llib -lluna_data_rt -lluna_memory_rt -lm -lpthread -ldl
-
-build-ll: $(BINDIR)/$(TARGET)
-	@mkdir -p $(C_OUT)
-	@$(BINDIR)/$(TARGET) compiler/lunac.lu compiler/lunac.lu $(C_OUT)/lunac.ll $(CURDIR)
-	@wc -l $(C_OUT)/lunac.ll
-
-lunac-ll: build-ll
-	@mkdir -p $(LUNAC_DIR)
-	@$(LLVM_CC) -O1 -w -I$(LUNAC_RT) $(C_OUT)/lunac.ll $(LUNAC_RT_SRC) $(LUNAC_RT_LIBS) -o $(LUNAC_DIR)/lunac_ll1
-	@$(LUNAC_DIR)/lunac_ll1 compiler/lunac.lu $(C_OUT)/lunac_stage2.ll $(CURDIR)
-	@cmp $(C_OUT)/lunac.ll $(C_OUT)/lunac_stage2.ll
-	@echo "lunac-ll: self-hosted through LLVM IR, stage 1 and stage 2 emit identical IR ($(LUNAC_DIR)/lunac_ll1)"
-
-# bootstrap builds lunac without the bytecode VM: bootstrap/lunac.ll is lunac's own IR, kept
-# in the repository. Seed -> binary -> IR of the current sources -> binary -> IR again; the two
-# IR files must match. make seed refreshes the seed after a compiler change.
 SEED = bootstrap/lunac.ll
-bootstrap:
-	@mkdir -p $(LUNAC_DIR) $(C_OUT)
-	@$(LLVM_CC) -O1 -w -I$(LUNAC_RT) $(SEED) $(LUNAC_RT_SRC) $(LUNAC_RT_LIBS) -o $(LUNAC_DIR)/lunac_seed
-	@$(LUNAC_DIR)/lunac_seed compiler/lunac.lu $(C_OUT)/boot1.ll $(CURDIR)
-	@$(LLVM_CC) -O1 -w -I$(LUNAC_RT) $(C_OUT)/boot1.ll $(LUNAC_RT_SRC) $(LUNAC_RT_LIBS) -o $(LUNAC_DIR)/lunac
-	@$(LUNAC_DIR)/lunac compiler/lunac.lu $(C_OUT)/boot2.ll $(CURDIR)
-	@cmp $(C_OUT)/boot1.ll $(C_OUT)/boot2.ll
-	@echo "bootstrap: built $(LUNAC_DIR)/lunac from $(SEED) without the VM"
-	@cmp -s $(SEED) $(C_OUT)/boot1.ll || echo "[WARN] the seed is older than compiler/*.lu; run make seed"
+SEED_RT = bootstrap/luna_rt_native.ll
+COMPILER_LU = $(wildcard compiler/*.lu)
+RT_LU = $(sort $(wildcard compiler/runtime/*.lu))
 
-seed: lunac-ll
-	@mkdir -p bootstrap
-	@cp $(C_OUT)/lunac.ll $(SEED)
-	@echo "seed: wrote $(SEED)"
+all: $(BINDIR)/luna
 
-test-ll: $(BINDIR)/$(TARGET)
-	@LUNAC_BACKEND=llvm compiler/run_tests.sh
+# seeds -> seed compiler -> runtime and compiler IR of the current sources -> compiler ->
+# IR again. The two compiler IR files must match.
+$(BINDIR)/luna: $(SEED) $(SEED_RT) $(COMPILER_LU) $(RT_LU)
+	@mkdir -p $(BINDIR) $(OUT)
+	@$(CLANG) -O1 -w $(SEED) $(SEED_RT) $(LIBS) -o $(OUT)/luna_seed
+	@$(OUT)/luna_seed --native $(RT_LU) -o $(OUT)/boot_rt.ll
+	@$(OUT)/luna_seed compiler/lunac.lu $(OUT)/boot1.ll $(CURDIR)
+	@$(CLANG) -O1 -w $(OUT)/boot1.ll $(OUT)/boot_rt.ll $(LIBS) -o $(OUT)/luna_stage1
+	@$(OUT)/luna_stage1 compiler/lunac.lu $(OUT)/boot2.ll $(CURDIR)
+	@cmp $(OUT)/boot1.ll $(OUT)/boot2.ll
+	@cp $(OUT)/luna_stage1 $@
+	@echo "[OK] built $@ (stage 1 and stage 2 emit identical IR)"
+	@cmp -s $(SEED) $(OUT)/boot1.ll || echo "[WARN] the compiler seed is older than compiler/*.lu; run make seed"
+	@cmp -s $(SEED_RT) $(OUT)/boot_rt.ll || echo "[WARN] the runtime seed is older than compiler/runtime/*.lu; run make seed"
 
-test-lunac: $(BINDIR)/$(TARGET)
+# Rewrites the seeds from the current sources. Commit them with the change that needs them.
+seed: $(BINDIR)/luna
+	@cp $(OUT)/boot1.ll $(SEED)
+	@cp $(OUT)/boot_rt.ll $(SEED_RT)
+	@echo "[OK] wrote $(SEED) and $(SEED_RT)"
+
+test: $(BINDIR)/luna
 	@compiler/run_tests.sh
+	@sh test/native/run.sh
 
-# src/main.lu: the language implemented in Luna, compiled with lunac and
-# checked against the bytecode VM on every test program.
-test-lil: $(BINDIR)/$(TARGET)
-	@mkdir -p $(LUNAC_DIR)
-	@compiler/lunac.sh src/main.lu $(LUNAC_DIR)/lil
-	@LUNA_IN_LUNA_BIN=$(LUNAC_DIR)/lil compiler/run_interp_tests.sh
+clean:
+	rm -rf $(BINDIR) $(OUT)
 
-.PHONY: bootstrap seed lunac build-ll lunac-ll test-ll build-c compile-c test-lunac test-lil all clean clean-c run repl test test-rust-data test-gc-safety zig-test ir preprocess check-deps setup-ubuntu run-cargame run-music run-racer run-fun
+.PHONY: all seed test clean

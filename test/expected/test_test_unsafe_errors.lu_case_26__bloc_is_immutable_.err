@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 3:
+  bloc values are immutable
+
+   3 | p.x = 5
+
+Hint: Build a new bloc, or use a template for data that changes

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# shared.lu: tables and counters shared by the compiler modules.
+
+use { ST } from "state.lu"
+
+# Names of the builtin functions. Each one is implemented as lb_<name> in the runtime.
+export let BUILTINS = {}
+for (let nm in split("len str_len append list_append type int float to_string to_int to_float assert input debug range args exit system clock map_set map_get map_has map_delete map_keys map_values map_items remove find slice sort map filter reduce is_empty concat substring char_at index_of last_index_of contains starts_with ends_with to_upper to_lower trim trim_left trim_right replace reverse repeat pad_left pad_right format split join is_digit is_alpha is_alnum is_space abs min max clamp sign pow sqrt cbrt exp ln log10 sin cos tan asin acos atan atan2 sinh cosh tanh floor ceil round trunc fract mod lerp deg_to_rad rad_to_deg open close read read_line write file_exists remove_file flush alloc free load deref store ptr_offset ptr_add defer dense_list vec_add vec_sub vec_mul vec_div vec_mul_inline mat_mul rand srand trand shuffle ssort shape", " ")) {
+    BUILTINS[nm] = true
+}
+
+# Modules being compiled: by canonical path, and in the order they were first seen.
+export let MODULES = {}
+export let MOD_LIST = []
+
+# A number that has not been used before; names of temporaries and labels are built from it.
+export func uid() {
+    ST.uid += 1
+    return ST.uid
+}

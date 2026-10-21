@@ -1,0 +1,7 @@
+Static Error in /tmp/luna_test_case.lu at line 3:
+  free() may not appear inside conditional control flow
+
+   3 |     if (true) { free(a) }
+
+Hint: Move free(ptr) out of the branch/loop, or use defer(ptr) instead
+Parsing failed.

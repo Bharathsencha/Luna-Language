@@ -1,0 +1,662 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# luna_gc.lu: memory management for compiled Luna programs: a conservative,
+# non-moving mark-and-sweep collector. Compiled with `lunac --native`.
+#
+# Every runtime object is allocated here. Small objects come from 64 KB pages split
+# into size classes; large ones get pages of their own. A collection marks everything
+# reachable from the stack, the registers, the program's static data and any registered
+# root ranges, treating every aligned word as a possible pointer (interior pointers
+# count), then sweeps the rest. Objects that hold no pointers (strings, doubles, bytes)
+# are allocated "atomic" and never scanned.
+#
+# Environment:
+#   LUNA_RT_GC_STRESS=N  collect every N allocations (testing)
+#   LUNA_RT_GC_STATS=1   print collection counts at exit
+
+extern("malloc", "ptr", "i64")
+extern("calloc", "ptr", "i64,i64")
+extern("realloc", "ptr", "ptr,i64")
+extern("free", "void", "ptr")
+extern("aligned_alloc", "ptr", "i64,i64")
+extern("memset", "ptr", "ptr,i32,i64")
+extern("memcpy", "ptr", "ptr,ptr,i64")
+extern("write", "i64", "i32,ptr,i64")
+extern("exit", "void", "i32")
+extern("getenv", "ptr", "ptr")
+extern("strtoull", "i64", "ptr,ptr,i32")
+extern("atexit", "i32", "ptr")
+extern("clock_gettime", "i32", "i32,ptr")
+extern("snprintf", "i32", "ptr,i64,ptr,...")
+extern("pthread_self", "i64", "")
+extern("pthread_getattr_np", "i32", "i64,ptr")
+extern("pthread_attr_getstack", "i32", "ptr,ptr,ptr")
+extern("pthread_attr_destroy", "i32", "ptr")
+
+# struct Page
+const PG_BASE = 0
+const PG_OBJ = 8
+const PG_NOBJS = 16       # u32
+const PG_BUMP = 20        # u32, objects handed out at least once
+const PG_FREE = 24        # u32, 1-based index of the first recycled object, 0 if none
+const PG_NFREE = 28       # u32
+const PG_USED_COUNT = 32  # u32
+const PG_ATOMIC = 36      # u8
+const PG_LARGE = 37       # u8
+const PG_DEAD = 38        # u8
+const PG_IN_LIST = 39     # u8
+const PG_CLS = 40         # i32
+const PG_SPAN = 48        # bytes owned by a large page
+const PG_USED = 56
+const PG_MARK = 64
+const PG_NEXT = 72
+const PG_SIZE = 80
+
+# struct Slot { key, page }
+const SLOT_SIZE = 16
+
+const PAGE_SHIFT = 16
+const PAGE_SIZE = 65536
+const MAX_SMALL = 8192
+const MIN_THRESHOLD = 16777216
+const NCLASSES = 26
+
+table("_class_sizes", "i32", 16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768, 1024, 1280, 1536, 2048, 3072, 4096, 6144, 8192)
+space("_class_of", 520)        # u8[MAX_SMALL / 16 + 1]
+space("_class_list", 512)      # Page*[2][32]: pages with room, per [atomic][class]
+
+let g_setup_done = 0
+let g_all_pages = 0
+let g_all_count = 0
+let g_all_cap = 0
+let g_pool = 0
+let g_pool_count = 0
+let g_pool_cap = 0
+let g_table = 0
+let g_table_cap = 0
+let g_table_used = 0
+let g_heap_lo = -1
+let g_heap_hi = 0
+let g_bytes_since_gc = 0
+let g_threshold = MIN_THRESHOLD
+let g_live_bytes = 0
+let g_gc_ready = 0
+let g_gc_busy = 0
+let g_stress_every = 0
+let g_alloc_count = 0
+let g_collections = 0
+let g_stack_base = 0
+let g_mstack = 0           # MarkItem { p, n }
+let g_mtop = 0
+let g_mcap = 0
+let g_roots = 0            # Range { lo, hi }
+let g_root_count = 0
+let g_root_cap = 0
+let g_pause_total = 0      # nanoseconds spent in collections
+let g_pause_max = 0        # the longest single collection, in nanoseconds
+let g_idx = 0              # object index set by _page_of
+
+func _die_oom() {
+    write(2, cstr("Runtime Error: out of memory\n"), 29)
+    exit(1)
+}
+
+func _class_size(c) {
+    return ld32(addr_of("_class_sizes") + c * 4)
+}
+
+# Size-class lookup table, filled before the first allocation.
+func _gc_setup() {
+    g_setup_done = 1
+    let c = 0
+    let tab = addr_of("_class_of")
+    for (let i = 0; i <= MAX_SMALL / 16; i++) {
+        while (_class_size(c) < i * 16) {
+            c++
+        }
+        st8(tab + i, c)
+    }
+}
+
+# ---- page table ------------------------------------------------------------
+
+func _slot_hash(key, cap) {
+    let k = bxor(key, shr(key, 17))
+    k = k * -7046029254386353131
+    return band(shr(k, 20), cap - 1)
+}
+
+func _table_insert(key, pg) {
+    if ((g_table_used + 1) * 2 > g_table_cap) {
+        _table_grow()
+    }
+    let i = _slot_hash(key, g_table_cap)
+    let mask = g_table_cap - 1
+    while (ld64(g_table + i * SLOT_SIZE + 8) != 0 and ld64(g_table + i * SLOT_SIZE) != key) {
+        i = band(i + 1, mask)
+    }
+    if (ld64(g_table + i * SLOT_SIZE + 8) == 0) {
+        g_table_used++
+    }
+    st64(g_table + i * SLOT_SIZE, key)
+    st64(g_table + i * SLOT_SIZE + 8, pg)
+}
+
+func _table_grow() {
+    let old = g_table
+    let old_cap = g_table_cap
+    if (g_table_cap != 0) {
+        g_table_cap = g_table_cap * 2
+    } else {
+        g_table_cap = 1024
+    }
+    g_table = calloc(g_table_cap, SLOT_SIZE)
+    if (g_table == 0) {
+        _die_oom()
+    }
+    g_table_used = 0
+    for (let i = 0; i < old_cap; i++) {
+        if (ld64(old + i * SLOT_SIZE + 8) != 0) {
+            _table_insert(ld64(old + i * SLOT_SIZE), ld64(old + i * SLOT_SIZE + 8))
+        }
+    }
+    free(old)
+}
+
+func _table_find(key) {
+    if (g_table_cap == 0) {
+        return 0
+    }
+    let mask = g_table_cap - 1
+    let i = _slot_hash(key, g_table_cap)
+    while (ld64(g_table + i * SLOT_SIZE + 8) != 0) {
+        if (ld64(g_table + i * SLOT_SIZE) == key) {
+            return ld64(g_table + i * SLOT_SIZE + 8)
+        }
+        i = band(i + 1, mask)
+    }
+    return 0
+}
+
+# ---- pages ---------------------------------------------------------------------
+
+func _note_heap(lo, n) {
+    if (ult(lo, g_heap_lo)) {
+        g_heap_lo = lo
+    }
+    if (ugt(lo + n, g_heap_hi)) {
+        g_heap_hi = lo + n
+    }
+}
+
+func _track_page(pg) {
+    if (g_all_count == g_all_cap) {
+        if (g_all_cap != 0) {
+            g_all_cap = g_all_cap * 2
+        } else {
+            g_all_cap = 256
+        }
+        g_all_pages = realloc(g_all_pages, g_all_cap * 8)
+        if (g_all_pages == 0) {
+            _die_oom()
+        }
+    }
+    st64(g_all_pages + g_all_count * 8, pg)
+    g_all_count++
+}
+
+func _init_small_page(pg, cls, atomic) {
+    let size = _class_size(cls)
+    st32(pg + PG_CLS, cls)
+    st64(pg + PG_OBJ, size)
+    st32(pg + PG_NOBJS, PAGE_SIZE / size)
+    st32(pg + PG_BUMP, 0)
+    st32(pg + PG_FREE, 0)
+    st32(pg + PG_NFREE, 0)
+    st32(pg + PG_USED_COUNT, 0)
+    st8(pg + PG_ATOMIC, atomic)
+    st8(pg + PG_LARGE, 0)
+    st8(pg + PG_DEAD, 0)
+    st8(pg + PG_IN_LIST, 0)
+    free(ld64(pg + PG_USED))
+    free(ld64(pg + PG_MARK))
+    let n = ld32(pg + PG_NOBJS)
+    st64(pg + PG_USED, calloc(n, 1))
+    st64(pg + PG_MARK, calloc(n, 1))
+    if (ld64(pg + PG_USED) == 0 or ld64(pg + PG_MARK) == 0) {
+        _die_oom()
+    }
+}
+
+func _new_small_page(cls, atomic) {
+    let pg = 0
+    if (g_pool_count != 0) {
+        g_pool_count--
+        pg = ld64(g_pool + g_pool_count * 8)
+    }
+    if (pg != 0) {
+        st64(pg + PG_NEXT, 0)
+    } else {
+        pg = calloc(1, PG_SIZE)
+        let mem = aligned_alloc(PAGE_SIZE, PAGE_SIZE)
+        if (pg == 0 or mem == 0) {
+            _die_oom()
+        }
+        st64(pg + PG_BASE, mem)
+        _note_heap(mem, PAGE_SIZE)
+        _table_insert(shr(mem, PAGE_SHIFT), pg)
+        _track_page(pg)
+    }
+    _init_small_page(pg, cls, atomic)
+    return pg
+}
+
+func _alloc_large(n, atomic) {
+    let span = band(n + PAGE_SIZE - 1, bnot(PAGE_SIZE - 1))
+    let mem = aligned_alloc(PAGE_SIZE, span)
+    let pg = calloc(1, PG_SIZE)
+    if (mem == 0 or pg == 0) {
+        _die_oom()
+    }
+    memset(mem, 0, span)
+    st64(pg + PG_BASE, mem)
+    st64(pg + PG_OBJ, n)
+    st32(pg + PG_NOBJS, 1)
+    st32(pg + PG_BUMP, 1)
+    st32(pg + PG_USED_COUNT, 1)
+    st8(pg + PG_ATOMIC, atomic)
+    st8(pg + PG_LARGE, 1)
+    st64(pg + PG_SPAN, span)
+    let used = calloc(1, 1)
+    st64(pg + PG_USED, used)
+    st64(pg + PG_MARK, calloc(1, 1))
+    st8(used, 1)
+    _note_heap(mem, span)
+    let off = 0
+    while (off < span) {
+        _table_insert(shr(mem + off, PAGE_SHIFT), pg)
+        off += PAGE_SIZE
+    }
+    _track_page(pg)
+    g_bytes_since_gc += span
+    return mem
+}
+
+func _gc_alloc(size, atomic) {
+    if (g_setup_done == 0) {
+        _gc_setup()
+    }
+    let n = size
+    if (n == 0) {
+        n = 1
+    }
+    n += 1    # keeps a pointer just past the end inside the object
+    g_alloc_count++
+    if (g_gc_ready != 0 and g_gc_busy == 0) {
+        if (g_bytes_since_gc > g_threshold or (g_stress_every != 0 and g_alloc_count % g_stress_every == 0)) {
+            _collect()
+        }
+    }
+    if (n > MAX_SMALL) {
+        return _alloc_large(n, atomic)
+    }
+    let cls = ld8(addr_of("_class_of") + (n + 15) / 16)
+    let head = addr_of("_class_list") + atomic * 256 + cls * 8
+    let pg = ld64(head)
+    while (pg != 0 and ld32(pg + PG_FREE) == 0 and ld32(pg + PG_BUMP) >= ld32(pg + PG_NOBJS)) {
+        st8(pg + PG_IN_LIST, 0)
+        pg = ld64(pg + PG_NEXT)
+        st64(head, pg)
+    }
+    if (pg == 0) {
+        pg = _new_small_page(cls, atomic)
+        st64(pg + PG_NEXT, ld64(head))
+        st8(pg + PG_IN_LIST, 1)
+        st64(head, pg)
+    }
+    let osz = ld64(pg + PG_OBJ)
+    let idx = 0
+    if (ld32(pg + PG_FREE) != 0) {
+        idx = ld32(pg + PG_FREE) - 1
+        st32(pg + PG_FREE, ld32(ld64(pg + PG_BASE) + idx * osz))
+        st32(pg + PG_NFREE, ld32(pg + PG_NFREE) - 1)
+    } else {
+        idx = ld32(pg + PG_BUMP)
+        st32(pg + PG_BUMP, idx + 1)
+    }
+    st8(ld64(pg + PG_USED) + idx, 1)
+    st32(pg + PG_USED_COUNT, ld32(pg + PG_USED_COUNT) + 1)
+    let obj = ld64(pg + PG_BASE) + idx * osz
+    memset(obj, 0, osz)
+    g_bytes_since_gc += osz
+    return obj
+}
+
+func lv_alloc(n) {
+    return _gc_alloc(n, 0)
+}
+
+func lv_alloc_atomic(n) {
+    return _gc_alloc(n, 1)
+}
+
+# The page holding address w, or 0; the object's index is left in g_idx.
+func _page_of(w) {
+    if (ult(w, g_heap_lo) or uge(w, g_heap_hi)) {
+        return 0
+    }
+    let pg = _table_find(shr(w, PAGE_SHIFT))
+    if (pg == 0 or ld8(pg + PG_DEAD) != 0) {
+        return 0
+    }
+    let idx = 0
+    if (ld8(pg + PG_LARGE) != 0) {
+        if (uge(w, ld64(pg + PG_BASE) + ld64(pg + PG_OBJ))) {
+            return 0
+        }
+    } else {
+        idx = udiv(w - ld64(pg + PG_BASE), ld64(pg + PG_OBJ))
+        if (idx >= ld32(pg + PG_BUMP)) {
+            return 0
+        }
+    }
+    if (ld8(ld64(pg + PG_USED) + idx) == 0) {
+        return 0
+    }
+    g_idx = idx
+    return pg
+}
+
+func lv_realloc(p, n) {
+    if (p == 0) {
+        return _gc_alloc(n, 0)
+    }
+    let pg = _page_of(p)
+    if (pg == 0) {
+        _die_oom()
+    }
+    let old = ld64(pg + PG_OBJ)
+    let q = _gc_alloc(n, ld8(pg + PG_ATOMIC))
+    let m = n
+    if (old < n) {
+        m = old
+    }
+    memcpy(q, p, m)
+    return q
+}
+
+# ---- marking -------------------------------------------------------------------
+
+func _push(p, n) {
+    if (g_mtop == g_mcap) {
+        if (g_mcap != 0) {
+            g_mcap = g_mcap * 2
+        } else {
+            g_mcap = 4096
+        }
+        g_mstack = realloc(g_mstack, g_mcap * 16)
+        if (g_mstack == 0) {
+            _die_oom()
+        }
+    }
+    st64(g_mstack + g_mtop * 16, p)
+    st64(g_mstack + g_mtop * 16 + 8, n)
+    g_mtop++
+}
+
+func _mark_word(w) {
+    let pg = _page_of(w)
+    if (pg == 0) {
+        return 0
+    }
+    let idx = g_idx
+    let m = ld64(pg + PG_MARK) + idx
+    if (ld8(m) != 0) {
+        return 0
+    }
+    st8(m, 1)
+    if (ld8(pg + PG_ATOMIC) == 0) {
+        let obj = ld64(pg + PG_BASE)
+        if (ld8(pg + PG_LARGE) == 0) {
+            obj = obj + idx * ld64(pg + PG_OBJ)
+        }
+        _push(obj, ld64(pg + PG_OBJ))
+    }
+    return 0
+}
+
+func _scan_range(lo, hi) {
+    let p = band(lo + 7, -8)
+    while (ule(p + 8, hi)) {
+        _mark_word(ld64(p))
+        p += 8
+    }
+}
+
+func _drain() {
+    while (g_mtop != 0) {
+        g_mtop--
+        let p = ld64(g_mstack + g_mtop * 16)
+        let n = ld64(g_mstack + g_mtop * 16 + 8)
+        _scan_range(p, p + n)
+    }
+}
+
+func lv_gc_root_add(lo, hi) {
+    if (g_root_count == g_root_cap) {
+        if (g_root_cap != 0) {
+            g_root_cap = g_root_cap * 2
+        } else {
+            g_root_cap = 64
+        }
+        g_roots = realloc(g_roots, g_root_cap * 16)
+        if (g_roots == 0) {
+            _die_oom()
+        }
+    }
+    st64(g_roots + g_root_count * 16, lo)
+    st64(g_roots + g_root_count * 16 + 8, hi)
+    g_root_count++
+}
+
+func lv_gc_root_remove(lo) {
+    for (let i = 0; i < g_root_count; i++) {
+        if (ld64(g_roots + i * 16) == lo) {
+            g_root_count--
+            st64(g_roots + i * 16, ld64(g_roots + g_root_count * 16))
+            st64(g_roots + i * 16 + 8, ld64(g_roots + g_root_count * 16 + 8))
+            return 0
+        }
+    }
+}
+
+func lv_gc_is_marked(p) {
+    let pg = _page_of(p)
+    if (pg == 0) {
+        return 1
+    }
+    return ld8(ld64(pg + PG_MARK) + g_idx)
+}
+
+# Kept out of line, with every callee-saved register spilled into its frame, so that
+# values held only in registers are found by the stack scan.
+func _scan_stack_and_registers() {
+    spill_regs()
+    let sp = stack_ptr()
+    if (ult(sp, g_stack_base)) {
+        _scan_range(sp, g_stack_base)
+    }
+    _drain()
+}
+
+# ---- sweeping ------------------------------------------------------------------
+
+func _rebuild_lists() {
+    memset(addr_of("_class_list"), 0, 512)
+    for (let i = 0; i < g_all_count; i++) {
+        let pg = ld64(g_all_pages + i * 8)
+        if (ld8(pg + PG_IN_LIST) == 2) {
+            continue
+        }
+        st8(pg + PG_IN_LIST, 0)
+        st64(pg + PG_NEXT, 0)
+    }
+}
+
+func _pool_push(pg) {
+    if (g_pool_count == g_pool_cap) {
+        if (g_pool_cap != 0) {
+            g_pool_cap = g_pool_cap * 2
+        } else {
+            g_pool_cap = 64
+        }
+        g_pool = realloc(g_pool, g_pool_cap * 8)
+        if (g_pool == 0) {
+            _die_oom()
+        }
+    }
+    st64(g_pool + g_pool_count * 8, pg)
+    g_pool_count++
+}
+
+func _sweep() {
+    g_live_bytes = 0
+    _rebuild_lists()
+    let keep = 0
+    for (let i = 0; i < g_all_count; i++) {
+        let pg = ld64(g_all_pages + i * 8)
+        if (ld8(pg + PG_DEAD) != 0) {
+            continue
+        }
+        if (ld8(pg + PG_IN_LIST) == 2) {
+            st64(g_all_pages + keep * 8, pg)
+            keep++
+            continue
+        }
+        if (ld8(pg + PG_LARGE) != 0) {
+            if (ld8(ld64(pg + PG_MARK)) == 0) {
+                st8(pg + PG_DEAD, 1)
+                free(ld64(pg + PG_BASE))
+                free(ld64(pg + PG_USED))
+                free(ld64(pg + PG_MARK))
+                st64(pg + PG_USED, 0)
+                st64(pg + PG_MARK, 0)
+                st64(pg + PG_BASE, 0)
+                continue
+            }
+            st8(ld64(pg + PG_MARK), 0)
+            g_live_bytes += ld64(pg + PG_SPAN)
+            st64(g_all_pages + keep * 8, pg)
+            keep++
+            continue
+        }
+        let used = ld64(pg + PG_USED)
+        let mark = ld64(pg + PG_MARK)
+        let osz = ld64(pg + PG_OBJ)
+        let base = ld64(pg + PG_BASE)
+        let bump = ld32(pg + PG_BUMP)
+        for (let j = 0; j < bump; j++) {
+            if (ld8(used + j) == 0) {
+                continue
+            }
+            if (ld8(mark + j) != 0) {
+                st8(mark + j, 0)
+                continue
+            }
+            st8(used + j, 0)
+            st32(pg + PG_USED_COUNT, ld32(pg + PG_USED_COUNT) - 1)
+            st32(base + j * osz, ld32(pg + PG_FREE))
+            st32(pg + PG_FREE, j + 1)
+            st32(pg + PG_NFREE, ld32(pg + PG_NFREE) + 1)
+        }
+        g_live_bytes += ld32(pg + PG_USED_COUNT) * osz
+        st64(g_all_pages + keep * 8, pg)
+        keep++
+        if (ld32(pg + PG_USED_COUNT) == 0) {
+            # Empty: recycle the whole page for any size class.
+            _pool_push(pg)
+            st32(pg + PG_BUMP, 0)
+            st32(pg + PG_FREE, 0)
+            st32(pg + PG_NFREE, 0)
+            st8(pg + PG_IN_LIST, 2)
+            continue
+        }
+        if (ld32(pg + PG_FREE) != 0 or ld32(pg + PG_BUMP) < ld32(pg + PG_NOBJS)) {
+            let head = addr_of("_class_list") + ld8(pg + PG_ATOMIC) * 256 + ld32(pg + PG_CLS) * 8
+            st64(pg + PG_NEXT, ld64(head))
+            st64(head, pg)
+            st8(pg + PG_IN_LIST, 1)
+        }
+    }
+    g_all_count = keep
+}
+
+func _now_ns() {
+    let ts = stack_buf(16)
+    clock_gettime(1, ts)
+    return ld64(ts) * 1000000000 + ld64(ts + 8)
+}
+
+func _collect() {
+    let t0 = _now_ns()
+    g_gc_busy = 1
+    g_collections++
+    g_mtop = 0
+    _scan_range(addr_of("__data_start"), addr_of("_end"))
+    for (let i = 0; i < g_root_count; i++) {
+        _scan_range(ld64(g_roots + i * 16), ld64(g_roots + i * 16 + 8))
+    }
+    _drain()
+    _scan_stack_and_registers()
+    lv_data_gc_hook()
+    _sweep()
+    g_bytes_since_gc = 0
+    if (g_live_bytes > MIN_THRESHOLD) {
+        g_threshold = g_live_bytes
+    } else {
+        g_threshold = MIN_THRESHOLD
+    }
+    g_gc_busy = 0
+    let dt = _now_ns() - t0
+    g_pause_total += dt
+    if (dt > g_pause_max) {
+        g_pause_max = dt
+    }
+}
+
+func lv_gc_collect() {
+    if (g_gc_ready != 0 and g_gc_busy == 0) {
+        _collect()
+    }
+}
+
+func _gc_report() {
+    let buf = stack_buf(256)
+    let n = snprintf(buf, 256, cstr("LUNA_RT_GC_STATS,%llu collections,%zu live bytes,%zu pages,%llu total pause ns,%llu max pause ns\n"), g_collections, g_live_bytes, g_all_count, g_pause_total, g_pause_max)
+    write(2, buf, n)
+}
+
+# Called once from the thread that runs the program.
+func lv_gc_start() {
+    if (g_setup_done == 0) {
+        _gc_setup()
+    }
+    let attr = stack_buf(128)
+    let out = stack_buf(16)
+    if (pthread_getattr_np(pthread_self(), attr) == 0) {
+        pthread_attr_getstack(attr, out, out + 8)
+        pthread_attr_destroy(attr)
+        g_stack_base = ld64(out) + ld64(out + 8)
+    } else {
+        g_stack_base = frame_addr() + 4096
+    }
+    let s = getenv(cstr("LUNA_RT_GC_STRESS"))
+    if (s != 0 and ld8(s) != 0) {
+        g_stress_every = strtoull(s, 0, 10)
+    }
+    if (getenv(cstr("LUNA_RT_GC_STATS")) != 0) {
+        atexit(fn_addr("_gc_report"))
+    }
+    g_gc_ready = 1
+}

@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 2:
+  cannot use '-' on int and string
+
+   2 | let s = -t
+
+Hint: Both sides must be numbers.

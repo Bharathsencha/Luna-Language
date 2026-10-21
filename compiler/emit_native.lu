@@ -1,0 +1,1133 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# emit_native.lu: the native backend. It compiles the runtime of Luna, which is written
+# in Luna, to LLVM IR without any C in between.
+#
+# A native source file uses the ordinary Luna syntax but has one type: the 64-bit word.
+# Integers, pointers and doubles (as their bit pattern) are all words; memory is read and
+# written through the intrinsics below. Several files are compiled into one module and
+# see each other's functions.
+#
+#   func name(a, b_i, c_p) { ... }   parameters; a suffix _i is a C int, _p a pointer
+#   const NAME = 16                  a compile-time constant
+#   let counter = 0                  a module-level word variable
+#   extern("snprintf", "i32", "ptr,i64,ptr,...")    declares a C function
+#   space("lv_depth", 4)             a zeroed global of that many bytes
+#   table("sizes", "i32", 16, 32)    a constant array
+#
+# Intrinsics: ld8 ld16 ld32 ld64 lds8 lds16 lds32 st8 st16 st32 st64, band bor bxor
+# shl shr sar bnot, ult ule ugt uge udiv urem, addof subof mulof (overflow flags),
+# fadd fsub fmul fdiv fneg flt fle fgt fge feq fne i2f f2i dbl, cstr addr_of fn_addr
+# stack_buf frame_addr stack_ptr spill_regs call_ptr callv retv retp trap. p[i] reads and
+# p[i] = v writes the 64-bit word at p + 8 * i.
+
+use { die } from "util.lu"
+use { uid } from "shared.lu"
+use { ll, ll_alloca, ll_br, ll_condbr, ll_escape, ll_label, ll_new_ctx, ll_new_label } from "ll_state.lu"
+use { ll_reg } from "ll_state.lu"
+use { ST } from "state.lu"
+
+let NS = {"funcs": {}, "order": [], "externs": {}, "consts": {}, "gvars": {}, "datas": {},
+          "decls": [], "decl_ids": {}, "strs": [], "str_ids": {}, "defs": [], "syms": {}}
+
+let TWO_OPS = {
+    "band": "and", "bor": "or", "bxor": "xor", "shl": "shl", "shr": "lshr", "sar": "ashr",
+    "udiv": "udiv", "urem": "urem"
+}
+let CMP_OPS = {
+    "ult": "ult", "ule": "ule", "ugt": "ugt", "uge": "uge"
+}
+let FLT_OPS = {"fadd": "fadd", "fsub": "fsub", "fmul": "fmul", "fdiv": "fdiv"}
+let FCMP_OPS = {"flt": "olt", "fle": "ole", "fgt": "ogt", "fge": "oge", "feq": "oeq", "fne": "une"}
+let LOADS = {
+    "ld8": "i8", "ld16": "i16", "ld32": "i32", "ld64": "i64",
+    "lds8": "i8", "lds16": "i16", "lds32": "i32"
+}
+let STORES = {"st8": "i8", "st16": "i16", "st32": "i32", "st64": "i64"}
+let WIDTH = {"i8": 1, "i16": 2, "i32": 4, "i64": 8}
+let OVF = {"addof": "sadd", "subof": "ssub", "mulof": "smul"}
+let ARITY = {
+    "band": 2, "bor": 2, "bxor": 2, "shl": 2, "shr": 2, "sar": 2, "udiv": 2, "urem": 2,
+    "bnot": 1, "ult": 2, "ule": 2, "ugt": 2, "uge": 2,
+    "addof": 2, "subof": 2, "mulof": 2,
+    "fadd": 2, "fsub": 2, "fmul": 2, "fdiv": 2, "fneg": 1, "flt": 2, "fle": 2, "fgt": 2,
+    "fge": 2, "feq": 2, "fne": 2, "i2f": 1, "f2i": 1,
+    "ld8": 1, "ld16": 1, "ld32": 1, "ld64": 1, "lds8": 1, "lds16": 1, "lds32": 1,
+    "st8": 2, "st16": 2, "st32": 2, "st64": 2, "frame_addr": 0, "stack_ptr": 0, "spill_regs": 0,
+    "trap": 0, "retv": 2, "retp": 1
+}
+
+func commas(items) {
+    return join(items, ", ")
+}
+
+func nfail(n, msg) {
+    die("Native Error", n.line, msg)
+}
+
+func declare_once(key, text) {
+    if (NS.decl_ids[key] == null) {
+        NS.decl_ids[key] = true
+        append(NS.decls, text)
+    }
+}
+
+# A NUL-terminated string constant as an i64 expression.
+func nstr(text) {
+    let name = NS.str_ids[text]
+    if (name == null) {
+        name = "@.n{len(NS.strs)}"
+        append(NS.strs, "{name} = private unnamed_addr constant [{len(text) + 1} x i8] c\"{ll_escape(text)}\\00\"")
+        NS.str_ids[text] = name
+    }
+    return "ptrtoint (ptr {name} to i64)"
+}
+
+func ntype(kind) {
+    if (kind == "i32") {
+        return "i32"
+    }
+    if (kind == "ptr") {
+        return "ptr"
+    }
+    if (kind == "double") {
+        return "double"
+    }
+    return "i64"
+}
+
+# The word v converted to the LLVM type of an extern or native parameter.
+func to_type(v, ty) {
+    if (ty == "i64") {
+        return v
+    }
+    let r = ll_reg()
+    if (ty == "i32") {
+        ll("{r} = trunc i64 {v} to i32")
+    } else if (ty == "ptr") {
+        ll("{r} = inttoptr i64 {v} to ptr")
+    } else {
+        ll("{r} = bitcast i64 {v} to double")
+    }
+    return r
+}
+
+# A value of LLVM type ty converted back into a word.
+func from_type(v, ty) {
+    if (ty == "i64") {
+        return v
+    }
+    let r = ll_reg()
+    if (ty == "i32") {
+        ll("{r} = sext i32 {v} to i64")
+    } else if (ty == "ptr") {
+        ll("{r} = ptrtoint ptr {v} to i64")
+    } else {
+        ll("{r} = bitcast double {v} to i64")
+    }
+    return r
+}
+
+# Constants ---------------------------------------------------------------
+
+# The integer value of a constant expression, or null when it is not constant.
+func cfold(e) {
+    if (e.k == "num") {
+        if (len(e.v) > 18) {
+            return null
+        }
+        return to_int(e.v)
+    }
+    if (e.k == "char") {
+        return e.v
+    }
+    if (e.k == "bool") {
+        if (e.v) {
+            return 1
+        }
+        return 0
+    }
+    if (e.k == "id") {
+        return NS.consts[e.name]
+    }
+    if (e.k == "bin") {
+        let a = cfold(e.l)
+        let b = cfold(e.r)
+        if (a == null or b == null) {
+            return null
+        }
+        if (e.op == "+") {
+            return a + b
+        }
+        if (e.op == "-") {
+            return a - b
+        }
+        if (e.op == "*") {
+            return a * b
+        }
+        if (e.op == "/" and b != 0) {
+            return a / b
+        }
+        if (e.op == "%" and b != 0) {
+            return a % b
+        }
+        return null
+    }
+    if (e.k == "call" and e.callee.k == "id" and len(e.args) == 2) {
+        let a = cfold(e.args[0])
+        let b = cfold(e.args[1])
+        if (a == null or b == null) {
+            return null
+        }
+        let nm = e.callee.name
+        if (nm == "shl" and b >= 0 and b < 62) {
+            let r = a
+            for (let i = 0; i < b; i++) {
+                r = r * 2
+            }
+            return r
+        }
+        if (nm == "bor" and a >= 0 and b >= 0 and band_free(a, b)) {
+            return a + b
+        }
+    }
+    return null
+}
+
+# True when a and b share no set bit, so a | b equals a + b.
+func band_free(a, b) {
+    let x = a
+    let y = b
+    while (x > 0 and y > 0) {
+        if (x % 2 == 1 and y % 2 == 1) {
+            return false
+        }
+        x = x / 2
+        y = y / 2
+    }
+    return true
+}
+
+# Expressions ---------------------------------------------------------------
+
+func find_local(name) {
+    let i = len(ST.ctx.scopes) - 1
+    while (i >= 0) {
+        let v = ST.ctx.scopes[i][name]
+        if (v != null) {
+            return v
+        }
+        i -= 1
+    }
+    return null
+}
+
+func nx_list(nodes) {
+    let res = []
+    for (let n in nodes) {
+        append(res, nx(n))
+    }
+    return res
+}
+
+func nx_id(n) {
+    let v = find_local(n.name)
+    if (v != null) {
+        let r = ll_reg()
+        ll("{r} = load i64, ptr {v}")
+        return r
+    }
+    let c = NS.consts[n.name]
+    if (c != null) {
+        return "{c}"
+    }
+    if (NS.gvars[n.name] != null) {
+        let r = ll_reg()
+        ll("{r} = load i64, ptr @{n.name}")
+        return r
+    }
+    if (n.name == "null") {
+        return "0"
+    }
+    nfail(n, "Unknown name '{n.name}' (a function is used as a value with fn_addr)")
+}
+
+func nx_bin(n) {
+    if (n.op == "and" or n.op == "or") {
+        return nx_logic(n)
+    }
+    let c = cfold(n)
+    if (c != null) {
+        return "{c}"
+    }
+    let a = nx(n.l)
+    let b = nx(n.r)
+    let ops = {"+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem"}
+    let cmps = {"==": "eq", "!=": "ne", "<": "slt", "<=": "sle", ">": "sgt", ">=": "sge"}
+    let r = ll_reg()
+    if (ops[n.op] != null) {
+        ll("{r} = {ops[n.op]} i64 {a}, {b}")
+        return r
+    }
+    if (cmps[n.op] != null) {
+        let f = ll_reg()
+        ll("{f} = icmp {cmps[n.op]} i64 {a}, {b}")
+        ll("{r} = zext i1 {f} to i64")
+        return r
+    }
+    nfail(n, "Unsupported operator '{n.op}' in native code")
+}
+
+# and / or with short-circuit evaluation; the result is 0 or 1.
+func nx_logic(n) {
+    let slot = ll_alloca("i64")
+    let rhs = ll_new_label("lr")
+    let done = ll_new_label("ld")
+    let a = nx(n.l)
+    let f = ll_reg()
+    ll("{f} = icmp ne i64 {a}, 0")
+    let z = ll_reg()
+    ll("{z} = zext i1 {f} to i64")
+    ll("store i64 {z}, ptr {slot}")
+    if (n.op == "and") {
+        ll_condbr(f, rhs, done)
+    } else {
+        ll_condbr(f, done, rhs)
+    }
+    ll_label(rhs)
+    let b = nx(n.r)
+    let g = ll_reg()
+    ll("{g} = icmp ne i64 {b}, 0")
+    let w = ll_reg()
+    ll("{w} = zext i1 {g} to i64")
+    ll("store i64 {w}, ptr {slot}")
+    ll_br(done)
+    ll_label(done)
+    let r = ll_reg()
+    ll("{r} = load i64, ptr {slot}")
+    return r
+}
+
+# The address of word index of target: target + index * 8.
+func word_addr(n) {
+    let base = nx(n.target)
+    let off = nx(n.index)
+    let scaled = ll_reg()
+    ll("{scaled} = mul i64 {off}, 8")
+    let addr = ll_reg()
+    ll("{addr} = add i64 {base}, {scaled}")
+    return addr
+}
+
+func nx_not(n) {
+    let a = nx(n.e)
+    let f = ll_reg()
+    ll("{f} = icmp eq i64 {a}, 0")
+    let r = ll_reg()
+    ll("{r} = zext i1 {f} to i64")
+    return r
+}
+
+func nx_float(n) {
+    let t = n.v
+    if (index_of(t, ".") < 0) {
+        t = "{t}.0"
+    }
+    return "bitcast (double {t} to i64)"
+}
+
+func ptr_of(a) {
+    let p = ll_reg()
+    ll("{p} = inttoptr i64 {a} to ptr")
+    return p
+}
+
+# One argument of a call, with the LLVM type it is passed as.
+func arg_value(a, ty) {
+    if (a.k == "call" and a.callee.k == "id" and a.callee.name == "dbl" and len(a.args) == 1) {
+        let w = nx(a.args[0])
+        return {"v": to_type(w, "double"), "ty": "double"}
+    }
+    return {"v": to_type(nx(a), ty), "ty": ty}
+}
+
+func call_text(args) {
+    let parts = []
+    for (let a in args) {
+        append(parts, "{a.ty} {a.v}")
+    }
+    return commas(parts)
+}
+
+func nx_intrinsic(n, name, a) {
+    let r = ll_reg()
+    if (TWO_OPS[name] != null) {
+        ll("{r} = {TWO_OPS[name]} i64 {a[0]}, {a[1]}")
+        return r
+    }
+    if (name == "bnot") {
+        ll("{r} = xor i64 {a[0]}, -1")
+        return r
+    }
+    if (CMP_OPS[name] != null) {
+        let f = ll_reg()
+        ll("{f} = icmp {CMP_OPS[name]} i64 {a[0]}, {a[1]}")
+        ll("{r} = zext i1 {f} to i64")
+        return r
+    }
+    if (OVF[name] != null) {
+        let st = ll_reg()
+        let intr = "llvm.{OVF[name]}.with.overflow.i64"
+        declare_once(intr, "declare \{ i64, i1 } @{intr}(i64, i64)")
+        ll("{st} = call \{ i64, i1 } @{intr}(i64 {a[0]}, i64 {a[1]})")
+        let f = ll_reg()
+        ll("{f} = extractvalue \{ i64, i1 } {st}, 1")
+        ll("{r} = zext i1 {f} to i64")
+        return r
+    }
+    if (LOADS[name] != null) {
+        let ty = LOADS[name]
+        let p = ptr_of(a[0])
+        if (ty == "i64") {
+            ll("{r} = load i64, ptr {p}, align 8")
+            return r
+        }
+        let v = ll_reg()
+        ll("{v} = load {ty}, ptr {p}, align {WIDTH[ty]}")
+        if (starts_with(name, "lds")) {
+            ll("{r} = sext {ty} {v} to i64")
+        } else {
+            ll("{r} = zext {ty} {v} to i64")
+        }
+        return r
+    }
+    if (STORES[name] != null) {
+        let ty = STORES[name]
+        let p = ptr_of(a[0])
+        let v = a[1]
+        if (ty != "i64") {
+            v = ll_reg()
+            ll("{v} = trunc i64 {a[1]} to {ty}")
+        }
+        ll("store {ty} {v}, ptr {p}, align {WIDTH[ty]}")
+        return "0"
+    }
+    if (FLT_OPS[name] != null) {
+        let x = to_type(a[0], "double")
+        let y = to_type(a[1], "double")
+        let z = ll_reg()
+        ll("{z} = {FLT_OPS[name]} double {x}, {y}")
+        return from_type(z, "double")
+    }
+    if (name == "fneg") {
+        let x = to_type(a[0], "double")
+        let z = ll_reg()
+        ll("{z} = fneg double {x}")
+        return from_type(z, "double")
+    }
+    if (FCMP_OPS[name] != null) {
+        let x = to_type(a[0], "double")
+        let y = to_type(a[1], "double")
+        let f = ll_reg()
+        ll("{f} = fcmp {FCMP_OPS[name]} double {x}, {y}")
+        ll("{r} = zext i1 {f} to i64")
+        return r
+    }
+    if (name == "i2f") {
+        let z = ll_reg()
+        ll("{z} = sitofp i64 {a[0]} to double")
+        return from_type(z, "double")
+    }
+    if (name == "f2i") {
+        let x = to_type(a[0], "double")
+        ll("{r} = fptosi double {x} to i64")
+        return r
+    }
+    if (name == "frame_addr") {
+        declare_once("llvm.frameaddress", "declare ptr @llvm.frameaddress.p0(i32)")
+        let p = ll_reg()
+        ll("{p} = call ptr @llvm.frameaddress.p0(i32 0)")
+        ll("{r} = ptrtoint ptr {p} to i64")
+        return r
+    }
+    if (name == "stack_ptr") {
+        declare_once("llvm.stacksave", "declare ptr @llvm.stacksave.p0()")
+        let p = ll_reg()
+        ll("{p} = call ptr @llvm.stacksave.p0()")
+        ll("{r} = ptrtoint ptr {p} to i64")
+        return r
+    }
+    if (name == "spill_regs") {
+        declare_once("llvm.eh.unwind.init", "declare void @llvm.eh.unwind.init()")
+        ll("call void @llvm.eh.unwind.init()")
+        ST.ctx.spills = true
+        return "0"
+    }
+    if (name == "trap") {
+        declare_once("llvm.trap", "declare void @llvm.trap()")
+        ll("call void @llvm.trap()")
+        ll("unreachable")
+        ST.ctx.dead = true
+        return "0"
+    }
+    nfail(n, "Intrinsic '{name}' is not implemented")
+}
+
+# Calls whose arguments are not plain words: strings, symbols and the special forms.
+func nx_special(n, name) {
+    let args = n.args
+    if (name == "cstr") {
+        if (len(args) != 1 or args[0].k != "str") {
+            nfail(n, "cstr takes one string literal")
+        }
+        return nstr(args[0].v)
+    }
+    if (name == "addr_of" or name == "fn_addr") {
+        if (len(args) != 1 or args[0].k != "str") {
+            nfail(n, "{name} takes one string literal")
+        }
+        let sym = args[0].v
+        if (NS.datas[sym] == null and NS.funcs[sym] == null and NS.syms[sym] == null) {
+            NS.syms[sym] = true
+            declare_once("sym_{sym}", "@{sym} = external global i8")
+        }
+        return "ptrtoint (ptr @{sym} to i64)"
+    }
+    if (name == "stack_buf") {
+        let size = 0
+        if (len(args) == 1) {
+            size = cfold(args[0])
+        }
+        if (size == null or size <= 0) {
+            nfail(n, "stack_buf takes a constant size")
+        }
+        let slot = ll_alloca("[{size} x i8]")
+        let r = ll_reg()
+        ll("{r} = ptrtoint ptr {slot} to i64")
+        return r
+    }
+    return null
+}
+
+# call_ptr(f, args...): an indirect call of a word function.
+func nx_call_ptr(n) {
+    let vals = nx_list(n.args)
+    let parts = []
+    for (let i = 1; i < len(vals); i++) {
+        append(parts, "i64 {vals[i]}")
+    }
+    let p = ptr_of(vals[0])
+    let r = ll_reg()
+    ll("{r} = call i64 {p}({commas(parts)})")
+    return r
+}
+
+# callv(out, f, args...): calls a function that returns an LV and stores it at out. f is
+# the name of a native function or an expression holding a function address.
+func nx_callv(n) {
+    let out_w = nx(n.args[0])
+    let callee = n.args[1]
+    let direct = callee.k == "id" and NS.funcs[callee.name] != null
+    let target = ""
+    let fv = ""
+    if (not direct) {
+        fv = nx(callee)
+    }
+    let parts = []
+    for (let i = 2; i < len(n.args); i++) {
+        let w = nx(n.args[i])
+        if (direct) {
+            let ty = ntype(NS.funcs[callee.name].kinds[i - 2])
+            append(parts, "{ty} {to_type(w, ty)}")
+        } else {
+            append(parts, "i64 {w}")
+        }
+    }
+    if (direct) {
+        target = "@{callee.name}"
+    } else {
+        target = ptr_of(fv)
+    }
+    let r = ll_reg()
+    ll("{r} = call %LV {target}({commas(parts)})")
+    let o = ptr_of(out_w)
+    ll("store %LV {r}, ptr {o}, align 8")
+    return "0"
+}
+
+func nx_retv(n, a) {
+    let t = ll_reg()
+    ll("{t} = insertvalue %LV undef, i64 {a[0]}, 0")
+    let u = ll_reg()
+    ll("{u} = insertvalue %LV {t}, i64 {a[1]}, 1")
+    ll("ret %LV {u}")
+    ST.ctx.dead = true
+    return "0"
+}
+
+func nx_retp(n, a) {
+    let p = ptr_of(a[0])
+    let v = ll_reg()
+    ll("{v} = load %LV, ptr {p}, align 8")
+    ll("ret %LV {v}")
+    ST.ctx.dead = true
+    return "0"
+}
+
+func nx_call(n) {
+    if (n.callee.k != "id") {
+        nfail(n, "Only named functions can be called in native code")
+    }
+    let name = n.callee.name
+    let sp = nx_special(n, name)
+    if (sp != null) {
+        return sp
+    }
+    if (name == "call_ptr") {
+        return nx_call_ptr(n)
+    }
+    if (name == "callv") {
+        return nx_callv(n)
+    }
+    if (name == "dbl") {
+        return nx(n.args[0])
+    }
+    if (ARITY[name] != null) {
+        if (len(n.args) != ARITY[name]) {
+            nfail(n, "{name} takes {ARITY[name]} argument(s)")
+        }
+        let a = nx_list(n.args)
+        if (name == "retv") {
+            return nx_retv(n, a)
+        }
+        if (name == "retp") {
+            return nx_retp(n, a)
+        }
+        return nx_intrinsic(n, name, a)
+    }
+    let info = NS.funcs[name]
+    if (info != null) {
+        if (len(n.args) != len(info.kinds)) {
+            nfail(n, "{name} takes {len(info.kinds)} argument(s), not {len(n.args)}")
+        }
+        if (info.lv) {
+            nfail(n, "{name} returns an LV; call it with callv")
+        }
+        let parts = []
+        for (let i = 0; i < len(n.args); i++) {
+            let ty = ntype(info.kinds[i])
+            append(parts, "{ty} {to_type(nx(n.args[i]), ty)}")
+        }
+        let r = ll_reg()
+        ll("{r} = call i64 @{name}({commas(parts)})")
+        return r
+    }
+    let ext = NS.externs[name]
+    if (ext != null) {
+        let fixed = len(ext.params)
+        if (len(n.args) < fixed or (len(n.args) > fixed and not ext.variadic)) {
+            nfail(n, "{name} takes {fixed} argument(s), not {len(n.args)}")
+        }
+        let vals = []
+        for (let i = 0; i < len(n.args); i++) {
+            let ty = "i64"
+            if (i < fixed) {
+                ty = ntype(ext.params[i])
+            }
+            append(vals, arg_value(n.args[i], ty))
+        }
+        let sig = ""
+        if (ext.variadic) {
+            sig = "{ext.sig} "
+        }
+        let rty = ntype(ext.ret)
+        if (ext.ret == "void") {
+            ll("call void {sig}@{name}({call_text(vals)})")
+            return "0"
+        }
+        let r = ll_reg()
+        ll("{r} = call {rty} {sig}@{name}({call_text(vals)})")
+        return from_type(r, rty)
+    }
+    nfail(n, "Unknown function '{name}'")
+}
+
+func nx(n) {
+    let k = n.k
+    if (k == "num") {
+        return n.v
+    }
+    if (k == "char") {
+        return "{n.v}"
+    }
+    if (k == "bool") {
+        if (n.v) {
+            return "1"
+        }
+        return "0"
+    }
+    if (k == "float") {
+        return nx_float(n)
+    }
+    if (k == "str") {
+        return nstr(n.v)
+    }
+    if (k == "id") {
+        return nx_id(n)
+    }
+    if (k == "call") {
+        return nx_call(n)
+    }
+    if (k == "bin") {
+        return nx_bin(n)
+    }
+    if (k == "not") {
+        return nx_not(n)
+    }
+    if (k == "incdec") {
+        nx_incdec(n)
+        return nx_id({"k": "id", "name": n.name, "line": n.line})
+    }
+    if (k == "index") {
+        let addr = word_addr(n)
+        let r = ll_reg()
+        let p = ptr_of(addr)
+        ll("{r} = load i64, ptr {p}, align 8")
+        return r
+    }
+    nfail(n, "Unsupported expression '{k}' in native code")
+}
+
+# Statements ----------------------------------------------------------------
+
+func local_slot(name) {
+    let v = find_local(name)
+    if (v != null) {
+        return "ptr {v}"
+    }
+    if (NS.gvars[name] != null) {
+        return "ptr @{name}"
+    }
+    return null
+}
+
+func nx_incdec(n) {
+    let slot = local_slot(n.name)
+    if (slot == null) {
+        nfail(n, "Unknown variable '{n.name}'")
+    }
+    let a = ll_reg()
+    ll("{a} = load i64, {slot}")
+    let b = ll_reg()
+    let op = "add"
+    if (n.op == "--") {
+        op = "sub"
+    }
+    ll("{b} = {op} i64 {a}, 1")
+    ll("store i64 {b}, {slot}")
+}
+
+func ncond(e) {
+    let v = nx(e)
+    let f = ll_reg()
+    ll("{f} = icmp ne i64 {v}, 0")
+    return f
+}
+
+func push_scope() {
+    append(ST.ctx.scopes, {})
+}
+
+func pop_scope() {
+    remove(ST.ctx.scopes, len(ST.ctx.scopes) - 1)
+}
+
+func nblock(stmts) {
+    push_scope()
+    for (let s in stmts) {
+        nst(s)
+    }
+    pop_scope()
+}
+
+func nst_let(n) {
+    let v = "0"
+    if (n.init != null) {
+        v = nx(n.init)
+    }
+    let slot = ll_alloca("i64")
+    ll("store i64 {v}, ptr {slot}")
+    ST.ctx.scopes[len(ST.ctx.scopes) - 1][n.name] = slot
+}
+
+func nst_assign(n) {
+    let v = nx(n.e)
+    let slot = local_slot(n.name)
+    if (slot == null) {
+        nfail(n, "Assignment to unknown variable '{n.name}'")
+    }
+    ll("store i64 {v}, {slot}")
+}
+
+# target[index] = value, or target[index] op= value, on 64-bit words.
+func nst_setidx(n) {
+    if (n.index.k == "str") {
+        nfail(n, "Field assignment is not available in native code; use st64 and offsets")
+    }
+    let addr = word_addr(n)
+    let p = ptr_of(addr)
+    let v = nx(n.e)
+    if (n.op != null) {
+        let cur = ll_reg()
+        ll("{cur} = load i64, ptr {p}, align 8")
+        let ops = {"+": "add", "-": "sub", "*": "mul", "/": "sdiv"}
+        let r = ll_reg()
+        ll("{r} = {ops[n.op]} i64 {cur}, {v}")
+        v = r
+    }
+    ll("store i64 {v}, ptr {p}, align 8")
+}
+
+func nst_if(n) {
+    let yes = ll_new_label("it")
+    let no = ll_new_label("ie")
+    let end = ll_new_label("ix")
+    let c = ncond(n.cond)
+    if (len(n.els) > 0) {
+        ll_condbr(c, yes, no)
+    } else {
+        ll_condbr(c, yes, end)
+    }
+    ll_label(yes)
+    nblock(n.then)
+    ll_br(end)
+    if (len(n.els) > 0) {
+        ll_label(no)
+        nblock(n.els)
+        ll_br(end)
+    }
+    ll_label(end)
+}
+
+func nst_while(n) {
+    let head = ll_new_label("wh")
+    let body = ll_new_label("wb")
+    let end = ll_new_label("we")
+    ll_br(head)
+    ll_label(head)
+    let c = ncond(n.cond)
+    ll_condbr(c, body, end)
+    ll_label(body)
+    append(ST.ctx.loops, {"brk": end, "cont": head})
+    nblock(n.body)
+    remove(ST.ctx.loops, len(ST.ctx.loops) - 1)
+    ll_br(head)
+    ll_label(end)
+}
+
+func nst_for(n) {
+    push_scope()
+    if (n.init != null) {
+        nst(n.init)
+    }
+    let head = ll_new_label("fh")
+    let body = ll_new_label("fb")
+    let step = ll_new_label("fs")
+    let end = ll_new_label("fe")
+    ll_br(head)
+    ll_label(head)
+    let c = ncond(n.cond)
+    ll_condbr(c, body, end)
+    ll_label(body)
+    append(ST.ctx.loops, {"brk": end, "cont": step})
+    nblock(n.body)
+    remove(ST.ctx.loops, len(ST.ctx.loops) - 1)
+    ll_br(step)
+    ll_label(step)
+    nst(n.incr)
+    ll_br(head)
+    ll_label(end)
+    pop_scope()
+}
+
+func nst_switch(n) {
+    let v = nx(n.e)
+    let end = ll_new_label("sx")
+    for (let c in n.cases) {
+        let want = nx(c.value)
+        let hit = ll_new_label("sc")
+        let miss = ll_new_label("sn")
+        let f = ll_reg()
+        ll("{f} = icmp eq i64 {v}, {want}")
+        ll_condbr(f, hit, miss)
+        ll_label(hit)
+        nblock(c.body)
+        ll_br(end)
+        ll_label(miss)
+    }
+    nblock(n.dflt)
+    ll_br(end)
+    ll_label(end)
+}
+
+func nst_return(n) {
+    if (ST.ctx.lv) {
+        nfail(n, "A function that returns an LV must end with retv")
+    }
+    let v = "0"
+    if (n.e != null) {
+        v = nx(n.e)
+    }
+    ll("ret i64 {v}")
+    ST.ctx.dead = true
+}
+
+func nst(n) {
+    let k = n.k
+    if (k == "let") {
+        nst_let(n)
+    } else if (k == "group") {
+        for (let it in n.items) {
+            nst_let(it)
+        }
+    } else if (k == "assign") {
+        nst_assign(n)
+    } else if (k == "if") {
+        nst_if(n)
+    } else if (k == "while") {
+        nst_while(n)
+    } else if (k == "for") {
+        nst_for(n)
+    } else if (k == "switch") {
+        nst_switch(n)
+    } else if (k == "return") {
+        nst_return(n)
+    } else if (k == "break") {
+        let loops = ST.ctx.loops
+        ll_br(loops[len(loops) - 1].brk)
+    } else if (k == "continue") {
+        let loops = ST.ctx.loops
+        ll_br(loops[len(loops) - 1].cont)
+    } else if (k == "incdec") {
+        nx_incdec(n)
+    } else if (k == "setidx") {
+        nst_setidx(n)
+    } else if (k == "call" or k == "bin" or k == "id" or k == "not") {
+        nx(n)
+    } else {
+        nfail(n, "Unsupported statement '{k}' in native code")
+    }
+}
+
+# Functions and the module ----------------------------------------------------
+
+func param_kind(name) {
+    if (ends_with(name, "_i")) {
+        return "i32"
+    }
+    if (ends_with(name, "_p")) {
+        return "ptr"
+    }
+    return "i64"
+}
+
+func has_retv(x) {
+    if (type(x) == "list") {
+        for (let it in x) {
+            if (has_retv(it)) {
+                return true
+            }
+        }
+        return false
+    }
+    if (type(x) == "map") {
+        if (x["k"] == "call" and x["callee"]["k"] == "id" and (x["callee"]["name"] == "retv" or x["callee"]["name"] == "retp")) {
+            return true
+        }
+        for (let v in map_values(x)) {
+            if (has_retv(v)) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+func compile_func(n) {
+    let info = NS.funcs[n.name]
+    ST.ctx = ll_new_ctx(false)
+    ST.ctx.lv = info.lv
+    let params = []
+    for (let i = 0; i < len(n.params); i++) {
+        let ty = ntype(info.kinds[i])
+        append(params, "{ty} %p{i}")
+    }
+    for (let i = 0; i < len(n.params); i++) {
+        let slot = ll_alloca("i64")
+        let ty = ntype(info.kinds[i])
+        let w = from_type("%p{i}", ty)
+        ll("store i64 {w}, ptr {slot}")
+        ST.ctx.scopes[0][n.params[i]] = slot
+    }
+    for (let s in n.body) {
+        nst(s)
+    }
+    if (info.lv) {
+        ll("ret %LV zeroinitializer")
+    } else {
+        ll("ret i64 0")
+    }
+    let linkage = ""
+    if (starts_with(n.name, "_")) {
+        linkage = "internal "
+    }
+    let rty = "i64"
+    if (info.lv) {
+        rty = "%LV"
+    }
+    let attrs = ""
+    if (ST.ctx.spills == true) {
+        attrs = " noinline"
+    }
+    let lines = ["define {linkage}{rty} @{n.name}({commas(params)}){attrs} \{", "entry:"]
+    for (let a in ST.ctx.allocas) {
+        append(lines, a)
+    }
+    append(lines, "  br label %start")
+    append(lines, "start:")
+    for (let o in ST.ctx.out) {
+        append(lines, o)
+    }
+    append(lines, "}")
+    append(NS.defs, join(lines, "\n"))
+}
+
+func register_extern(n) {
+    let a = n.args
+    if (len(a) != 3 or a[0].k != "str" or a[1].k != "str" or a[2].k != "str") {
+        nfail(n, "extern takes a name, a return type and a parameter list as strings")
+    }
+    let params = []
+    let variadic = false
+    let ptys = []
+    if (a[2].v != "") {
+        for (let p in split(a[2].v, ",")) {
+            if (p == "...") {
+                variadic = true
+            } else {
+                append(params, p)
+                append(ptys, ntype(p))
+            }
+        }
+    }
+    if (variadic) {
+        append(ptys, "...")
+    }
+    let rty = "void"
+    if (a[1].v != "void") {
+        rty = ntype(a[1].v)
+    }
+    let sig = "({commas(ptys)})"
+    NS.externs[a[0].v] = {"ret": a[1].v, "params": params, "variadic": variadic, "sig": sig}
+    declare_once("ext_{a[0].v}", "declare {rty} @{a[0].v}({commas(ptys)})")
+}
+
+func register_data(n) {
+    let a = n.args
+    if (len(a) != 2 or a[0].k != "str") {
+        nfail(n, "space takes a name and a byte size")
+    }
+    let size = cfold(a[1])
+    if (size == null) {
+        nfail(n, "space needs a constant size")
+    }
+    NS.datas[a[0].v] = size
+    let linkage = ""
+    if (starts_with(a[0].v, "_")) {
+        linkage = "internal "
+    }
+    append(NS.defs, "@{a[0].v} = {linkage}global [{size} x i8] zeroinitializer, align 16")
+}
+
+# table("name", "i32", v1, v2, ...): a constant array of integers.
+func register_table(n) {
+    let a = n.args
+    if (len(a) < 3 or a[0].k != "str" or a[1].k != "str") {
+        nfail(n, "table takes a name, an element type and constant values")
+    }
+    let ty = a[1].v
+    let items = []
+    for (let i = 2; i < len(a); i++) {
+        let v = cfold(a[i])
+        if (v == null) {
+            nfail(n, "table values must be constants")
+        }
+        append(items, "{ty} {v}")
+    }
+    NS.datas[a[0].v] = len(items)
+    let linkage = ""
+    if (starts_with(a[0].v, "_")) {
+        linkage = "internal "
+    }
+    append(NS.defs, "@{a[0].v} = {linkage}constant [{len(items)} x {ty}] [{commas(items)}], align 16")
+}
+
+# First pass over one file: names, constants, externs and data, so that functions can be
+# used before they are defined.
+func scan_file(stmts) {
+    for (let s in stmts) {
+        if (s.k == "func") {
+            let kinds = []
+            for (let p in s.params) {
+                append(kinds, param_kind(p))
+            }
+            NS.funcs[s.name] = {"kinds": kinds, "lv": has_retv(s.body)}
+            append(NS.order, s)
+        } else if (s.k == "let") {
+            let c = null
+            if (s.init != null) {
+                c = cfold(s.init)
+            }
+            if (s.const_decl == true) {
+                NS.consts[s.name] = c
+            } else {
+                NS.gvars[s.name] = true
+                if (c == null) {
+                    c = 0
+                }
+                append(NS.defs, "@{s.name} = internal global i64 {c}")
+            }
+        } else if (s.k == "call" and s.callee.k == "id" and s.callee.name == "extern") {
+            register_extern(s)
+        } else if (s.k == "call" and s.callee.k == "id" and s.callee.name == "space") {
+            register_data(s)
+        } else if (s.k == "call" and s.callee.k == "id" and s.callee.name == "table") {
+            register_table(s)
+        } else {
+            nfail(s, "Only func, const, let, extern and space are allowed at the top of a native file")
+        }
+    }
+}
+
+# files: a list of {"path": ..., "stmts": [...]}. Returns the module text.
+export func compile_native(files) {
+    for (let f in files) {
+        ST.src_file = f.path
+        scan_file(f.stmts)
+    }
+    for (let fn in NS.order) {
+        compile_func(fn)
+    }
+    let out = ["; generated by lunac --native", "%LV = type \{ i64, i64 }"]
+    for (let d in NS.decls) {
+        append(out, d)
+    }
+    for (let s in NS.strs) {
+        append(out, s)
+    }
+    for (let d in NS.defs) {
+        append(out, d)
+    }
+    return join(out, "\n") + "\n"
+}

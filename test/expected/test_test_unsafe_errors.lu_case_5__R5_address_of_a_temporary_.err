@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 2:
+  address_of() only works on named values
+
+   2 |     let p = address_of(1 + 2)
+
+Hint: address_of() needs a variable name such as address_of(x), not a temporary expression.

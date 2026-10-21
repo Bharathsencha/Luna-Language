@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 2:
+  Bloc 'P' expects 2 field value(s), but got 1
+
+   2 | let p = P{1}
+
+Hint: Bloc values must stay inline and only use int, float, bool, char, or nested blocs

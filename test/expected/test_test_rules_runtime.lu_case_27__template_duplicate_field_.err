@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  template has duplicate field names
+
+   1 | template Bad { a, a }
+
+Hint: Each data or template name must keep one field list

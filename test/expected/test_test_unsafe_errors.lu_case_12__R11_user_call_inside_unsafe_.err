@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 6:
+  only builtin calls are allowed inside unsafe blocks
+
+   6 |     touch(a)
+
+Hint: Inside unsafe, call builtins only. Move user-defined function calls outside the block.

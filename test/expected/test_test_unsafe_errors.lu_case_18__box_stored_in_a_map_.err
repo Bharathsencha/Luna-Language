@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 2:
+  a box cannot be stored in a list or map; it is freed when its scope ends
+
+   2 | let m = {"k": b}
+
+Hint: Keep the box in a local variable, or store it in a template field.

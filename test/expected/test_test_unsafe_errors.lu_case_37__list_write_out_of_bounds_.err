@@ -1,0 +1,6 @@
+Index Error in /tmp/luna_test_case.lu at line 2:
+  Index 5 is out of bounds for list of length 3
+
+   2 | l[5] = 1
+
+Hint: Ensure your index is between 0 and len(list)-1

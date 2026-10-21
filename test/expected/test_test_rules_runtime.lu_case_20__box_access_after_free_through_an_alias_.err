@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 4:
+  box was already freed (use-after-free)
+
+   4 | alias[0] = 1
+
+Hint: Use b[i] = byte with 0 <= i < b.len and 0 <= byte <= 255

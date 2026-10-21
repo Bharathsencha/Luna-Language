@@ -1,0 +1,759 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 Bharath
+#
+# luna_rt_ops.lu: operators, indexing, iteration, calls and the program entry of the
+# runtime. The rules follow the bytecode VM: strict operators, integer division, boolean
+# conditions and the same error format. Every function takes pointers to LV cells; the
+# result, if any, is written through the first argument.
+
+extern("fmod", "double", "double,double")
+extern("pthread_attr_init", "i32", "ptr")
+extern("pthread_attr_setstacksize", "i32", "ptr,i64")
+extern("pthread_create", "i32", "ptr,ptr,ptr,ptr")
+extern("pthread_join", "i32", "i64,ptr")
+
+const MAX_DEPTH = 100000
+
+# ---- errors in operators ---------------------------------------------------------------
+
+func _operand_error(op, a, b) {
+    let msg = stack_buf(160)
+    snprintf(msg, 160, cstr("cannot use '%s' on %s and %s"), op, _type_name(a), _type_name(b))
+    if (ld8(op) == 43 and ld8(op + 1) == 0) {
+        lv_error(E_TYPE, msg, cstr("Both sides must be numbers, or both strings. Build text with \"\{x}\" or to_string(x)."))
+    }
+    lv_error(E_TYPE, msg, cstr("Both sides must be numbers."))
+}
+
+func _overflow(op) {
+    _errf(E_RUNTIME, cstr("The result does not fit in a 64-bit int. Use floats for very large numbers."),
+          cstr("integer overflow in '%s'"), op, 0, 0)
+}
+
+func _div_zero() {
+    lv_error(E_RUNTIME, cstr("division by zero"), cstr("Check the divisor before dividing."))
+}
+
+func _oob(idx, len, what) {
+    _errf(E_INDEX, cstr("Ensure your index is between 0 and len-1"),
+          cstr("Index %lld is out of bounds for %s of length %lld"), idx, what, len)
+}
+
+# ---- arithmetic ---------------------------------------------------------------------------
+
+func _elem(v) {
+    if (_tag(v) == T_INT) {
+        return i2f(_val(v))
+    }
+    if (_tag(v) == T_FLOAT) {
+        return _val(v)
+    }
+    return 0
+}
+
+func _float_op(op, x, y) {
+    if (op == 0) {
+        return fadd(x, y)
+    }
+    if (op == 1) {
+        return fsub(x, y)
+    }
+    if (op == 2) {
+        return fmul(x, y)
+    }
+    return fdiv(x, y)
+}
+
+# Element-wise arithmetic on two lists or two dense lists, as in the VM: the result is a
+# dense list (an empty list when two empty plain lists meet), and a list mixed with a
+# dense list gives null. Division follows IEEE rules.
+func _list_arith(o, op, a, b) {
+    let n = 0
+    let ta = _tag(a)
+    let tb = _tag(b)
+    if (ta == T_DENSE and tb == T_DENSE) {
+        n = ld64(_val(a) + D_COUNT)
+        if (ld64(_val(b) + D_COUNT) < n) {
+            n = ld64(_val(b) + D_COUNT)
+        }
+        if (n == 0) {
+            _dense_new(o, 0)
+            return 0
+        }
+    } else if (ta == T_LIST and tb == T_LIST) {
+        n = ld64(_val(a) + L_COUNT)
+        if (ld64(_val(b) + L_COUNT) < n) {
+            n = ld64(_val(b) + L_COUNT)
+        }
+        if (n == 0) {
+            _list_new(o, 0)
+            return 0
+        }
+    } else {
+        _null(o)
+        return 0
+    }
+    _dense_new(o, n)
+    let out = ld64(_val(o) + D_DATA)
+    for (let i = 0; i < n; i++) {
+        let x = 0
+        let y = 0
+        if (ta == T_DENSE) {
+            x = ld64(_val(a) + D_DATA)[i]
+        } else {
+            x = _elem(ld64(_val(a) + L_ITEMS) + 16 * i)
+        }
+        if (tb == T_DENSE) {
+            y = ld64(_val(b) + D_DATA)[i]
+        } else {
+            y = _elem(ld64(_val(b) + L_ITEMS) + 16 * i)
+        }
+        out[i] = _float_op(op, x, y)
+    }
+}
+
+func lvp_add(o, a, b) {
+    let ta = _tag(a)
+    let tb = _tag(b)
+    if (ta == T_INT and tb == T_INT) {
+        if (addof(_val(a), _val(b)) != 0) {
+            _overflow(cstr("+"))
+        }
+        _int(o, _val(a) + _val(b))
+        return 0
+    }
+    if (_is_num(a) and _is_num(b)) {
+        _flt(o, fadd(_num(a), _num(b)))
+        return 0
+    }
+    if (ta == T_STR and tb == T_STR) {
+        let la = ld64(_val(a))
+        let lb = ld64(_val(b))
+        _str_n(o, _val(a) + S_DATA, la + lb)
+        memcpy(_val(o) + S_DATA + la, _val(b) + S_DATA, lb)
+        st8(_val(o) + S_DATA + la + lb, 0)
+        return 0
+    }
+    if (_is_listish(a) and _is_listish(b)) {
+        _list_arith(o, 0, a, b)
+        return 0
+    }
+    _operand_error(cstr("+"), a, b)
+}
+
+func lvp_sub(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (subof(_val(a), _val(b)) != 0) {
+            _overflow(cstr("-"))
+        }
+        _int(o, _val(a) - _val(b))
+        return 0
+    }
+    if (_is_num(a) and _is_num(b)) {
+        _flt(o, fsub(_num(a), _num(b)))
+        return 0
+    }
+    if (_is_listish(a) and _is_listish(b)) {
+        _list_arith(o, 1, a, b)
+        return 0
+    }
+    _operand_error(cstr("-"), a, b)
+}
+
+func lvp_mul(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (mulof(_val(a), _val(b)) != 0) {
+            _overflow(cstr("*"))
+        }
+        _int(o, _val(a) * _val(b))
+        return 0
+    }
+    if (_is_num(a) and _is_num(b)) {
+        _flt(o, fmul(_num(a), _num(b)))
+        return 0
+    }
+    if (_is_listish(a) and _is_listish(b)) {
+        _list_arith(o, 2, a, b)
+        return 0
+    }
+    _operand_error(cstr("*"), a, b)
+}
+
+func lvp_div(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (_val(b) == 0) {
+            _div_zero()
+        }
+        if (_val(a) == -9223372036854775807 - 1 and _val(b) == -1) {
+            _overflow(cstr("/"))
+        }
+        _int(o, _val(a) / _val(b))
+        return 0
+    }
+    if (_is_num(a) and _is_num(b)) {
+        let d = _num(b)
+        if (feq(d, 0.0)) {
+            _div_zero()
+        }
+        _flt(o, fdiv(_num(a), d))
+        return 0
+    }
+    if (_is_listish(a) and _is_listish(b)) {
+        _list_arith(o, 3, a, b)
+        return 0
+    }
+    _operand_error(cstr("/"), a, b)
+}
+
+func lvp_mod(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (_val(b) == 0) {
+            _div_zero()
+        }
+        if (_val(b) == -1) {
+            _int(o, 0)
+            return 0
+        }
+        _int(o, _val(a) % _val(b))
+        return 0
+    }
+    if (_is_num(a) and _is_num(b)) {
+        let d = _num(b)
+        if (feq(d, 0.0)) {
+            _div_zero()
+        }
+        _flt(o, fmod(_num(a), d))
+        return 0
+    }
+    _operand_error(cstr("%"), a, b)
+}
+
+func lvp_neg(o, a) {
+    if (_tag(a) == T_INT) {
+        if (_val(a) == -9223372036854775807 - 1) {
+            _overflow(cstr("-"))
+        }
+        _int(o, 0 - _val(a))
+        return 0
+    }
+    if (_tag(a) == T_FLOAT) {
+        _flt(o, fneg(_val(a)))
+        return 0
+    }
+    let zero = stack_buf(16)
+    _int(zero, 0)
+    _operand_error(cstr("-"), zero, a)
+}
+
+# ---- comparison -----------------------------------------------------------------------------
+
+func _family(v) {
+    let t = _tag(v)
+    if (t == T_INT or t == T_FLOAT) {
+        return 1
+    }
+    if (t == T_LIST or t == T_DENSE) {
+        return 2
+    }
+    return 100 + t
+}
+
+# == without the type check.
+func lvp_equal(a, b) {
+    let ta = _tag(a)
+    let tb = _tag(b)
+    if (ta == T_NULL or tb == T_NULL) {
+        return ta == tb
+    }
+    if (ta == T_INT and tb == T_INT) {
+        return _val(a) == _val(b)
+    }
+    if (_is_num(a) and _is_num(b)) {
+        return feq(_num(a), _num(b))
+    }
+    if (ta != tb) {
+        return 0
+    }
+    if (ta == T_BOOL) {
+        return ld32(a + 8) == ld32(b + 8)
+    }
+    if (ta == T_CHAR) {
+        return ld8(a + 8) == ld8(b + 8)
+    }
+    if (ta == T_STR) {
+        return _str_same(_val(a), _val(b))
+    }
+    if (ta == T_LIST or ta == T_DENSE or ta == T_MAP or ta == T_FILE) {
+        return _val(a) == _val(b)
+    }
+    if (ta >= T_BLOC_TYPE and ta <= T_PTR) {
+        return _data_equal(a, b)
+    }
+    if (ta == T_FUNC) {
+        let fa = _val(a)
+        let fb = _val(b)
+        if (fa == fb) {
+            return 1
+        }
+        return ld32(fa + F_NATIVE) != 0 and ld32(fb + F_NATIVE) != 0 and ld64(fa + F_FN) == ld64(fb + F_FN)
+    }
+    return 0
+}
+
+func _check_comparable(a, b) {
+    if (_tag(a) == T_NULL or _tag(b) == T_NULL) {
+        return 0
+    }
+    if (_family(a) != _family(b)) {
+        _errf(E_TYPE, cstr("Compare values of the same type (comparing with null is always allowed)."),
+              cstr("cannot compare %s with %s"), _type_name(a), _type_name(b), 0)
+    }
+}
+
+func lvp_eq(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) == _val(b))
+        return 0
+    }
+    if (_tag(a) == T_PTR) {
+        _ptr_compare_check(a, b, 0)
+    }
+    _check_comparable(a, b)
+    _bool(o, lvp_equal(a, b))
+}
+
+func lvp_ne(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) != _val(b))
+        return 0
+    }
+    if (_tag(a) == T_PTR) {
+        _ptr_compare_check(a, b, 1)
+    }
+    _check_comparable(a, b)
+    _bool(o, lvp_equal(a, b) == 0)
+}
+
+# -1, 0 or 1; an error for values that have no order.
+func _order(a, b) {
+    let ta = _tag(a)
+    let tb = _tag(b)
+    if (ta == T_INT and tb == T_INT) {
+        return (_val(a) > _val(b)) - (_val(a) < _val(b))
+    }
+    if (_is_num(a) and _is_num(b)) {
+        let x = _num(a)
+        let y = _num(b)
+        return fgt(x, y) - flt(x, y)
+    }
+    if (ta == T_STR and tb == T_STR) {
+        let c = strcmp(_val(a) + S_DATA, _val(b) + S_DATA)
+        return (c > 0) - (c < 0)
+    }
+    if (ta == T_CHAR and tb == T_CHAR) {
+        let x = lds8(a + 8)
+        let y = lds8(b + 8)
+        return (x > y) - (x < y)
+    }
+    if (ta == T_PTR and tb == T_PTR) {
+        return ugt(_val(a), _val(b)) - ult(_val(a), _val(b))
+    }
+    _errf(E_TYPE, cstr("Ordering works on two numbers, two strings or two chars."),
+          cstr("cannot order %s and %s with <, <=, > or >="), _type_name(a), _type_name(b), 0)
+}
+
+func lvp_lt(o, a, b) {
+    if (_tag(a) == T_PTR) {
+        _ptr_compare_check(a, b, 2)
+    }
+    _bool(o, _order(a, b) < 0)
+}
+
+func lvp_le(o, a, b) {
+    if (_tag(a) == T_PTR) {
+        _ptr_compare_check(a, b, 4)
+    }
+    _bool(o, _order(a, b) <= 0)
+}
+
+func lvp_gt(o, a, b) {
+    if (_tag(a) == T_PTR) {
+        _ptr_compare_check(a, b, 3)
+    }
+    _bool(o, _order(a, b) > 0)
+}
+
+func lvp_ge(o, a, b) {
+    if (_tag(a) == T_PTR) {
+        _ptr_compare_check(a, b, 5)
+    }
+    _bool(o, _order(a, b) >= 0)
+}
+
+# A condition must be a boolean.
+func lvp_truth(a) {
+    if (_tag(a) == T_BOOL) {
+        return ld32(a + 8)
+    }
+    _errf(E_TYPE, cstr("Write the test explicitly, for example x != 0, len(s) > 0 or v != null."),
+          cstr("condition must be a boolean, got %s"), _type_name(a), 0, 0)
+}
+
+func lvp_not(o, a) {
+    _bool(o, lvp_truth(a) == 0)
+}
+
+# Fast paths that generated code calls: small integers and chars without leaving this file.
+func lvp_add_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (addof(_val(a), _val(b)) == 0) {
+            _int(o, _val(a) + _val(b))
+            return 0
+        }
+    }
+    lvp_add(o, a, b)
+}
+
+func lvp_sub_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (subof(_val(a), _val(b)) == 0) {
+            _int(o, _val(a) - _val(b))
+            return 0
+        }
+    }
+    lvp_sub(o, a, b)
+}
+
+func lvp_mul_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        if (mulof(_val(a), _val(b)) == 0) {
+            _int(o, _val(a) * _val(b))
+            return 0
+        }
+    }
+    lvp_mul(o, a, b)
+}
+
+func lvp_lt_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) < _val(b))
+        return 0
+    }
+    lvp_lt(o, a, b)
+}
+
+func lvp_le_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) <= _val(b))
+        return 0
+    }
+    lvp_le(o, a, b)
+}
+
+func lvp_gt_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) > _val(b))
+        return 0
+    }
+    lvp_gt(o, a, b)
+}
+
+func lvp_ge_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) >= _val(b))
+        return 0
+    }
+    lvp_ge(o, a, b)
+}
+
+func lvp_eq_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) == _val(b))
+        return 0
+    }
+    if (_tag(a) == T_CHAR and _tag(b) == T_CHAR) {
+        _bool(o, ld8(a + 8) == ld8(b + 8))
+        return 0
+    }
+    lvp_eq(o, a, b)
+}
+
+func lvp_ne_fast(o, a, b) {
+    if (_tag(a) == T_INT and _tag(b) == T_INT) {
+        _bool(o, _val(a) != _val(b))
+        return 0
+    }
+    if (_tag(a) == T_CHAR and _tag(b) == T_CHAR) {
+        _bool(o, ld8(a + 8) != ld8(b + 8))
+        return 0
+    }
+    lvp_ne(o, a, b)
+}
+
+# a == b as a plain 0 or 1, for switch.
+func lvp_eq_b(a, b) {
+    let r = stack_buf(16)
+    lvp_eq(r, a, b)
+    return ld32(r + 8)
+}
+
+# ---- indexing ----------------------------------------------------------------------------------
+
+func _need_int_index(idx, what) {
+    if (_tag(idx) != T_INT) {
+        _errf(E_TYPE, cstr("Use an int index"), what, _type_name(idx), 0, 0)
+    }
+}
+
+func lvp_index(o, t, idx) {
+    let tt = _tag(t)
+    if (tt >= T_BLOC_TYPE and tt <= T_PTR) {
+        if (_data_index(t, idx, o) != 0) {
+            return 0
+        }
+    }
+    if (tt == T_LIST) {
+        _need_int_index(idx, cstr("list index must be an int, got %s"))
+        let l = _val(t)
+        let i = _val(idx)
+        if (i < 0) {
+            i += ld64(l + L_COUNT)
+        }
+        if (i < 0 or i >= ld64(l + L_COUNT)) {
+            _oob(_val(idx), ld64(l + L_COUNT), cstr("list"))
+        }
+        _cp(o, ld64(l + L_ITEMS) + 16 * i)
+        return 0
+    }
+    if (tt == T_DENSE) {
+        _need_int_index(idx, cstr("list index must be an int, got %s"))
+        let d = _val(t)
+        let i = _val(idx)
+        if (i < 0) {
+            i += ld64(d + D_COUNT)
+        }
+        if (i < 0 or i >= ld64(d + D_COUNT)) {
+            _oob(_val(idx), ld64(d + D_COUNT), cstr("list"))
+        }
+        _flt(o, ld64(d + D_DATA)[i])
+        return 0
+    }
+    if (tt == T_STR) {
+        _need_int_index(idx, cstr("string index must be an int, got %s"))
+        let s = _val(t)
+        let i = _val(idx)
+        if (i < 0) {
+            i += ld64(s)
+        }
+        if (i < 0 or i >= ld64(s)) {
+            _oob(_val(idx), ld64(s), cstr("string"))
+        }
+        _chr(o, ld8(s + S_DATA + i))
+        return 0
+    }
+    if (tt == T_MAP) {
+        if (_tag(idx) != T_STR) {
+            _errf(E_TYPE, cstr("Maps use string keys"), cstr("map key must be a string, got %s"), _type_name(idx), 0, 0)
+        }
+        _map_get(o, t, _val(idx))
+        return 0
+    }
+    _errf(E_TYPE, cstr("Index lists and strings with ints, maps with strings"), cstr("cannot index %s"), _type_name(t), 0, 0)
+}
+
+# target.name
+func lvp_field(o, t, key) {
+    let tt = _tag(t)
+    if (tt == T_MAP) {
+        _map_get(o, t, _val(key))
+        return 0
+    }
+    if (tt >= T_BLOC_TYPE and tt <= T_PTR) {
+        if (_data_field(t, key, o) != 0) {
+            return 0
+        }
+    }
+    _errf(E_TYPE, cstr("Dot access works on maps"), cstr("cannot read field '%s' of %s"), _val(key) + S_DATA, _type_name(t), 0)
+}
+
+func lvp_index_set(t, idx, val) {
+    let tt = _tag(t)
+    if (tt >= T_BLOC_TYPE and tt <= T_PTR) {
+        if (_data_index_set(t, idx, val) != 0) {
+            return 0
+        }
+    }
+    if (tt == T_LIST or tt == T_MAP) {
+        lvp_container_check(val)
+    }
+    if (tt == T_LIST) {
+        _need_int_index(idx, cstr("list index must be an int, got %s"))
+        let l = _val(t)
+        let i = _val(idx)
+        if (i < 0) {
+            i += ld64(l + L_COUNT)
+        }
+        if (i < 0 or i >= ld64(l + L_COUNT)) {
+            _errf(E_INDEX, cstr("Ensure your index is between 0 and len(list)-1"),
+                  cstr("Index %lld is out of bounds for list of length %lld"), _val(idx), ld64(l + L_COUNT), 0)
+        }
+        _cp(ld64(l + L_ITEMS) + 16 * i, val)
+        return 0
+    }
+    if (tt == T_DENSE) {
+        _need_int_index(idx, cstr("list index must be an int, got %s"))
+        let d = _val(t)
+        let i = _val(idx)
+        if (i < 0) {
+            i += ld64(d + D_COUNT)
+        }
+        if (i < 0 or i >= ld64(d + D_COUNT)) {
+            _errf(E_INDEX, cstr("Ensure your index is between 0 and len(list)-1"),
+                  cstr("Index %lld is out of bounds for list of length %lld"), _val(idx), ld64(d + D_COUNT), 0)
+        }
+        ld64(d + D_DATA)[i] = _elem(val)
+        return 0
+    }
+    if (tt == T_MAP) {
+        if (_tag(idx) != T_STR) {
+            _errf(E_TYPE, cstr("Maps use string keys"), cstr("map key must be a string, got %s"), _type_name(idx), 0, 0)
+        }
+        _map_put(t, _val(idx), val)
+        return 0
+    }
+    lv_error(E_TYPE, cstr("Cannot assign through this target"),
+             cstr("Use integer indices for lists, or string keys for maps and templates"))
+}
+
+func lvp_map_put(m, key, val) {
+    _map_put(m, _val(key), val)
+}
+
+# for-in: lists by element, strings by char. Maps are rejected, as in the interpreter;
+# iterate map_keys(m) instead.
+func lvp_iter_prepare(o, v) {
+    let t = _tag(v)
+    if (t == T_LIST or t == T_STR or t == T_DENSE) {
+        _cp(o, v)
+        return 0
+    }
+    lv_error(E_TYPE, cstr("for-in expects a list, dense list, or string"),
+             cstr("Use for (let item in list) \{ ... }"))
+}
+
+func lvp_iter_len(v) {
+    if (_tag(v) == T_LIST) {
+        return ld64(_val(v) + L_COUNT)
+    }
+    if (_tag(v) == T_DENSE) {
+        return ld64(_val(v) + D_COUNT)
+    }
+    return ld64(_val(v))
+}
+
+func lvp_iter_at(o, v, i) {
+    let n = lvp_iter_len(v)
+    if (i >= n) {
+        let what = cstr("list")
+        if (_tag(v) == T_STR) {
+            what = cstr("string")
+        }
+        _oob(i, n, what)
+    }
+    if (_tag(v) == T_DENSE) {
+        _flt(o, ld64(ld64(_val(v) + D_DATA) + i * 8))
+        return 0
+    }
+    if (_tag(v) == T_LIST) {
+        _cp(o, ld64(_val(v) + L_ITEMS) + 16 * i)
+        return 0
+    }
+    _chr(o, ld8(_val(v) + S_DATA + i))
+}
+
+func lvp_gget(o, g, name) {
+    if (_tag(g) == T_UNDEF) {
+        lv_undefined(name)
+    }
+    _cp(o, g)
+}
+
+# ---- calls -------------------------------------------------------------------------------------
+
+func lvp_call(o, f, argc_i, argv) {
+    let tf = _tag(f)
+    if (tf == T_DTYPE or tf == T_BLOC_TYPE) {
+        _construct(o, f, argc_i, argv)
+        return 0
+    }
+    if (tf != T_FUNC) {
+        _errf(E_TYPE, cstr("Make sure you are calling a function value, closure, or native builtin"),
+              cstr("cannot call %s"), _type_name(f), 0, 0)
+    }
+    let mod = ld64(addr_of("lv_pos_mod"))
+    let line = ld32(addr_of("lv_pos_line"))
+    let fn = _val(f)
+    if (_unsafe_depth() > 0) {
+        _unsafe_call_check(ld32(fn + F_NATIVE))
+    }
+    st32(addr_of("lv_depth"), ld32(addr_of("lv_depth")) + 1)
+    if (ld32(addr_of("lv_depth")) > MAX_DEPTH) {
+        lv_error(E_RUNTIME, cstr("stack overflow: recursion is too deep"),
+                 cstr("Luna allows 100000 nested calls. Check for a recursion that never stops."))
+    }
+    callv(o, ld64(fn + F_FN), fn, argc_i, argv)
+    st32(addr_of("lv_depth"), ld32(addr_of("lv_depth")) - 1)
+    st64(addr_of("lv_pos_mod"), mod)
+    st32(addr_of("lv_pos_line"), line)
+}
+
+func lv_arity(self_p, argc_i, min_i, max_i) {
+    if (argc_i >= min_i and argc_i <= max_i) {
+        return 0
+    }
+    let name = cstr("function")
+    if (self_p != 0 and ld64(self_p + F_NAME) != 0) {
+        name = ld64(self_p + F_NAME)
+    }
+    if (min_i == max_i) {
+        let plural = cstr("s")
+        if (min_i == 1) {
+            plural = cstr("")
+        }
+        _errf4(E_ARGUMENT, cstr("Pass one value per parameter"),
+               cstr("%s() expects %d argument%s, but got %d"), name, min_i, plural, argc_i)
+    }
+    _errf4(E_ARGUMENT, cstr("Pass one value per required parameter"),
+           cstr("%s() expects %d to %d arguments, but got %d"), name, min_i, max_i, argc_i)
+}
+
+# ---- program entry ----------------------------------------------------------------------------
+
+func _thread_main(start) {
+    lv_gc_start()
+    call_ptr(ld64(start))
+    fflush(_stdout())
+    return 0
+}
+
+func lv_main(argc_i, argv_p, entry_p) {
+    lv_data_init()
+    _srand_default()
+    st64(addr_of("_argc"), argc_i)
+    st64(addr_of("_argv"), argv_p)
+    # Deep recursion needs a large stack; run the program on its own thread.
+    let attr = stack_buf(128)
+    pthread_attr_init(attr)
+    pthread_attr_setstacksize(attr, 1073741824)
+    let th = stack_buf(16)
+    let start = stack_buf(16)
+    st64(start, entry_p)
+    if (pthread_create(th, attr, fn_addr("_thread_main"), start) != 0) {
+        lv_gc_start()
+        call_ptr(entry_p)
+    } else {
+        pthread_join(ld64(th), 0)
+    }
+    fflush(_stdout())
+    return 0
+}

@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  cannot use '+' on int and boolean
+
+   1 | let s = 1 + true
+
+Hint: Both sides must be numbers, or both strings. Build text with "{x}" or to_string(x).

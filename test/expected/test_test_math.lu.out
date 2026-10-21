@@ -1,0 +1,21 @@
+=== Running Math Tests ===
+
+[1] Testing Basic Arithmetic...
+  ✓ Basic Arithmetic passed
+
+[2] Testing Comparisons...
+  ✓ Comparisons passed
+
+[3] Testing Logical Operators...
+  ✓ Logical Operators passed
+
+[4] Testing Short-Circuit Evaluation...
+  ✓ Short-Circuit Evaluation passed
+
+[5] Testing Math Library...
+  ✓ Math Library passed
+
+[6] Testing Random System (Xoroshiro128++)...
+  ✓ Random System passed
+
+=== All Math Tests Passed! ===

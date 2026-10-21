@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 2:
+  template 'A' is already defined with different fields
+
+   2 | template A { y }
+
+Hint: Each data or template name must keep one field list

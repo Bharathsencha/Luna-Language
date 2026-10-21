@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 1:
+  address_of() may only be used inside unsafe blocks
+
+   1 | let p = address_of(1 + 2)
+
+Hint: Wrap pointer operations in unsafe { ... }

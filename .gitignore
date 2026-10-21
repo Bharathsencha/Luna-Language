@@ -6,6 +6,7 @@ obj/
 *.a
 *.exe
 *.out
+!test/expected/*.out
 a.out
 debug_tokens
 build/
@@ -31,16 +32,6 @@ ir/
 test_file.txt
 docs/my_strdup.md
 preprocessed/
-rust/unsafe_rt/target/
-rust/unsafe_rt/Cargo.lock
-lib/libluna_unsafe_rt.a
-rust/data_rt/target/
-rust/data_rt/Cargo.lock
-lib/libluna_data_rt.a
-zig-test/.zig-cache/
-zig-test/.zig-global-cache/
-zig-test/zig-out/
 __pycache__/
 *.csv
-docs/known-issues.md
 C/

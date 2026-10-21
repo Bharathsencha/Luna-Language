@@ -1,0 +1,6 @@
+Name Error in /tmp/luna_test_case.lu at line 3:
+  Template field 'z' does not exist
+
+   3 | t.z = 3
+
+Hint: Assign only to declared template fields

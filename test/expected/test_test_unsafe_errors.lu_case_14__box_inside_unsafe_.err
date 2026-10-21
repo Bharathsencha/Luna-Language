@@ -1,0 +1,6 @@
+Argument Error in /tmp/luna_test_case.lu at line 2:
+  box and bloc values are not allowed inside unsafe blocks
+
+   2 |     let b = box[8]
+
+Hint: Use box[n] with n between 1 and 4096; at most 4096 boxes can be live at once

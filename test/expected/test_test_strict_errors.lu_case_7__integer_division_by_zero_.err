@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 2:
+  division by zero
+
+   2 | let s = 1 / z
+
+Hint: Check the divisor before dividing.

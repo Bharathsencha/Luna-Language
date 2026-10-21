@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 2:
+  nested unsafe blocks are not allowed
+
+   2 |     unsafe {
+
+Hint: Nested unsafe blocks are not supported. Merge the inner block into the outer one.

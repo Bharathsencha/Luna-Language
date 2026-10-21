@@ -3,7 +3,7 @@
 #
 # ll_scope.lu: variable scopes and deferred calls of the LLVM IR backend.
 
-use { BUILTINS, uid } from "cstate.lu"
+use { BUILTINS, uid } from "shared.lu"
 use { ll, ll_alloca, ll_args_array, ll_call_out, ll_copy, ll_reg, ll_slot } from "ll_state.lu"
 use { ST } from "state.lu"
 

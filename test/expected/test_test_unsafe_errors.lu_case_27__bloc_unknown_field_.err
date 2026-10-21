@@ -1,0 +1,6 @@
+Name Error in /tmp/luna_test_case.lu at line 3:
+  Field 'z' does not exist on this bloc value
+
+   3 | print(p.z)
+
+Hint: Use dot access with a declared bloc field such as point.x

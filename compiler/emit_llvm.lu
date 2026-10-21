@@ -3,15 +3,15 @@
 #
 # emit_llvm.lu: the LLVM IR backend: expressions, statements, functions and modules.
 #
-# It follows emit_c.lu construct by construct and calls the same runtime
-# (compiler/runtime/luna_rt.c) through the wrappers in luna_rt_ir.c. Every
+# It calls the runtime
+# (compiler/runtime/luna_rt_*.lu) through its pointer entry points (lvp_*). Every
 # expression compiles to the name of a pointer to an LV; arguments are hoisted into
 # slots so the order of evaluation is exactly the order of the source.
 
 use { die, path_dir, path_join, path_norm, split_lines } from "util.lu"
 use { lex } from "lexer.lu"
 use { parse_program } from "parser.lu"
-use { MODULES, MOD_LIST, uid } from "cstate.lu"
+use { MODULES, MOD_LIST, uid } from "shared.lu"
 use { collect_exports, has_zero_arg_main, p_prompt_text, used_names, walk_nested } from "analysis.lu"
 use { LL_BUILTINS, LL_CONSTS, LL_FUNCS, LL_GLOBALS, LL_KSTRS, LL_MODDECLS } from "ll_state.lu"
 use { LL_NATIVES, LL_STRS, ll, ll_alloca, ll_args_array, ll_br, ll_bool, ll_call_lv } from "ll_state.lu"
@@ -866,15 +866,15 @@ func compile_module(canon) {
 }
 
 func emit_name_error(hint, fmt_text, arg_a, arg_b) {
-    let args_text = ""
+    let a_text = "null"
+    let b_text = "null"
     if (arg_a != null) {
-        args_text = ", ptr {ll_cstr(arg_a)}"
+        a_text = ll_cstr(arg_a)
     }
     if (arg_b != null) {
-        let prefix = args_text
-        args_text = "{prefix}, ptr {ll_cstr(arg_b)}"
+        b_text = ll_cstr(arg_b)
     }
-    ll("call void (i32, ptr, ptr, ...) @lv_errorf(i32 2, ptr {ll_cstr(hint)}, ptr {ll_cstr(fmt_text)}{args_text})")
+    ll("call void @lv_name_error(ptr {ll_cstr(hint)}, ptr {ll_cstr(fmt_text)}, ptr {a_text}, ptr {b_text})")
 }
 
 func st_use(n) {
@@ -968,7 +968,7 @@ func declarations() {
     append(d, "declare %LV @lv_addr_invalid(i32)")
     append(d, "declare void @lv_arity(ptr, i32, i32, i32)")
     append(d, "declare void @lv_static_error(i32, ptr, ptr)")
-    append(d, "declare void @lv_errorf(i32, ptr, ptr, ...)")
+    append(d, "declare void @lv_name_error(ptr, ptr, ptr, ptr)")
     append(d, "declare i32 @lv_main(i32, ptr, ptr)")
     for (let b in LL_BUILTINS) {
         append(d, "declare %LV @lb_{b}(ptr, i32, ptr)")

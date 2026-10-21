@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  cannot compare int with string
+
+   1 | let s = 1 == "1"
+
+Hint: Compare values of the same type (comparing with null is always allowed).

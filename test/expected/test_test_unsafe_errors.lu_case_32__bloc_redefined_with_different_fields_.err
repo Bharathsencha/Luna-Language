@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 2:
+  bloc 'W' is already defined with different fields
+
+   2 | bloc W { y }
+
+Hint: A bloc holds at most 32 bytes of unique fields; each name keeps one field list

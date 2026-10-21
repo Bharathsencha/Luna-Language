@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 3:
+  a box cannot be returned from a function; it is freed when its scope ends
+
+   3 |     return x
+
+Hint: Keep the box in a local variable, or store it in a template field.

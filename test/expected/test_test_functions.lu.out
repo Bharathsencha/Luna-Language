@@ -1,0 +1,21 @@
+=== Running Function Tests ===
+
+[1] Testing Basic Functions...
+  ✓ Basic Functions passed
+
+[2] Testing Functions with Logic...
+  ✓ Functions with Logic passed
+
+[3] Testing Recursion...
+  ✓ Recursion passed
+
+[4] Testing Nested Functions...
+  ✓ Nested Functions passed
+
+[5] Testing Functions with Arrays...
+  ✓ Functions with Arrays passed
+
+[6] Testing Function Scope...
+  ✓ Function Scope passed
+
+=== All Function Tests Passed! ===

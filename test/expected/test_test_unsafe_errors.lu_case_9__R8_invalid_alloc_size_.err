@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 2:
+  alloc() size must be a positive integer
+
+   2 |     let a = alloc(0)
+
+Hint: alloc() needs a positive whole-number slot count, for example alloc(4).

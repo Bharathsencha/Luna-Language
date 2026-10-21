@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  bloc exceeds the cache-line size limit (32 bytes)
+
+   1 | bloc B { a, b, c, d, e }
+
+Hint: A bloc holds at most 32 bytes of unique fields; each name keeps one field list

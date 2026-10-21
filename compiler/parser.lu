@@ -266,13 +266,17 @@ func p_postfix() {
         if (p_at("(")) {
             p_next()
             let args = []
+            p_skip_nl()
             if (not p_at(")")) {
                 let more = true
                 while (more) {
+                    p_skip_nl()
                     append(args, p_expr())
+                    p_skip_nl()
                     more = p_eat(",")
                 }
             }
+            p_skip_nl()
             p_expect(")", "Expected ')' after arguments")
             let c = node("call", line)
             c.callee = e
@@ -453,6 +457,7 @@ func p_declaration(is_const, is_export) {
             n.init = vals[i]
         }
         n.exported = is_export
+        n.const_decl = is_const
         append(lets, n)
     }
     if (len(lets) == 1) {

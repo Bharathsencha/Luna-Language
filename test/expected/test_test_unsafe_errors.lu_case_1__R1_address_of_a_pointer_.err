@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 3:
+  cannot take address_of() of a pointer value
+
+   3 |     let b = address_of(a)
+
+Hint: address_of() only works on normal values. If you already have a pointer, use it directly.

@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 3:
+  ptr_add() moved outside the allocation bounds
+
+   3 |     let bad = ptr_offset(a, -1)
+
+Hint: That pointer step moved past the allocated buffer. Keep ptr_add() within the allocated slot range.

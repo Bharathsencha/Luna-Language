@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 2:
+  Bloc field 'name' only accepts int, float, bool, char, or another bloc
+
+   2 | let t = Tag{"hello"}
+
+Hint: Bloc values must stay inline and only use int, float, bool, char, or nested blocs

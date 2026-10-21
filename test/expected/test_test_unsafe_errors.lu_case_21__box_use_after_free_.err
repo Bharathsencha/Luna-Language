@@ -1,0 +1,6 @@
+Runtime Error in /tmp/luna_test_case.lu at line 3:
+  box was already freed (use-after-free)
+
+   3 | print(b.len)
+
+Hint: Do not use a box after it is freed.

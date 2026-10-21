@@ -1,0 +1,6 @@
+Type Error in /tmp/luna_test_case.lu at line 1:
+  bloc has duplicate field names
+
+   1 | bloc B { x, x }
+
+Hint: A bloc holds at most 32 bytes of unique fields; each name keeps one field list
