@@ -1,100 +1,122 @@
 # Architecture
 
-Luna is a C11 program (`bin/luna`) with two Rust static libraries linked in. A script goes
-through this pipeline:
+Luna is an ahead-of-time compiler. Both the compiler and the runtime that compiled programs
+link against are written in Luna. The only external pieces are clang (LLVM 18), libc and libm.
 
 ```
-source -> lexer -> parser (AST in arena) -> compiler -> bytecode VM
-                                                         |-- GC heap        (src/gc.c)
-                                                         |-- unsafe runtime (src/unsafe_runtime.c + rust/unsafe_rt)
-                                                         |-- data runtime   (src/data_runtime.c + rust/data_rt)
-                                                         '-- native builtins (src/*_lib.c, gui/)
+prog.lu
+  |  compiler/lexer.lu        tokens
+  |  compiler/parser.lu       AST (maps and lists)
+  |  compiler/lint.lu         static check (rule R12)
+  |  compiler/analysis.lu     names used, exports, closure captures
+  |  compiler/emit_llvm.lu    LLVM IR text
+  v
+C/prog.ll ----------------+
+                          |   clang -O1
+C/luna_rt_native.o -------+-------------->  prog   (native executable, links libc and libm)
+  ^
+  |  clang -c
+C/luna_rt_native.ll
+  ^
+  |  luna --native compiler/runtime/*.lu    (compiler/emit_native.lu)
+compiler/runtime/*.lu
 ```
 
-## Front end
+`luna build`, `luna run` and `luna emit` are the driver, `compiler/lunac.lu`. See
+[getting-started.md](../getting-started.md) for the commands and [lunac.md](lunac.md) for the
+compiler in detail.
+
+## The compiler (`compiler/`)
 
 | File | Role |
 |---|---|
-| `src/main.c` | CLI entry: runs a file or starts the REPL. Calls a zero-argument `main()` automatically after the top level. Prints `LUNA_GC_STATS` on exit when that variable is set |
-| `src/lexer.c` | Tokens, with a 24-byte inline lexeme buffer so most tokens need no heap allocation. Comments start with `#` or `//`. The keyword aliases are mapped here |
-| `src/token.c` | Token names for diagnostics |
-| `src/parser.c` | Recursive descent with Pratt-style expression precedence. Folds constants at parse time |
-| `src/ast.c` | Node constructors, plus call classification: builtins such as `append` and `load` are tagged at parse time |
-| `src/arena.c` | Bump allocator for all AST nodes; one reset frees the whole tree. See [arena.md](arena.md) |
-| `src/intern.c` | Global intern table, so identifiers and map keys compare by pointer |
-| `src/error.c` | Diagnostics with source line, caret and hint |
+| `lunac.lu` | Driver: `build`, `run`, `emit`, and the internal `--native` and positional forms. Builds the clang command line |
+| `lexer.lu`, `token.lu` | Source text to tokens; keyword and operator tables, including the keyword aliases |
+| `parser.lu` | Recursive descent with precedence climbing; produces the AST as maps |
+| `lint.lu` | The static check for `free()` in conditional flow inside `unsafe` (rule R12) |
+| `analysis.lu` | Which names a function reads and writes, exports, and which variables closures capture |
+| `emit_llvm.lu`, `ll_state.lu`, `ll_scope.lu` | The LLVM IR backend: expressions, statements, functions, modules, scopes and deferred calls |
+| `emit_native.lu` | The native backend, used to compile the runtime (see [lunac.md](lunac.md)) |
+| `state.lu`, `shared.lu`, `util.lu` | Shared state, the list of builtin names (`BUILTINS`), path and file helpers, error formatting |
+| `build_runtime.sh` | Builds `C/luna_rt_native.o` from the runtime sources when they changed and prints the link input |
+| `run_tests.sh` | The test runner behind `make test` |
 
-## Execution
+The compiler reads imported modules while compiling, so one IR file holds the program and every
+module it uses.
 
-| File | Role |
+## The runtime (`compiler/runtime/`)
+
+The runtime is compiled by the native backend into `C/luna_rt_native.ll`, then to an object,
+and linked into every program.
+
+| File | Contents |
 |---|---|
-| `src/luna_compiler.c` | AST to register bytecode |
-| `src/luna_vm.c` | The VM. See [vm.md](vm.md) |
-| `src/luna_chunk.c` | Bytecode chunk storage |
-| `src/luna_vm_gc.c` | VM roots for the collector |
-| `src/module_runtime.c` | `use` / `import` path resolution (script-relative, through `realpath`), cycle detection, run-once module cache |
-| `src/env.c` | Environments (hash table of interned names) for globals and modules |
-| `src/interpreter.c` | Legacy tree-walking interpreter, used by the embedding API and native callbacks (`LUNA_USE_INTERPRETER=1` runs a whole script on it) |
-| `src/luna_runtime.c`, `src/luna_test.c` | Embedding and test API used by `zig-test/` |
+| `luna_gc.lu` | The garbage collector. See [gc.md](gc.md) |
+| `luna_rt_core.lu` | Value layouts, errors, strings, lists, maps, `to_string` |
+| `luna_rt_ops.lu` | Operators, indexing, iteration, calls, recursion limit, program entry |
+| `luna_rt_lib.lu` | Builtins: conversions, maps, lists, strings, `args`, `exit`, `system`, `clock` |
+| `luna_rt_math.lu` | Math, files, dense lists, vector math, random numbers |
+| `luna_rt_data.lu` | `data`, `template`, `bloc`, `box` and `unsafe` |
+| `luna_rt_rules.lu` | The validation rules behind them: bloc and template schemas, the box handle table, the allocation table and the twelve pointer rules. Each rule returns 0 or an error code, which `luna_rt_data.lu` turns into the error message |
 
-## Values and memory
+Every builtin `name` listed in `compiler/shared.lu` is a runtime function `lb_name(self, argc,
+argv)` that returns a value. Operators are runtime calls too (`lvp_add_fast`, `lvp_lt_fast` and
+so on), which is where the strict type checks and the overflow checks live.
 
-| File | Role |
-|---|---|
-| `src/value.c`, `include/value.h` | The `Value` tagged union: null, int, float, bool, char, string, list, dense list, map, function and closure, native function, file handle, bloc, box, template, pointer |
-| `src/gc.c`, `src/gc_visit.c` | Tracing collector. See [gc.md](gc.md) |
-| `src/unsafe_runtime.c` | C side of `unsafe { }`: allocation, load and store, defer; forwards every check to `rust/unsafe_rt`. See [unsafe.md](unsafe.md) |
-| `src/data_runtime.c` | C side of `bloc` / `box` / `template` validation, backed by `rust/data_rt`. See [language/data-types.md](../language/data-types.md) |
+### Values
 
-## Standard library
+Every Luna value is a 16-byte cell, `%LV = { i64 tag, i64 payload }`. Generated code keeps each
+value in a stack slot and passes pointers to the runtime.
 
-All builtins are registered in `env_register_stdlib` (`src/library.c`).
-
-| File | Builtins |
-|---|---|
-| `src/library.c` | Core: `assert`, `type`, `int`, `float`, `range`, `map_*`, `debug`, unsafe entry points |
-| `src/string_lib.c` | String functions, `format`, conversions |
-| `src/list_lib.c` | `sort` (merge sort with insertion sort for small runs), `ssort`, `shuffle` (Fisher-Yates), `map`, `filter`, `reduce`, `dense_list` |
-| `src/math_lib.c` | Math, and the xoroshiro128++ random generator |
-| `src/vec_lib.c` | SIMD `vec_*` and OpenMP `mat_mul` |
-| `src/file_lib.c` | File I/O |
-| `src/time_lib.c`, `asm/time.asm` | `clock()`, using a raw `clock_gettime` syscall written in NASM |
-| `src/sand_lib.c` | Falling-sand grid plugin (`sand_*`) |
-
-## Graphics and audio (`gui/`)
-
-| File | Role |
-|---|---|
-| `gui/gl_backend.c` | OpenGL 3.3 core renderer on GLFW: 65,536-vertex batch, shapes, textures (`stb_image`), fonts (`stb_truetype`), framebuffers, screenshots (`stb_image_write`), 2D camera, input |
-| `gui/gl_backend_3d.c` | 3D: one Blinn-Phong shader, up to 8 lights, fog, gamma, transform stack, billboards, sorted translucency |
-| `gui/model_backend.c` | OBJ + MTL loading (`gui/tinyobj_loader_c.h`), material colors baked into vertices |
-| `gui/audio_backend.c` | miniaudio: streamed music, in-memory sounds, PCM capture for `get_music_fft` |
-| `gui/gui_lib.c`, `gui/gui_lib_3d.c` | Builtin wrappers: convert `Value` arguments and manage the ID pools for textures, fonts, sounds, images, models |
-
-GLFW 3.3.10 is linked statically from `lib/libglfw3.a` (header in `include/glfw3.h`). The stb
-headers, miniaudio and tinyobj are vendored in `gui/`. At runtime the only system dependencies are
-OpenGL and X11.
-
-## Rust runtimes (`rust/`)
-
-| Crate | Output | Role |
+| Tag | Kind | Payload |
 |---|---|---|
-| `rust/unsafe_rt` | `lib/libluna_memory_rt.a` | Pointer metadata and the 12 unsafe rules; C ABI in `include/memory.h` |
-| `rust/data_rt` | `lib/libluna_data_rt.a` | Kind tags, bloc layout limits, box sizes, template schemas |
+| 0 | null | none |
+| 1 | boolean | 0 or 1 |
+| 2 | int | 64-bit integer |
+| 3 | float | the bit pattern of a double |
+| 4 | char | the byte |
+| 5 | string | pointer to the string object (length and bytes) |
+| 6 | list | pointer to a list object (count and item cells) |
+| 7 | map | pointer to a map object |
+| 8 | function | pointer to a function object: code, name, captured cells; native builtins use the same kind |
+| 9 | file | pointer to a file object |
+| 10 | dense list | pointer to a float array object |
+| 11, 13 | bloc type, `data` type | the type descriptor |
+| 12 | bloc | pointer to a bloc object |
+| 14 | template | pointer to a template object |
+| 15 | box | a handle with a slot index and a generation |
+| 16 | pointer | a raw pointer, only inside `unsafe` |
 
-Both crates are built by `make` with `cargo build --release` and copied into `lib/`. More detail
-is in [rust/readme.md](../../rust/readme.md).
+The tags are constants at the top of `luna_rt_core.lu`.
+
+### Program start
+
+`lv_main` (in `luna_rt_ops.lu`) initializes the data runtime, seeds the random generator from OS
+entropy, then runs the program on a new thread with a 1 GiB stack, so deep recursion works. The
+program thread registers its stack with the collector, runs the generated `entry` function, and
+flushes standard output. The recursion limit is 100000 nested calls.
+
+### Errors
+
+Runtime errors are raised by `lv_error` in `luna_rt_core.lu`: it prints the error class
+(`Type Error`, `Runtime Error`, ...), the source file and line, the message, the source line and
+a hint, to standard error, and exits with status 1. The line comes from position data that
+generated code stores before calls and operations.
+
+## Bootstrap
+
+`bootstrap/lunac.ll` and `bootstrap/luna_rt_native.ll` are the LLVM IR of the compiler and the
+runtime, kept in git. They are the only way to build the first compiler without an existing
+`luna`. `make` builds from the seeds, then from its own output, and requires the second output
+to equal the first; `make seed` refreshes the seeds. See [lunac.md](lunac.md#bootstrap).
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `src/`, `include/` | C core, VM and headers |
-| `gui/` | Graphics and audio backends, vendored single-header libraries |
-| `rust/` | Rust runtimes |
-| `asm/` | NASM sources |
-| `lib/` | Prebuilt GLFW and the Rust outputs |
-| `test/`, `test_runner.sh` | Luna script tests |
-| `zig-test/` | Host-side Zig tests against the C API |
-| `assets/` | Shared fonts, models, and the generated track cache |
-| `docs/` | Documentation and example programs |
+| `compiler/` | The compiler, the test runner, and `compiler/runtime/` |
+| `bootstrap/` | The seed IR files |
+| `test/` | Test programs, `test/expected/`, and `test/native/` (unit tests of runtime functions) |
+| `docs/` | Documentation |
+| `assets/` | The logo |
+| `bin/`, `C/` | Build output: the `luna` binary, and generated IR and objects (git-ignored) |

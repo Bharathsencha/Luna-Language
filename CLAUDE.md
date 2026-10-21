@@ -2,40 +2,40 @@
 
 Configuration and operational instructions for Claude Code when working in the Luna Language repository.
 
+Luna is an ahead-of-time compiler. `bin/luna` is written in Luna and compiles Luna source to LLVM IR; clang builds the native binary. The runtime that compiled programs link is Luna source too (`compiler/runtime/*.lu`). There is no interpreter, no VM, no REPL and no GUI at the moment. Read `docs/plan-aot.md` for the direction of the project and `docs/internals/architecture.md` for the pipeline.
+
 ## Commands
 
 ### Build Commands
-- Full build: `make` (compiles C core, builds Rust runtimes via Cargo, links `bin/luna`)
-- Multi-core build: `make -j$(nproc)`
-- Dependency verification: `make check-deps`
-- Clean all build artifacts: `make clean` (removes `obj/`, `bin/`, and cleans Cargo workspaces)
-- Clean C artifacts only: `make clean-c`
+- Full build: `make` (builds `bin/luna` from the seeds in `bootstrap/` with clang; the compiler must reproduce its own IR, stage 1 against stage 2)
+- Refresh the seeds after changing `compiler/` or `compiler/runtime/`: `make seed` (commit `bootstrap/lunac.ll` and `bootstrap/luna_rt_native.ll` with the change; never delete both seeds)
+- Clean all build artifacts: `make clean` (removes `bin/` and `C/`)
 
 ### Test Commands
-- Run complete test suite: `make test`
-- Run bash test runner directly: `./test_runner.sh`
-- Run Rust structured data runtime tests: `make test-rust-data` (or `cargo test --manifest-path rust/data_rt/Cargo.toml`)
-- Run Rust unsafe runtime tests: `cargo test --manifest-path rust/unsafe_rt/Cargo.toml`
-- Run single test script: `./bin/luna test/test_core.lu`
-- Run GC stress verification: `env LUNA_GC_STRESS=1 LUNA_GC_VERIFY=1 ./bin/luna test/test_gc_safety.lu`
+- Run complete test suite: `make test` (runs `compiler/run_tests.sh` over `test/*.lu`, then `test/native/run.sh`)
+- Run one or more tests: `compiler/run_tests.sh test/test_core.lu`
+- Re-record expected output (read `git diff test/expected` afterwards): `RECORD=1 compiler/run_tests.sh test/test_core.lu`
+- Run the GC under stress: `LUNA_RT_GC_STRESS=1 compiler/run_tests.sh test/test_gc_safety.lu`
+- Native unit tests of the runtime rule functions: `sh test/native/run.sh`
 
-### Run Commands
-- Run arbitrary script: `./bin/luna <path_to_script.lu>`
-- Run default entry script: `make run` (runs `main.lu`)
-- Interactive REPL: `make repl` (or `./bin/luna`)
-- Run Car Game demo: `make run-cargame` (runs `docs/examples/cargame/cargame.lu`)
-- Run Music Player demo: `make run-music` (runs `docs/examples/musicplayer/music.lu`)
-- Compiler: `make lunac` (C self-host), `make lunac-ll` (LLVM IR self-host), `make bootstrap` (VM-free build from `bootstrap/lunac.ll`), `make build-c` (generated C into `C/`), `make test-lunac`, `make test-ll`; see `docs/internals/lunac.md`
-- Run 3D racer: `make run-racer`; any fun/ program: `make run-fun NAME=<file>`
+### Compile and Run Commands
+- Build a native binary: `./bin/luna build prog.lu -o prog` (add `-S` to write `C/prog.ll` and stop)
+- Build and run: `./bin/luna run prog.lu [args...]`
+- Write the LLVM IR only: `./bin/luna emit prog.lu [-o out.ll]`
+- `luna` finds `compiler/runtime` under `$LUNA_HOME`, or the current directory when it is not set; generated files go to `C/` (git-ignored)
+- Check generated IR: `opt-18 -passes=verify C/prog.ll -disable-output`
 
 ---
 
 ## Global Execution Guardrails
 
 1. STRICTLY NO EMOJIS: Do not use emojis anywhere in generated code, comments, documentation, commit messages, terminal outputs, or user interfaces. Use clean ASCII identifiers, standard markdown, and text prefixes such as `[OK]`, `[ERROR]`, `[WARN]`, `[INFO]`.
-2. Preserving Existing Architecture: Luna is written in C11 with Rust runtime libraries linked statically. Do not introduce C++ or extraneous runtime dependencies without explicit authorization.
-3. Verification Required: Always run `make` and relevant tests (`make test` or target tests) after modifying code before considering a task completed.
-4. Memory Safety: Respect the division between the bump-allocated AST arena, the tracing GC heap, and the non-GC unsafe memory blocks.
+2. Preserving Existing Architecture: the compiler and the runtime are written in Luna and built with clang (LLVM 18). Do not introduce C, C++, Rust or extraneous build or runtime dependencies without explicit authorization. libc and libm, called through `extern`, are the only external libraries.
+3. Verification Required: Always run `make` and relevant tests (`make test` or `compiler/run_tests.sh <file>`) after modifying code before considering a task completed.
+4. Memory Safety: Respect the division between the tracing GC heap (`compiler/runtime/luna_gc.lu`), the box table, and the non-GC `unsafe` memory blocks.
+5. Documentation samples: fence Luna code with the `javascript` language tag in markdown. Check every command and sample you document by running it.
+6. Do not launch window or audio programs to verify a change; use headless tests.
+7. Joke and profane error messages and keyword aliases (`balls`, `grab_balls`, ...) are intentional; never remove or flag them.
 
 ---
 
@@ -114,34 +114,34 @@ Instead of vibe-coding, implement interfaces adhering to these deliberate engine
 
 ## Code Style and Architecture Rules
 
-### C11 Core (`src/`, `include/`, `gui/`)
-- Standard: ISO C11 (`-std=c11`).
-- Compiler Flags: Strict warnings (`-Wall -Wextra -Wno-unused-parameter`). Code must compile cleanly.
-- Memory Allocation:
-  - AST nodes must be allocated via the bump arena (`src/arena.c`). Do not call `malloc` directly for AST elements.
-  - Runtime GC values must be registered with the tri-color collector (`src/gc.c`).
-  - Maintain SATB (Snapshot-at-the-Beginning) write barriers: whenever an object field reference is overwritten while GC is in mark phase, shade the old reference gray.
-  - Never allow raw pointers from `unsafe` blocks to be stored directly inside GC-managed containers without tracking.
-- String Handling: Use string interning (`src/intern.c`) for identifiers and property names to enable O(1) pointer-equality checks.
-- Header Guards: Use standard `#ifndef LUNA_<NAME>_H` guards in all header files.
+### Compiler (`compiler/*.lu`)
+- Pipeline: `lexer.lu`, `parser.lu`, `lint.lu`, `analysis.lu`, then `emit_llvm.lu` (with `ll_state.lu`, `ll_scope.lu`). `lunac.lu` is the driver. `emit_native.lu` is the backend that compiles the runtime.
+- The compiler compiles itself, so its source must stay inside the subset it compiles: never use `data`, `from`, `in`, `input`, `print`, `box` or other keywords as identifiers, and write a literal `{` inside a string as `\{`.
+- Modules share mutable state through maps (`ST` in `state.lu`), because `use` copies bindings by value. Circular imports are an error.
+- The builtin names are the `BUILTINS` list in `compiler/shared.lu`. Each builtin `name` is `lb_name` in `compiler/runtime/`. Add both together.
+- Do not change the syntax of the language for speed or convenience; new abilities arrive as builtins and compiler inference (see `docs/plan-aot.md`).
+- Semantics never change for speed: integer overflow raises, division by zero raises, conditions must be booleans.
 
-### Rust Runtimes (`rust/unsafe_rt/`, `rust/data_rt/`)
-- Edition: Rust 2021.
-- FFI Interfaces: All exposed C-callable functions must be marked `#[no_mangle] pub extern "C"`.
-- Static Linking: Libraries are compiled as `staticlib` (`libluna_memory_rt.a`, `libluna_data_rt.a`) and placed in `lib/`.
-- Unsafe Rules: Enforce the 12 memory safety rules in `unsafe_rt` (no use-after-free, bounds enforcement, alignment checks, lifetime validation).
+### Runtime (`compiler/runtime/*.lu`)
+- Written in the native dialect: one type, the 64-bit word, with memory intrinsics (`ld64`, `st64`, ...), `extern(...)` declarations for libc, and `space`/`table` data. See `docs/internals/lunac.md`.
+- Values are 16-byte `LV` cells (tag, payload). Builtins are `lb_<name>(self_p, argc_i, argv_p)` and return a value with `retp`.
+- Every runtime object is allocated through `luna_gc.lu`. The collector is conservative and non-moving: it scans the data segment, the stack, registers and registered root ranges. A pointer kept only outside those places is not seen, so register root ranges for any off-heap buffer that holds Luna values. Use `lv_alloc_atomic` for memory without pointers.
+- Never allow raw pointers from `unsafe` blocks to be stored inside GC-managed containers (rule R7).
+- Error text and format (`Type Error in <file> at line N`, message, source line, hint) are part of the tested behavior; changing them means re-recording `test/expected/`.
 
-### Bytecode VM (`src/luna_vm.c`, `src/luna_compiler.c`)
-- Stack Discipline: Ensure VM stack balance across opcode dispatch in `src/luna_vm.c`.
-- Compiler Pass: The AST-to-bytecode compiler (`src/luna_compiler.c`) must emit verified jump offsets and constant table indices.
+### Seeds and bootstrap
+- `bootstrap/lunac.ll` and `bootstrap/luna_rt_native.ll` are the only way to build the first compiler. After any change to `compiler/` or `compiler/runtime/`, run `make`, `make seed`, `make` again and `make test`.
+
+### Tests
+- Tests are `test/*.lu` programs with recorded stdout, stderr and exit status in `test/expected/`. A file of `# CASE <name>` sections runs each case as its own program. See `docs/testing.md`.
 
 ---
 
 ## Claude Code Workflow Protocol
 
 When executing tasks in this codebase:
-1. Understand First: Read relevant source and header files before modifying code.
-2. Search Methodically: Use ripgrep or file search to verify symbol definitions across `src/`, `include/`, `gui/`, and `rust/`.
+1. Understand First: Read the relevant source files before modifying code.
+2. Search Methodically: Use ripgrep or file search to verify symbol definitions across `compiler/`, `compiler/runtime/`, `test/` and `docs/`.
 3. Minimal Edits: Make targeted, surgical changes rather than rewriting entire files.
-4. Verify Build and Tests: Run `make` and `./test_runner.sh` before presenting final solutions.
+4. Verify Build and Tests: Run `make` and `make test` before presenting final solutions.
 5. Zero Emojis: Ensure all messages, summaries, and code comments contain no emojis.

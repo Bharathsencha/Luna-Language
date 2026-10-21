@@ -1,217 +1,148 @@
-# Luna String Library
+# Strings
 
-The String library provides comprehensive text manipulation, searching, and formatting functions for working with strings.
-String indexing in Luna is zero-based.
-
----
+Text manipulation, searching and formatting. All of these are builtins. Strings are
+byte strings: `len("héllo")` is 6, and indexing is zero-based by byte. `to_upper` and
+`to_lower` change ASCII letters only.
 
 ## Inspection
 
-Check string properties and characteristics.
-| Function      | Description                        | Example                |
-|--------------|------------------------------------|------------------------|
-| `len(x)`     | Returns length of string or list   | `len("abc") → 3`      |
-| `is_empty(s)`| Returns true if string length is 0 | `is_empty("") → true` |
+| Function | Description | Example |
+|---|---|---|
+| `len(x)` | Length of a string, list, map or box | `len("abc")` is `3` |
+| `str_len(s)` | Length of a string (same as `len` for strings) | `str_len("abc")` is `3` |
+| `is_empty(s)` | `true` if the string has length 0; a non-string is a `Type Error` | `is_empty("")` is `true` |
+| `is_digit(s)`, `is_alpha(s)`, `is_alnum(s)`, `is_space(s)` | `true` if the string (or char) is non-empty and every character is in the class | `is_digit("123")` is `true`, `is_digit("1a")` is `false` |
 
-### Note: len() is a generic function that works on both strings and lists. In earlier versions the string length was provided via str_len().
+## Slicing and access
 
-## Slicing & Access
+| Function | Description | Example |
+|---|---|---|
+| `char_at(s, i)` | The character at index `i` as a one-character string; `""` when out of range | `char_at("ABC", 1)` is `"B"` |
+| `substring(s, start, n)` | `n` characters starting at `start`; the result is cut at the end of the string | `substring("Hello", 0, 2)` is `"He"` |
+| `slice(s, start, end)` | From `start` up to, not including, `end` (bounds are clamped) | `slice("Hello", 1, 4)` is `"ell"` |
 
-Extract parts of strings or access individual characters.
-
-| Function                   | Description                                      | Example                           |
-| -------------------------- | ------------------------------------------------ | --------------------------------- |
-| `char_at(s, i)`            | Returns character at index i as a string         | `char_at("ABC", 1) → "B"`         |
-| `substring(s, start, len)` | Extracts len characters starting at start index  | `substring("Hello", 0, 2) → "He"` |
-| `slice(s, start, end)`     | Extracts from start index up to (not including) end index | `slice("Hello", 1, 4) → "ell"`|
-
-You can also index strings directly with brackets: `word[0]` returns `'w'` and `word[-1]` returns the last character.
+`s[i]` returns a `char` (not a string): `"Luna"[0]` is `'L'` and `"Luna"[-1]` is `'a'`. A
+`char` and a one-character string are different types: `'a' == "a"` is an error, but both
+work with `contains`, `index_of`, `starts_with` and `ends_with`.
 
 ## Searching
 
-Find substrings and check string patterns.
-
-| Function                | Description                                        | Example                                  |
-| ----------------------- | -------------------------------------------------- | ---------------------------------------- |
-| `contains(s, sub)`      | Returns true if substring sub is found in s        | `contains("Team", "ea") → true`          |
-| `index_of(s, sub)`      | Returns index of first occurrence of sub (-1 if not found) | `index_of("banana", "nan") → 2`  |
-| `last_index_of(s, sub)` | Returns index of last occurrence of sub (-1 if not found)  | `last_index_of("banana", "a") → 5`|
-| `starts_with(s, pre)`   | Returns true if s starts with prefix pre           | `starts_with("file.txt", "file") → true` |
-| `ends_with(s, suf)`     | Returns true if s ends with suffix suf             | `ends_with("file.txt", ".txt") → true`   |
+| Function | Description | Example |
+|---|---|---|
+| `contains(s, sub)` | `true` if `sub` is found in `s`; also works on a list | `contains("Team", "ea")` is `true` |
+| `index_of(s, sub)` | Index of the first occurrence, `-1` if none | `index_of("banana", "nan")` is `2` |
+| `last_index_of(s, sub)` | Index of the last occurrence, `-1` if none | `last_index_of("banana", "a")` is `5` |
+| `starts_with(s, pre)` | `true` if `s` starts with `pre` | `starts_with("file.txt", "file")` is `true` |
+| `ends_with(s, suf)` | `true` if `s` ends with `suf` | `ends_with("file.txt", ".txt")` is `true` |
 
 ## Manipulation
 
-Transform and modify strings.
+| Function | Description | Example |
+|---|---|---|
+| `concat(s1, s2)` | Joins two strings; both must be strings | `concat("He", "llo")` is `"Hello"` |
+| `to_upper(s)`, `to_lower(s)` | Case conversion (ASCII) | `to_upper("abc")` is `"ABC"` |
+| `trim(s)`, `trim_left(s)`, `trim_right(s)` | Remove whitespace from both ends, the start or the end | `trim("  hi  ")` is `"hi"` |
+| `replace(s, old, new)` | Replaces all occurrences of `old` with `new`. An empty `old` changes nothing | `replace("foobar", "o", "a")` is `"faabar"` |
+| `reverse(s)` | Reverses a string (also a list) | `reverse("Luna")` is `"anuL"` |
+| `repeat(s, n)` | `n` copies of `s`; `""` when `n` is 0 or less | `repeat("Na", 3)` is `"NaNaNa"` |
+| `pad_left(s, w, ch)` | Pads the start of `s` with the character `ch` up to width `w` | `pad_left("7", 3, "0")` is `"007"` |
+| `pad_right(s, w, ch)` | Pads the end of `s` | `pad_right("Ok", 5, ".")` is `"Ok..."` |
+| `format(s, ...)` | Replaces each `{}` with the next argument; extra placeholders stay as `{}` | `format("Hi {}", "Luna")` is `"Hi Luna"` |
+| `to_string(v)` | Text of any value | `to_string(12)` is `"12"` |
+| `to_int(s)`, `to_float(s)` | Parse a number; `0` when the text has no leading number | `to_int("12")` is `12` |
 
-| Function                | Description                                        | Example                              |
-| ----------------------- | -------------------------------------------------- | ------------------------------------ |
-| `concat(s1, s2)`        | Concatenates (joins) two strings                   | `concat("He", "llo") → "Hello"`      |
-| `to_upper(s)`           | Converts all characters to uppercase               | `to_upper("abc") → "ABC"`            |
-| `to_lower(s)`           | Converts all characters to lowercase               | `to_lower("ABC") → "abc"`            |
-| `trim(s)`               | Removes whitespace from both ends                  | `trim("  hi  ") → "hi"`              |
-| `trim_left(s)`          | Removes whitespace from the start only             | `trim_left("  hi") → "hi"`           |
-| `trim_right(s)`         | Removes whitespace from the end only               | `trim_right("hi  ") → "hi"`          |
-| `replace(s, old, new)`  | **Replaces all occurrences** of old with new           | `replace("foobar", "o", "a") → "faabar"`|
-| `reverse(s)`            | Reverses the entire string                         | `reverse("Luna") → "anuL"`           |
-| `repeat(s, n)`          | Repeats string s exactly n times                   | `repeat("Na", 3) → "NaNaNa"`         |
-| `pad_left(s, w, char)`  | Pads the start of s to width w using char          | `pad_left("7", 3, "0") → "007"`      |
-| `pad_right(s, w, char)` | Pads the end of s to width w using char            | `pad_right("Ok", 5, ".") → "Ok..."`  |
-| `format(s, ...)`        | Replaces each `{}` placeholder with the next value | `format("Hi {}", "Luna") → "Hi Luna"` |
+`replace` always replaces every match; there is no single-occurrence version. `+` joins two
+strings only: `"a" + 1` is a `Type Error`, so write `"a{1}"` or `"a" + to_string(1)`.
 
-### **Note:** `replace()` replaces **all** matching occurrences. There is currently no single-occurrence replace function.
+## Lists and strings
 
-## String Interpolation
+| Function | Description | Example |
+|---|---|---|
+| `split(s, delim)` | Splits into a list of strings. Empty pieces are dropped. An empty delimiter splits into characters | `split("a,b,c", ",")` is `["a", "b", "c"]` |
+| `join(list, delim)` | Joins list items (converted to text) with the delimiter | `join(["a", "b", "c"], "-")` is `"a-b-c"` |
 
-String literals can interpolate Luna expressions anywhere a normal string
-expression is allowed.
+## Interpolation
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `"Hello {name}"` | Evaluates the expression inside braces and converts it to a string | `let name = "Luna"` then `"Hello {name}" → "Hello Luna"` |
-| `"sum = {1 + 2}"` | Interpolates arithmetic expressions | `"sum = {1 + 2}" → "sum = 3"` |
-| `"slot = {items[0]}"` | Interpolates indexing and call results | `let items = [7]` then `"slot = {items[0]}" → "slot = 7"` |
+A string literal evaluates any expression written inside `{ }` and inserts its text.
 
-Rules:
+| Syntax | Result |
+|---|---|
+| `"Hello {name}"` | `"Hello Luna"` when `name` is `"Luna"` |
+| `"sum = {1 + 2}"` | `"sum = 3"` |
+| `"slot = {items[0]}"` | `"slot = 7"` when `items` is `[7]` |
 
-- the text inside `{ ... }` is parsed as a normal Luna expression
-- interpolation runs when the string literal is evaluated
-- normal concatenation still works: `"Hello " + name`
-- `format()` is still useful when you want positional `{}` placeholders
+The text inside `{ }` is parsed as a normal Luna expression. Write `\{` for a literal opening
+brace. `format()` is still useful when you want positional `{}` placeholders.
 
-### Sample code:
+Values print as follows: integers in decimal, floats with up to six significant digits
+(`1.0` prints as `1`), `true` / `false`, `null`, lists as `[1, 2]` (strings inside a list are
+not quoted), and maps as `{"key": value}`.
+
 ```javascript
 let name = "Nova"
 let hp = 87
 let items = [3, 4]
 
-let line = "Pilot {name} has {hp} hp"
-let stats = "next={hp + 1}, first={items[0]}"
-print(line)
-print(stats)
-```
-```bash
-Output: Pilot Nova has 87 hp
-Output: next=88, first=3
-```
-```javascript
+print("Pilot {name} has {hp} hp")
+print("next={hp + 1}, first={items[0]}")
 print(replace("one one one", "one", "two"))
 ```
-```bash
-Output: two two two
+
+Output:
+
 ```
-## Lists & Formatting
+Pilot Nova has 87 hp
+next=88, first=3
+two two two
+```
 
-Split and join strings with lists.
-
-| Function            | Description                                        | Example                                     |
-| ------------------- | -------------------------------------------------- | ------------------------------------------- |
-| `split(s, delim)`   | Splits string into a list using delimiter          | `split("a,b,c", ",") → ["a", "b", "c"]`     |
-| `join(list, delim)` | Joins a list of strings into one string with delimiter | `join(["a", "b", "c"], "-") → "a-b-c"`  |
-| `slice(list, start, end)` | Extracts part of a list using the same slice builtin | `slice([10, 20, 30], 0, 2) → [10, 20]` |
-
----
-
-## Example 1: Username Validator
-
-Validate and format usernames with various string checks.
+## Example: username validator
 
 ```javascript
 func validate_username(username) {
-    # Remove whitespace
     let clean = trim(username)
-    
-    # Check if empty
     if (is_empty(clean)) {
-        print("Error: Username cannot be empty")
+        print("Error: username cannot be empty")
         return false
     }
-    
-    # Check length
-    let len = str_len(clean)
-    if (len < 3) {
-        print("Error: Username too short (min 3 characters)")
+    let n = len(clean)
+    if (n < 3) {
+        print("Error: username too short (min 3 characters)")
         return false
     }
-    if (len > 20) {
-        print("Error: Username too long (max 20 characters)")
+    if (n > 20) {
+        print("Error: username too long (max 20 characters)")
         return false
     }
-    
-    # Check if it starts with a number (not allowed)
-    let first = char_at(clean, 0)
-    if (contains("0123456789", first)) {
-        print("Error: Username cannot start with a number")
+    if (is_digit(char_at(clean, 0))) {
+        print("Error: username cannot start with a number")
         return false
     }
-    
-    print("Username valid:", clean)
+    print("username valid: {clean}")
     return true
 }
 
-# Test with user input
-let username = input("Enter your username: ")
-validate_username(username)
-
-# Or test with predefined values
-# validate_username("  john123  ")  # Valid
-# validate_username("a")            # Too short
-# validate_username("9gamer")       # Starts with number
+validate_username("  john123  ")
+validate_username("a")
+validate_username("9gamer")
 ```
 
-## Example 2: Text Formatter
-
-Format and manipulate text for display purposes.
+## Example: text formatter
 
 ```javascript
 func format_title(text) {
-    # Convert to uppercase and add decoration
     let upper = to_upper(text)
-    let border = repeat("=", str_len(upper) + 4)
-    
+    let border = repeat("=", len(upper) + 4)
     print(border)
     print("| " + upper + " |")
     print(border)
 }
 
-func format_list(items) {
-    # Create a formatted list from array of strings
-    let result = join(items, ", ")
-    print("Items:", result)
-    
-    # Show count
-    let count = len(items)
-    print("Total items:", count)
-}
-
 func censor_text(text, bad_word) {
-    # Replace bad words with asterisks
-    let stars = repeat("*", str_len(bad_word))
-    return replace(text, bad_word, stars)
+    return replace(text, bad_word, repeat("*", len(bad_word)))
 }
 
-# Test the formatters
 format_title("welcome to luna")
-
-let shopping = ["apples", "bread", "milk"]
-format_list(shopping)
-
-let message = "This is a darn good example"
-let clean = censor_text(message, "darn")
-print("Censored:", clean)
-```
-
-## Example 3: Template Strings
-
-```javascript
-let name = "Nova"
-let hp = 87
-
-let online = "Pilot {name} is online"
-let status = "Pilot {name} has {hp} hp"
-let boosted = "Pilot {name} has {hp + 13} hp"
-
-print(online)
-print(status)
-print(boosted)
-print("Pilot " + name + " has " + to_string(hp) + " hp")
+print(join(["apples", "bread", "milk"], ", "))
+print(censor_text("This is a darn good example", "darn"))
 ```

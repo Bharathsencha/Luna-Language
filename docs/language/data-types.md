@@ -9,8 +9,8 @@ Luna has four ways to define your own structured values:
 | `bloc` | no | small GC object, at most 32 bytes | vectors, colors, small immutable values |
 | `box` | yes | manual byte buffer, freed at scope end | scratch bytes, up to 4096 |
 
-All of their rules are enforced the same way in the bytecode VM and the legacy interpreter.
-`make test` checks every rule on both engines.
+Their rules are checked at run time by the runtime library; a violation stops the program with
+the messages shown below. `make test` checks every rule (`test/test_unsafe_errors.lu`).
 
 ## data
 
@@ -64,7 +64,7 @@ print(r.max.x)              # 10
 |---|---|
 | At most 32 bytes: every primitive field takes 8, a nested bloc takes its own size | `bloc exceeds the cache-line size limit (32 bytes)` |
 | Fields hold only int, float, bool, char, or a bloc | `Bloc field 'name' only accepts int, float, bool, char, or another bloc` |
-| A nested-bloc field keeps the same bloc type | `Bloc 'R' field 'min' must use the same nested bloc type` |
+| A nested-bloc field keeps the same bloc type | `Bloc 'R' field 'min' must use the same nested bloc type`, or `Bloc 'R' field 'max' must hold a nested bloc` when a plain value is given |
 | The constructor needs one value per field | `Bloc 'Vec2' expects 2 field value(s), but got 1` |
 | Blocs are immutable | `bloc values are immutable` |
 | Unknown fields | `Field 'z' does not exist on this bloc value` |
@@ -120,14 +120,17 @@ See [internals/unsafe.md](../internals/unsafe.md).
 
 ## How it works
 
-- **bloc**: a small GC object (`BlocObj` in `src/value.c`) holding up to 32 bytes plus one kind
-  byte per 8-byte slot. Bloc objects have no outgoing references, so the GC never traces into
-  them. Reading a nested bloc field copies its bytes into a new bloc.
+All of this is in `compiler/runtime/luna_rt_data.lu`.
+
+- **bloc**: a small GC object holding a pointer to a shared descriptor (name, field names, kinds,
+  size) and one 16-byte value cell per field. The first construction fixes the layout. A nested
+  bloc is stored as a field value holding the inner bloc.
 - **box**: a slot in a fixed table of 4096 entries. The handle encodes a generation number,
-  which is bumped when the box is freed, so a reused slot never resurrects an old handle. The
-  Rust runtime (`rust/data_rt`) tracks which handles are live.
-- **template**: a GC object with one `Value` per field, plus write barriers. A box stored in a
+  which is bumped when the box is freed, so a reused slot never resurrects an old handle. Each
+  box remembers the scope that created it, and the scope's exit frees it. A box stored in a
   template is marked as template-owned and freed when the template is collected.
+- **template**: a GC object with a pointer to its type and one value cell per field.
+- **data**: a map with a hidden type tag and a constructor.
 - **Validation**: names, duplicate fields, the 32-byte cap, box sizes and template schemas are
-  checked by `libluna_data_rt.a` (`rust/data_rt`). The C side reports the error with the right
-  line.
+  checked by the rule functions in `compiler/runtime/luna_rt_rules.lu`. The runtime then raises
+  the error with the source line.

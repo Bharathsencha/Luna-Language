@@ -1,2 +1,0 @@
-use { add } from "helper.lu"
-print(add(1, 2))

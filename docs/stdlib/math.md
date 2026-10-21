@@ -1,279 +1,148 @@
-# Luna Math Library
+# Math
 
-The Math library provides comprehensive mathematical operations for numerical computing, trigonometry, randomization, and more.
+Numeric functions, random numbers, and vector math. All of these are builtins. Arguments must
+be numbers (an int or a float); anything else is a `Type Error` such as
+`sqrt() argument 1 must be a number, got string`. Results that are not whole numbers print
+with up to six significant digits, so `sqrt(2)` prints `1.41421`, and a float without a
+fractional part prints without `.0` (`sqrt(16)` prints `4`). The `4.0` shown below means "a float".
 
-## Basic Utility Functions
+## Basic utilities
 
-Common mathematical utilities for everyday calculations.
+| Function | Description | Example |
+|---|---|---|
+| `abs(x)` | Absolute value, same type as `x` | `abs(-10)` is `10` |
+| `min(a, b)` | The smaller of two values | `min(10, 5)` is `5` |
+| `max(a, b)` | The larger of two values | `max(10, 5)` is `10` |
+| `clamp(x, lo, hi)` | Constrains `x` to the range `[lo, hi]` | `clamp(15, 0, 10)` is `10` |
+| `sign(x)` | `-1`, `0` or `1` | `sign(-50)` is `-1` |
 
-| Function             | Description                                       | Example                 |
-| -------------------- | ------------------------------------------------- | ----------------------- |
-| `abs(x)`             | Returns the absolute value of x                   | `abs(-10) → 10`         |
-| `min(a, b)`          | Returns the smaller of two values                 | `min(10, 5) → 5`        |
-| `max(a, b)`          | Returns the larger of two values                  | `max(10, 5) → 10`       |
-| `clamp(x, min, max)` | Constrains x to be within the range [min, max]    | `clamp(15, 0, 10) → 10` |
-| `sign(x)`            | Returns -1 if negative, 1 if positive, 0 if zero  | `sign(-50) → -1`        |
+## Powers and roots
 
-## High-Performance Vector Math (SIMD)
+These always return a float.
 
-Luna natively accelerates operations on massive arrays using GCC automatic vectorization and OpenMP multithreading behind the scenes. For maximum performance, construct your arrays using `dense_list()` rather than standard `[]`.
+| Function | Description | Example |
+|---|---|---|
+| `pow(base, exp)` | `base` raised to `exp` | `pow(2, 3)` is `8.0` |
+| `sqrt(x)` | Square root; a negative argument gives `nan` | `sqrt(16)` is `4.0` |
+| `cbrt(x)` | Cube root | `cbrt(27)` is `3.0` |
+| `exp(x)` | e raised to `x` | `exp(1)` is `2.718...` |
+| `ln(x)` | Natural logarithm | `ln(10)` is `2.302...` |
+| `log10(x)` | Base-10 logarithm | `log10(100)` is `2.0` |
 
-| Function             | Description                                       | Example                 |
-| -------------------- | ------------------------------------------------- | ----------------------- |
-| `dense_list(size, fill)`| Creates a contiguous pre-flattened float array | `dense_list(5, 1.5) → [1.5, ...]`|
-| `vec_mul(a, b)`      | SIMD accelerated vector multiplication            | `vec_mul([1, 2], [3, 4]) → [3, 8]`|
-| `vec_add(a, b)`, `vec_sub(a, b)`, `vec_div(a, b)` | Element-wise add, subtract, divide | `vec_add([1, 2], [3, 4]) → [4, 6]`|
-| `vec_mul_inline(a,b)`| Zero-allocation in-place vector multiplication    | `vec_mul_inline(A, B) -> mutates A`|
-| `mat_mul(a, b)`      | OpenMP threaded Matrix Multiplication             | `mat_mul(A, B) → Matrix`|
+## Rounding
 
-*Note: You can perform operations like `A + B` on standard lists, but `dense_list()` is significantly faster because it operates without Memory Boxing.*
+`floor`, `ceil`, `round` and `trunc` return an int. `fract` and `mod` return a float.
 
-## Powers & Roots
-
-Exponential and logarithmic operations.
-
-| Function         | Description                                | Example                 |
-| ---------------- | ------------------------------------------ | ----------------------- |
-| `pow(base, exp)` | Returns base raised to the power of exp    | `pow(2, 3) → 8.0`       |
-| `sqrt(x)`        | Returns the square root of x               | `sqrt(16) → 4.0`        |
-| `cbrt(x)`        | Returns the cube root of x                 | `cbrt(27) → 3.0`        |
-| `exp(x)`         | Returns e raised to the power of x         | `exp(1) → 2.718...`     |
-| `ln(x)`          | Returns the natural logarithm (base e) of x| `ln(10) → 2.302...`     |
-| `log10(x)`       | Returns the base-10 logarithm of x         | `log10(100) → 2.0`      |
-
-## Rounding Functions
-
-Control how numbers are rounded.
-
-| Function    | Description                                    | Example                 |
-| ----------- | ---------------------------------------------- | ----------------------- |
-| `floor(x)`  | Rounds down to the nearest integer             | `floor(5.9) → 5`        |
-| `ceil(x)`   | Rounds up to the nearest integer               | `ceil(5.1) → 6`         |
-| `round(x)`  | Rounds to the nearest integer                  | `round(5.5) → 6`        |
-| `trunc(x)`  | Removes the fractional part (rounds toward 0)  | `trunc(5.9) → 5`        |
-| `fract(x)`  | Returns only the fractional part               | `fract(5.9) → 0.9`      |
-| `mod(x, y)` | Returns the floating-point remainder of x / y  | `mod(5.5, 2) → 1.5`     |
+| Function | Description | Example |
+|---|---|---|
+| `floor(x)` | Rounds down | `floor(5.9)` is `5` |
+| `ceil(x)` | Rounds up | `ceil(5.1)` is `6` |
+| `round(x)` | Nearest integer, halves away from zero | `round(5.5)` is `6`, `round(-5.5)` is `-6` |
+| `trunc(x)` | Removes the fractional part (toward 0) | `trunc(5.9)` is `5` |
+| `fract(x)` | The fractional part | `fract(5.9)` is `0.9` |
+| `mod(x, y)` | Floating-point remainder of `x / y` | `mod(5.5, 2)` is `1.5` |
 
 ## Trigonometry
 
-Standard trigonometric functions (angles in radians).
+Angles are in radians. All of these return a float.
 
-| Function      | Description                                    | Example                    |
-| ------------- | ---------------------------------------------- | -------------------------- |
-| `sin(rad)`    | Returns sine of an angle (in radians)          | `sin(0) → 0.0`             |
-| `cos(rad)`    | Returns cosine of an angle (in radians)        | `cos(0) → 1.0`             |
-| `tan(rad)`    | Returns tangent of an angle (in radians)       | `tan(0) → 0.0`             |
-| `asin(x)`     | Returns arc sine (inverse sine)                | `asin(0) → 0.0`            |
-| `acos(x)`     | Returns arc cosine (inverse cosine)            | `acos(1) → 0.0`            |
-| `atan(x)`     | Returns arc tangent (inverse tangent)          | `atan(0) → 0.0`            |
-| `atan2(y, x)` | Returns arc tangent of y/x with correct quadrant | `atan2(10, 10) → 0.785...`|
+| Function | Description |
+|---|---|
+| `sin(x)`, `cos(x)`, `tan(x)` | Sine, cosine, tangent |
+| `asin(x)`, `acos(x)`, `atan(x)` | Inverse functions |
+| `atan2(y, x)` | Arc tangent of `y / x` with the correct quadrant: `atan2(10, 10)` is `0.785...` |
+| `sinh(x)`, `cosh(x)`, `tanh(x)` | Hyperbolic functions |
+| `deg_to_rad(d)`, `rad_to_deg(r)` | Angle conversion: `deg_to_rad(180)` is `3.14159...` |
+| `lerp(a, b, t)` | Linear interpolation: `lerp(0, 100, 0.5)` is `50.0` |
 
-## Hyperbolic Functions
+## Random numbers
 
-Hyperbolic trigonometric functions.
+| Function | Description |
+|---|---|
+| `rand()` | A float in `[0, 1)` |
+| `rand(max)` | An integer from `0` to `max`, both ends included |
+| `rand(min, max)` | An integer from `min` to `max`, both ends included (swapped if `min > max`) |
+| `srand(seed)` | Seeds the generator, for reproducible sequences. `srand()` reseeds from the OS |
+| `trand()` | A 64-bit integer read from the OS entropy source (`/dev/urandom`) |
 
-| Function  | Description                      | Example             |
-| --------- | -------------------------------- | ------------------- |
-| `sinh(x)` | Returns hyperbolic sine of x     | `sinh(0) → 0.0`     |
-| `cosh(x)` | Returns hyperbolic cosine of x   | `cosh(0) → 1.0`     |
-| `tanh(x)` | Returns hyperbolic tangent of x  | `tanh(0) → 0.0`     |
-
-## Random Number Generation
-
-Generate random numbers for simulations, procedural content, and games.
-
-| Function         | Description                                           | Example            |
-| ---------------- | ----------------------------------------------------- | ------------------ |
-| `rand()`         | Returns a random float between 0.0 and 1.0            | `rand() → 0.42...` |
-| `rand(max)`      | Returns a random integer from 0 to max (exclusive)    | `rand(100) → 42...`|
-| `rand(min, max)` | Returns a random integer in the range (min, max)      | `rand(1, 10) → 7`  |
-| `srand(seed)`    | Seeds the random number generator for reproducibility | `srand(123)`       |
-| `trand()`        | Returns OS-level entropy seed for true randomness     | `trand() → 987654` |
-
----
-
-## Sort and Shuffle
-
-Utility functions for working with arrays.
-
-| Function       | Description                               | Example                       |
-| -------------- | ----------------------------------------- | ----------------------------- |
-| `shuffle(arr)` | Randomly shuffles array elements in-place | `shuffle([1,2,3,4,5])`        |
-| `sort(arr)`    | Sorts array elements in ascending order   | `sort([5,2,8,1]) → [1,2,5,8]` |
-
----
-
-
-## Conversion & Interpolation
-
-Useful conversions and interpolation functions.
-
-| Function          | Description                                       | Example                       |
-| ----------------- | ------------------------------------------------- | ----------------------------- |
-| `deg_to_rad(deg)` | Converts degrees to radians                       | `deg_to_rad(180) → 3.14...`   |
-| `rad_to_deg(rad)` | Converts radians to degrees                       | `rad_to_deg(3.14) → 179.9...` |
-| `lerp(a, b, t)`   | Linear interpolation between a and b by factor t  | `lerp(0, 100, 0.5) → 50.0`    |
-
----
-
-## Example 1: Distance Calculator
-
-Calculate the distance between two points using the Pythagorean theorem.
+The generator is xoroshiro128++, and `srand` expands the seed with SplitMix64. Without `srand`,
+every program run starts from an OS-entropy seed. `shuffle(list)` and `sort(list)` are in
+[core.md](core.md).
 
 ```javascript
-# Distance between two 2D points
+srand(7)
+print(rand(1, 100))   # 17
+print(rand(1, 100))   # 100
+```
+
+Numbers from a seed are fixed by the generator, so the same seed gives the same numbers on
+every run.
+
+## Dense lists and vector math
+
+A dense list is a contiguous array of floats, created with `dense_list(n, fill)` (the fill
+value must be a float). It prints as `d[...]`, its `type()` is `list`, indexing works as on a
+list, and its size is fixed: `append` does not accept it.
+
+| Function | Description |
+|---|---|
+| `dense_list(size, fill)` | `dense_list(3, 1.5)` is `d[1.5, 1.5, 1.5]` |
+| `vec_add(a, b)`, `vec_sub(a, b)`, `vec_mul(a, b)`, `vec_div(a, b)` | Element-wise operation on two lists of numbers; returns a new dense list as long as the shorter input |
+| `vec_mul_inline(a, b)` | Multiplies `a` by `b` in place, without allocating |
+| `mat_mul(a, b)` | Matrix product of two lists of rows (lists or dense lists); returns a list of dense rows |
+
+`+ - * /` between two lists of numbers do the same as the `vec_*` functions:
+`[1, 2] + [3, 4]` is `d[4, 6]`.
+
+```javascript
+print(vec_mul([1, 2], [3, 4]))                      # d[3, 8]
+print(mat_mul([[1, 2], [3, 4]], [[5, 6], [7, 8]]))  # [d[19, 22], d[43, 50]]
+```
+
+`mat_mul` is a plain triple loop that runs on one thread. If the column count of `a` does not
+equal the row count of `b`, it prints `Runtime Error: Matrix dimension mismatch` and returns
+`null` without stopping the program.
+
+## Example: distance between two points
+
+```javascript
 func distance(x1, y1, x2, y2) {
     let dx = x2 - x1
     let dy = y2 - y1
-    let dist_squared = pow(dx, 2) + pow(dy, 2)
-    return sqrt(dist_squared)
+    return sqrt(pow(dx, 2) + pow(dy, 2))
 }
 
-let d = distance(0, 0, 3, 4)
-print("Distance:", d)  # Output: 5.0
+print(distance(0, 0, 3, 4))   # 5
 ```
 
-## Example 2: Dice Roll Simulator
-
-Simulate rolling multiple dice and calculate statistics.
+## Example: dice statistics
 
 ```javascript
-# Roll a 6-sided die multiple times
 func roll_dice(num_rolls) {
-    srand(42)  # Seed for reproducible results
-    
-    let rolls = []
+    srand(42)
     let total = 0
-    let min_roll = 6
-    let max_roll = 1
-    
+    let lowest = 6
+    let highest = 1
     for (let i = 0; i < num_rolls; i++) {
         let roll = rand(1, 6)
-        append(rolls, roll)
-        total = total + roll
-        
-        # Track min and max
-        min_roll = min(min_roll, roll)
-        max_roll = max(max_roll, roll)
+        total += roll
+        lowest = min(lowest, roll)
+        highest = max(highest, roll)
     }
-    
-    let average = float(total) / float(num_rolls)
-    
-    print("Rolls:", rolls)
-    print("Total:", total)
-    print("Average:", average)
-    print("Min Roll:", min_roll)
-    print("Max Roll:", max_roll)
+    print("total {total}")
+    print("average {float(total) / float(num_rolls)}")
+    print("min {lowest}, max {highest}")
 }
 
 roll_dice(10)
 ```
 
-## Example 3: Randomness, Shuffle and Sort
+## Example: shuffle and sort
 
 ```javascript
-# Test 1: Basic rand() - float between 0.0 and 1.0
-print("--- Test 1: Random Float (0.0 to 1.0) ---")
-for (let i = 0; i < 5; i++) {
-    let r = rand()
-    print("Random float:", r)
-}
-```
-```javascript
-# Test 2: rand(max) - integer from 0 to max
-print("\n--- Test 2: Random Int (0 to 100) ---")
-for (let i = 0; i < 5; i++) {
-    let r = rand(100)
-    print("Random int:", r)
-}
-```
-```javascript
-# Test 3: rand(min, max) - integer from min to max
-print("\n--- Test 3: Random Int (50 to 60) ---")
-for (let i = 0; i < 5; i++) {
-    let r = rand(50, 60)
-    print("Random int:", r)
-}
-```
-```javascript
-# Test 4: Deterministic seeding with srand()
-print("\n--- Test 4: Deterministic Seeding (srand) ---")
-srand(12345)
-let val1 = rand()
-let val2 = rand()
-print("First run: ", val1, val2)
-
-srand(12345)
-let val3 = rand()
-let val4 = rand()
-print("Second run:", val3, val4)
-print("Match:", val1 == val3 and val2 == val4)
-```
-```javascript
-# Test 5: OS-level entropy with trand()
-print("\n--- Test 5: True Random (OS Entropy) ---")
-let entropy1 = trand()
-let entropy2 = trand()
-let entropy3 = trand()
-print("Entropy values:", entropy1, entropy2, entropy3)
-print("All different:", entropy1 != entropy2 and entropy2 != entropy3)
-```
-```javascript
-# Test 6: Fisher-Yates Shuffle
-print("\n--- Test 6: Fisher-Yates Shuffle ---")
-let deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-print("Original deck:", deck)
-
+let deck = range(1, 11)
 shuffle(deck)
-print("Shuffled deck:", deck)
-
-# Verify all elements still present
+print(len(deck))      # 10
 sort(deck)
-print("After sorting:", deck)
-```
-```javascript
-# Test 7: Hybrid Sort with random data
-print("\n--- Test 7: Hybrid Sort Performance ---")
-let unsorted = []
-for (let i = 0; i < 20; i++) {
-    append(unsorted, rand(1, 100))
-}
-print("Unsorted:", unsorted)
-
-sort(unsorted)
-print("Sorted:  ", unsorted)
-```
-
-```javascript
-# Test 8: Large shuffle demonstration
-print("\n--- Test 8: Large Data Shuffle ---")
-let large = []
-for (let i = 0; i < 100; i++) {
-    append(large, i)
-}
-print("Created list of 100 sequential numbers (0-99)")
-
-shuffle(large)
-print("First 10 after shuffle:", slice(large, 0, 10))
-print("Last 10 after shuffle: ", slice(large, 90, 100))
-
-print("\n=== All Tests Complete! ===")
-```
-
-## Note :
-
-
-
-* **`trand()`** – Reads true randomness from the OS (Linux: `/dev/urandom`). Used mainly to generate an unpredictable seed.
-* **`srand(seed)`** – Initializes the PRNG using **SplitMix64**, which expands simple seeds into high‑quality internal state.
-* **`rand()`** – Uses **Xoshiro128++** to generate fast, deterministic pseudo‑random numbers (max is exclusive).
-* **`shuffle(arr)`** – Uses the **Fisher–Yates** algorithm to produce an unbiased in‑place shuffle in O(n) time.
-* **`sort(arr)`** – Uses a **hybrid sort** that combines fast divide‑and‑conquer sorting with insertion sort for small runs.
-
-### Example use of Srand
-```javascript
-srand(7)
-print(rand(1, 100)) # Always 17
-print(rand(1, 100)) # Always 100
-# (Every time you run this script, it is 42 then 18)
+print(deck)           # [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 ```

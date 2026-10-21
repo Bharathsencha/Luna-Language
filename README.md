@@ -5,34 +5,39 @@
 <h1 align="center">Luna</h1>
 
 <p align="center">
-  A small scripting language with a friendly syntax, a fast garbage collector,
-  and graphics and sound built right in.
+  A small scripting language with JavaScript-like syntax, compiled ahead of time to native
+  binaries through LLVM IR.
 </p>
 
 ---
 
 ## About Luna
 
-Luna is a scripting language written from scratch in C, with a syntax close to JavaScript.
-Scripts are compiled to bytecode and run on a small virtual machine.
+Luna is a compiler. `luna build prog.lu -o prog` reads a Luna program, writes LLVM IR, and
+has clang turn it into a native executable. There is no interpreter, no virtual machine and
+no REPL.
 
-- **Smooth garbage collection.** Pauses are usually around 0.1 ms, so games and animations
-  don't stutter.
-- **Graphics and sound built in.** 2D drawing, 3D scenes, music and sound effects with
-  nothing extra to install.
-- **Fast math.** Vector and matrix operations run on native SIMD code.
-- **Modules, closures and custom data types**, plus `unsafe` blocks for manual memory.
+- The compiler is written in Luna and compiles itself. The runtime that every compiled program
+  links (values, strings, lists, maps, operators, builtins, garbage collector) is written in
+  Luna too.
+- The language is dynamically typed and strict: no implicit conversions, integer overflow is an
+  error, conditions must be booleans.
+- It has closures, modules, `data` / `template` / `bloc` / `box` types, and `unsafe` blocks
+  for manual memory with rule checks.
+- Graphics and audio are not available at the moment. They are planned to return as Luna
+  programs that call GLFW and OpenGL through foreign calls.
 
 ## Getting Started
 
-### Install
+### Requirements
 
-Luna runs on Linux (x86-64). On Ubuntu, Debian or Mint:
+Linux (developed and tested on x86-64), `clang` 18 and `make`. On Ubuntu or Debian:
 
 ```bash
-sudo apt install build-essential nasm libx11-dev libgl1-mesa-dev
-curl https://sh.rustup.rs -sSf | sh     # only if you don't have cargo
+sudo apt install build-essential clang       # clang 18 on Ubuntu 24.04
 ```
+
+The `clang` command must be LLVM 18 (the generated IR uses opaque pointers).
 
 ### Build
 
@@ -40,10 +45,11 @@ curl https://sh.rustup.rs -sSf | sh     # only if you don't have cargo
 git clone https://github.com/Bharathsencha/Luna-Language
 cd Luna-Language
 make
-make test        # ends with "All tests passed!"
+make test        # compiles and runs every test; the runner ends with "passed N, failed 0, skipped 0"
 ```
 
-If something is missing, `make check-deps` lists it. More details:
+`make` builds `bin/luna` from the seed files in `bootstrap/` (LLVM IR of the compiler and of
+the runtime), then checks that the compiler reproduces itself. More details:
 [docs/getting-started.md](docs/getting-started.md).
 
 ### Hello World
@@ -54,15 +60,32 @@ Save this as `hello.lu`:
 print("Hello, World!")
 ```
 
-Run it:
+Build and run it:
 
 ```bash
-./bin/luna hello.lu
+./bin/luna build hello.lu -o hello
+./hello
+
+./bin/luna run hello.lu        # build into C/run/ and run in one step
 ```
 
-Run `./bin/luna` with no file to open the REPL.
+`luna` looks for the runtime sources in `compiler/runtime` under `$LUNA_HOME`, or under the
+current directory when `LUNA_HOME` is not set. From any other directory, run
+`export LUNA_HOME=/path/to/Luna-Language` first.
+
+### Commands
+
+| Command | Effect |
+|---|---|
+| `luna build prog.lu -o prog` | Compile to a native binary (the default output name is `prog`) |
+| `luna build prog.lu -S` | Write `C/prog.ll` and stop |
+| `luna run prog.lu [args...]` | Build into `C/run/prog` and run it; the exit status is the program's |
+| `luna emit prog.lu [-o out.ll]` | Write the LLVM IR only (default `C/prog.ll`) |
 
 ## Language Tour
+
+Luna has no semicolons and no `main` requirement: statements at the top level run in order.
+If the file defines a zero-argument `main()`, it is called after the top level finishes.
 
 ### Variables
 
@@ -76,7 +99,7 @@ score += 5
 
 ### Strings
 
-Put any expression inside `{ }` and Luna fills it in for you.
+Put any expression inside `{ }` and Luna fills it in. Write `\{` for a literal brace.
 
 ```javascript
 let hp = 42
@@ -120,11 +143,12 @@ append(nums, 6)
 print(nums[-1])   # 6, negative indexes count from the end
 ```
 
-`map`, `filter` and `reduce` work just like you'd expect:
+`map`, `filter` and `reduce` take functions:
 
 ```javascript
 let doubled = map(nums, func(n) { return n * 2 })
 let evens = filter(nums, func(n) { return n % 2 == 0 })
+let total = reduce(nums, func(acc, n) { return acc + n }, 0)
 ```
 
 ### Maps
@@ -136,6 +160,8 @@ map_set(player, "hp", 125)
 ```
 
 ### Loops and choices
+
+Conditions must be booleans: `if (n)` is an error, write `if (n != 0)`.
 
 ```javascript
 for (let i in range(3)) {
@@ -151,7 +177,7 @@ if (player.hp > 100) {
 
 ### Your own types
 
-`data` gives you a quick way to bundle values together.
+`data` bundles values together.
 
 ```javascript
 data Vec2 { x, y }
@@ -179,11 +205,12 @@ use "utils.lu"
 print(greet("Luna"))
 ```
 
-If you only need some names, pick them: `use { greet } from "utils.lu"`.
+To pick some names: `use { greet } from "utils.lu"`. Imported files are resolved relative to
+the importing file when the program is compiled, and are built into the binary.
 
 ### Cleaning up automatically
 
-`defer` runs something when the current function finishes. It's handy for closing files.
+`defer` runs a call when the current scope exits. It is handy for closing files.
 
 ```javascript
 func save_log(path, text) {
@@ -193,82 +220,7 @@ func save_log(path, text) {
 }
 ```
 
-There's a lot more in [docs/language/syntax.md](docs/language/syntax.md).
-
-## Graphics
-
-Here is a circle gliding around a window:
-
-```javascript
-init_window(800, 600, "Hello Luna")
-set_fps(60)
-let t = 0.0
-
-while (window_open()) {
-    t += get_delta_time()
-    begin_drawing()
-    clear_background(rgb(20, 20, 30))
-    draw_circle(400 + cos(t) * 150, 300 + sin(t) * 100, 40, rgb(100, 200, 255))
-    end_drawing()
-}
-
-close_window()
-```
-
-And a tiny 3D scene with a light:
-
-```javascript
-init_window(1280, 720, "Luna 3D")
-let cam = create_camera_3d([0, 5, -10], [0, 0, 0], [0, 1, 0], 45.0)
-create_light(LIGHT_DIRECTIONAL, [10, 20, 10], [0, 0, 0], rgb(255, 250, 240))
-
-while (window_open()) {
-    begin_drawing()
-    clear_background(rgb(15, 15, 25))
-    begin_mode_3d(cam)
-        draw_cube([0, 0.5, 0], [1, 1, 1], rgb(100, 180, 255))
-        draw_grid(10, 1)
-    end_mode_3d()
-    end_drawing()
-}
-
-close_window()
-```
-
-Everything you can draw and play is listed in [docs/stdlib/gui.md](docs/stdlib/gui.md).
-
-## Examples
-
-Full programs written in Luna, each with a page explaining how it works.
-
-```bash
-make run-cargame             # a top-down car game
-make run-music               # a music player with a live spectrum
-make run-racer               # a 3D racer that changes seasons as you drive
-make run-fun NAME=galaxy     # lots of small visual demos
-```
-
-Have a look at [docs/examples/](docs/examples/README.md).
-
-## GC Performance
-
-Longest single pause on each workload, in milliseconds, compared with Go, Java and Python.
-Smaller is smoother.
-
-| Workload | Luna | Go | Java | Python |
-|---|---:|---:|---:|---:|
-| alloc_heavy | 0.13-0.22 | 0.03 | 10.2 | 0 |
-| long_live | 0.12-0.16 | 0.03 | 6.0 | 0 |
-| cycles | 0.10-0.13 | 0 | 0 | 1.3 |
-| strings | 0.10-0.13 | 0.05 | 8.4 | 0 |
-| object_graph | 0.20-0.26 | - | 0 | 5.9 |
-
-A 0 means that language did not need to collect on that workload. Python frees most objects
-as it goes, so it rarely pauses.
-
-Go has the shortest pauses. Luna stays under a millisecond on every workload. Memory use and
-raw speed are the next areas to improve. Full results, and how the pauses went from 4 ms to
-0.1 ms: [docs/results/gc-results.md](docs/results/gc-results.md).
+There is more in [docs/language/syntax.md](docs/language/syntax.md).
 
 ## Documentation
 
@@ -277,45 +229,26 @@ Everything starts at [docs/README.md](docs/README.md). Some good places to begin
 - **New to Luna?** [Getting started](docs/getting-started.md), then the
   [syntax guide](docs/language/syntax.md).
 - **Looking up a function?** [Core](docs/stdlib/core.md), [strings](docs/stdlib/string.md),
-  [math](docs/stdlib/math.md), [files](docs/stdlib/file.md),
-  [graphics and audio](docs/stdlib/gui.md).
+  [math](docs/stdlib/math.md), [files](docs/stdlib/file.md).
 - **Curious how it works inside?** [Architecture](docs/internals/architecture.md),
-  [the VM](docs/internals/vm.md), [the garbage collector](docs/internals/gc.md),
+  [the compiler](docs/internals/lunac.md), [the garbage collector](docs/internals/gc.md),
   [unsafe memory](docs/internals/unsafe.md).
-- **Want to help?** Start with [Testing](docs/testing.md).
+- **Want to help?** Start with [Testing](docs/testing.md) and
+  [Known issues](docs/known-issues.md). The direction of the project is in
+  [docs/plan-aot.md](docs/plan-aot.md).
 
 ## Project Layout
 
 ```
-src/ include/   the language: parser, compiler, VM, GC, standard library
-gui/            graphics, audio, and the vendored libraries they use
-rust/           two small Rust runtimes
-asm/            assembly (the clock)
-lib/            prebuilt GLFW and the Rust libraries
-test/           Luna tests
-zig-test/       lower-level tests written in Zig
-assets/         shared fonts and models
-docs/           documentation and example programs
+compiler/       the compiler (lexer, parser, LLVM IR backend, driver), written in Luna
+compiler/runtime/   the runtime of compiled programs, written in Luna
+bootstrap/      LLVM IR seeds of the compiler and the runtime, used to build the first luna
+test/           Luna test programs and their expected output (test/expected/)
+assets/         the logo
+docs/           documentation
 ```
 
 ## License
 
 Luna is free software under the **GNU General Public License v3.0 or later**. See
 [LICENSE](LICENSE).
-
-## Credits
-
-Luna uses these open source libraries:
-
-- [GLFW](https://github.com/glfw/glfw) for windows and input (zlib/libpng license)
-- [stb](https://github.com/nothings/stb) by Sean Barrett for images, fonts and screenshots
-  (MIT or public domain)
-- [miniaudio](https://github.com/mackron/miniaudio) by David Reid for sound (MIT-0 or public
-  domain)
-- [tinyobjloader-c](https://github.com/syoyo/tinyobjloader-c) for loading 3D models (MIT)
-
-The music and artwork in the example programs belong to their artists and are included only
-for demonstration. The full list is in
-[docs/examples/musicplayer/CREDITS.md](docs/examples/musicplayer/CREDITS.md) and
-[docs/examples/fun/README.md](docs/examples/fun/README.md#credits). Playback icons are by
-[Icons8](https://icons8.com).

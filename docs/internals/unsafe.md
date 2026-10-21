@@ -3,9 +3,11 @@
 `unsafe { ... }` gives Luna manual memory: raw buffers you allocate, read, write and free
 yourself. Most programs never need it. Lists, maps, strings and `dense_list` cover normal work.
 
-The C side (`src/unsafe_runtime.c`) performs allocation, loads, stores and frees. Every
-operation is first checked by the Rust rule engine in `rust/unsafe_rt`
-(`lib/libluna_memory_rt.a`).
+The runtime side is `compiler/runtime/luna_rt_data.lu`, which performs allocation, loads,
+stores and frees. Every operation is first checked by the rule functions in
+`compiler/runtime/luna_rt_rules.lu` (the allocation table and the twelve pointer rules). The
+`address_of` call is compiled specially by the compiler (`compiler/emit_llvm.lu`),
+and rule R12 is checked at compile time by `compiler/lint.lu`.
 
 ## Functions
 
@@ -29,7 +31,9 @@ Outside `unsafe`, `defer(call(...))` schedules a call for scope exit, for exampl
 
 ## Boundary with the GC
 
-- Buffers from `alloc()` are not GC-managed and are never traced.
+- A buffer from `alloc()` is memory from `calloc`, not from the GC heap: the collector never
+  frees it, only `free` or `defer` does. It is registered as a root range, so Luna values
+  stored in its slots stay alive while the buffer exists.
 - Normal Luna values inside an `unsafe` block are still GC-managed as usual.
 - A raw pointer may not be stored in a list, map or other GC value (R7), so the collector
   never sees one.
@@ -137,36 +141,37 @@ unsafe {
 
 ## Safety Rules
 
-| Rule | Meaning | Interpreter | VM |
-|---|---|---|---|
-| `R1` | No pointer-to-pointer through `address_of()` | enforced | enforced |
-| `R2` | Pointers cannot escape the current `unsafe` block | enforced | enforced |
-| `R3` | `ptr_offset()` cannot go out of bounds | enforced | enforced |
-| `R4` | No use-after-free and no double free | enforced | enforced |
-| `R5` | `address_of()` only works on named values | enforced | enforced |
-| `R6` | Nested `unsafe` blocks are rejected | enforced | enforced |
-| `R7` | Pointers cannot be stored in GC-managed values | enforced | enforced |
-| `R8` | `alloc()` size must be a positive integer | enforced | enforced |
-| `R9` | Ordered pointer comparisons need the same base allocation | enforced | enforced |
-| `R10` | Pointers may only be cast with `int(ptr)` | enforced | enforced |
-| `R11` | Only builtin calls are allowed inside `unsafe` | enforced | enforced |
-| `R12` | `free()` inside conditional control flow is rejected (static lint) | enforced | enforced |
+| Rule | Meaning |
+|---|---|
+| `R1` | No pointer-to-pointer through `address_of()` |
+| `R2` | Pointers cannot escape the current `unsafe` block |
+| `R3` | `ptr_offset()` cannot go out of bounds |
+| `R4` | No use-after-free and no double free |
+| `R5` | `address_of()` only works on named values, and only inside `unsafe` |
+| `R6` | Nested `unsafe` blocks are rejected |
+| `R7` | Pointers cannot be stored in GC-managed values |
+| `R8` | `alloc()` size must be a positive integer |
+| `R9` | Ordered pointer comparisons need the same base allocation |
+| `R10` | Pointers may only be cast with `int(ptr)` |
+| `R11` | Only builtin calls are allowed inside `unsafe` |
+| `R12` | `free()` inside conditional control flow is rejected (static lint) |
 
 R11 is more policy than memory safety. It keeps pointer lifetime analysis simple by forbidding
 user-defined calls inside `unsafe`.
 
-## Engine status
+## When rules are checked
 
-All 12 rules are enforced by both the bytecode VM and the legacy interpreter
-(`LUNA_USE_INTERPRETER=1`), with the same messages. `box` and `bloc` values are also rejected
-inside `unsafe` blocks. A rule violation stops the program.
+R1 to R11 are checked when the operation runs. R12 is checked by the compiler: the program is
+compiled, but it reports a `Static Error` at start-up, before any other statement runs. A rule
+violation stops the program with exit status 1. `box` and `bloc` values are also rejected inside
+`unsafe` blocks.
 
-`make test` checks this: `test/test_unsafe_errors.lu` has one case per rule, compared against
-the VM's exact output, and `test/check_engines.sh` runs every case on the interpreter too.
+`test/test_unsafe_errors.lu` has one case per rule, compared against the recorded output in
+`test/expected/` (see [../testing.md](../testing.md)).
 
 ## Error Cases
 
-These examples intentionally fail, with the same message on both engines.
+These examples intentionally fail. The message shown is the recorded one.
 
 ### R1: `address_of()` of a pointer
 
@@ -201,7 +206,8 @@ unsafe {
 }
 ```
 
-Expected message: `ptr_add() moved outside the allocation bounds`
+Expected message: `ptr_add() moved outside the allocation bounds` (the message uses the older
+name of `ptr_offset`)
 
 ### R4: use after free
 
